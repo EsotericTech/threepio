@@ -1,0 +1,1330 @@
+# Threepio
+
+A Flutter/Dart port of the Eino LLM application development framework. Threepio provides a clean, modular architecture for building AI-powered applications with support for multiple LLM providers, tool calling, and the ReAct (Reasoning + Acting) pattern.
+
+## Features
+
+- > **Multiple LLM Providers** - Currently supports OpenAI (GPT-4, GPT-4o-mini, etc.)
+- =' **Tool Calling** - Define and execute custom tools with automatic schema conversion
+- <� **Agent Framework** - Built-in ReAct pattern for autonomous reasoning and action
+- =� **Streaming Support** - Real-time response streaming for better UX
+- >� **Modular Design** - Clean separation of concerns with composable components
+- <� **Idiomatic Dart** - Follows Flutter/Dart best practices and patterns
+
+## Installation
+
+Add to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  threepio_core:
+    path: packages/threepio_core
+```
+
+## Quick Start
+
+### Basic Chat Completion
+
+```dart
+import 'package:threepio_core/src/components/model/providers/openai/openai_chat_model.dart';
+import 'package:threepio_core/src/components/model/providers/openai/openai_config.dart';
+import 'package:threepio_core/src/schema/message.dart';
+
+void main() async {
+  // Configure OpenAI
+  final config = OpenAIConfig(
+    apiKey: 'your-api-key-here',
+    defaultModel: 'gpt-4o-mini',
+  );
+
+  // Create chat model
+  final model = OpenAIChatModel(config: config);
+
+  // Send a message
+  final messages = [
+    Message.user('What is the capital of France?'),
+  ];
+
+  final response = await model.generate(messages);
+  print(response.content); // "The capital of France is Paris."
+}
+```
+
+### Streaming Responses
+
+```dart
+import 'package:threepio_core/src/streaming/stream_reader.dart';
+
+void main() async {
+  final config = OpenAIConfig(apiKey: 'your-api-key');
+  final model = OpenAIChatModel(config: config);
+
+  final messages = [
+    Message.user('Write a short poem about coding.'),
+  ];
+
+  // Stream the response
+  final reader = await model.stream(messages);
+
+  try {
+    while (true) {
+      final chunk = await reader.recv();
+      print(chunk.content); // Print each chunk as it arrives
+    }
+  } on StreamEOFException {
+    // Stream complete
+  }
+
+  await reader.close();
+}
+```
+
+### Multi-Turn Conversations
+
+```dart
+void main() async {
+  final config = OpenAIConfig(apiKey: 'your-api-key');
+  final model = OpenAIChatModel(config: config);
+
+  final conversationHistory = <Message>[
+    Message.user('My name is Alice.'),
+  ];
+
+  // First exchange
+  var response = await model.generate(conversationHistory);
+  print('Assistant: ${response.content}');
+  conversationHistory.add(response);
+
+  // Continue conversation
+  conversationHistory.add(Message.user('What is my name?'));
+  response = await model.generate(conversationHistory);
+  print('Assistant: ${response.content}'); // "Your name is Alice."
+}
+```
+
+## Tool Calling
+
+Define custom tools that the model can call:
+
+### Creating a Custom Tool
+
+```dart
+import 'dart:convert';
+import 'package:threepio_core/src/components/tool/invokable_tool.dart';
+import 'package:threepio_core/src/schema/tool_info.dart';
+
+class WeatherTool extends InvokableTool {
+  @override
+  Future<ToolInfo> info() async {
+    return ToolInfo(
+      function: FunctionInfo(
+        name: 'get_weather',
+        description: 'Get the current weather for a location',
+        parameters: JSONSchema(
+          type: 'object',
+          properties: {
+            'location': JSONSchemaProperty(
+              type: 'string',
+              description: 'The city name',
+            ),
+            'units': JSONSchemaProperty(
+              type: 'string',
+              description: 'Temperature units',
+              enumValues: ['celsius', 'fahrenheit'],
+            ),
+          },
+          required: ['location'],
+          additionalProperties: false,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<String> run(String argumentsJson) async {
+    final args = jsonDecode(argumentsJson) as Map<String, dynamic>;
+    final location = args['location'] as String;
+    final units = args['units'] as String? ?? 'fahrenheit';
+
+    // Call your weather API here
+    final weatherData = await fetchWeather(location, units);
+
+    return jsonEncode({
+      'location': location,
+      'temperature': weatherData.temperature,
+      'condition': weatherData.condition,
+    });
+  }
+
+  Future<WeatherData> fetchWeather(String location, String units) async {
+    // Implement your weather API call
+    // ...
+  }
+}
+```
+
+### Using Tools with Chat Model
+
+```dart
+import 'package:threepio_core/src/components/tool/examples/calculator_tool.dart';
+import 'package:threepio_core/src/components/tool/examples/weather_tool.dart';
+
+void main() async {
+  final config = OpenAIConfig(apiKey: 'your-api-key');
+  final model = OpenAIChatModel(config: config);
+
+  // Get tool information
+  final calculatorTool = CalculatorTool();
+  final weatherTool = WeatherTool();
+
+  final toolInfoList = [
+    await calculatorTool.info(),
+    await weatherTool.info(),
+  ];
+
+  // Bind tools to model
+  final modelWithTools = model.withTools(toolInfoList);
+
+  // Ask a question that requires tools
+  final messages = [
+    Message.user('What is 15 + 27?'),
+  ];
+
+  final response = await modelWithTools.generate(messages);
+
+  // Check if model wants to call a tool
+  if (response.toolCalls != null && response.toolCalls!.isNotEmpty) {
+    print('Model requested tool: ${response.toolCalls!.first.function.name}');
+    print('Arguments: ${response.toolCalls!.first.function.arguments}');
+
+    // Execute the tool
+    final result = await calculatorTool.run(
+      response.toolCalls!.first.function.arguments,
+    );
+
+    // Send result back to model
+    messages.add(response); // Add assistant's tool call request
+    messages.add(Message(
+      role: RoleType.tool,
+      content: result,
+      toolCallId: response.toolCalls!.first.id,
+      name: 'calculator',
+    ));
+
+    // Get final response
+    final finalResponse = await modelWithTools.generate(messages);
+    print('Final answer: ${finalResponse.content}');
+  }
+}
+```
+
+## Agent Framework (ReAct Pattern)
+
+For automatic tool execution and multi-step reasoning:
+
+### Basic Agent Usage
+
+```dart
+import 'package:threepio_core/src/components/tool/agent.dart';
+import 'package:threepio_core/src/components/tool/tool_registry.dart';
+import 'package:threepio_core/src/components/tool/examples/calculator_tool.dart';
+import 'package:threepio_core/src/components/tool/examples/weather_tool.dart';
+
+void main() async {
+  // Setup
+  final config = OpenAIConfig(apiKey: 'your-api-key');
+  final model = OpenAIChatModel(config: config);
+
+  // Register tools
+  final registry = ToolRegistry();
+  registry.register(CalculatorTool());
+  registry.register(WeatherTool());
+
+  // Create agent
+  final agent = Agent(
+    model: model,
+    toolRegistry: registry,
+    config: AgentConfig(
+      maxIterations: 10,  // Max reasoning loops
+      maxToolCalls: 20,   // Max total tool calls
+    ),
+  );
+
+  // Run agent - it will automatically use tools as needed
+  final messages = [
+    Message.user(
+      'Calculate 23 + 19, then get the weather in London and tell me both results.',
+    ),
+  ];
+
+  final response = await agent.run(messages);
+  print(response.content);
+  // "The result of 23 + 19 is 42. The current weather in London is
+  // 70�F, sunny with 30% humidity."
+}
+```
+
+### Streaming Agent Responses
+
+```dart
+void main() async {
+  final config = OpenAIConfig(apiKey: 'your-api-key');
+  final model = OpenAIChatModel(config: config);
+
+  final registry = ToolRegistry();
+  registry.register(CalculatorTool());
+
+  final agent = Agent(
+    model: model,
+    toolRegistry: registry,
+  );
+
+  final messages = [
+    Message.user('What is 7 times 8?'),
+  ];
+
+  // Stream agent's reasoning and tool execution
+  final reader = await agent.stream(messages);
+
+  try {
+    while (true) {
+      final message = await reader.recv();
+
+      if (message.role == RoleType.assistant) {
+        // Model's reasoning
+        print('Thinking: ${message.content}');
+      } else if (message.role == RoleType.tool) {
+        // Tool was executed
+        print('Tool executed: ${message.name}');
+      }
+    }
+  } on StreamEOFException {
+    // Complete
+  }
+
+  await reader.close();
+}
+```
+
+## Runnables & Lambdas
+
+**Runnables** are the core abstraction in Threepio (following the Eino pattern). A Runnable is any component that can process inputs and produce outputs, with support for 4 execution modes:
+
+- **invoke**: `I → Future<O>` - Basic async execution
+- **stream**: `I → Stream<O>` - Streaming output
+- **collect**: `Stream<I> → Future<O>` - Collect stream input
+- **transform**: `Stream<I> → Stream<O>` - Stream-to-stream transformation
+
+This makes Runnables extremely flexible and composable.
+
+### Creating Custom Runnables with Lambda
+
+Lambda lets you wrap any function into a Runnable:
+
+```dart
+import 'package:threepio_core/src/compose/lambda.dart';
+
+// Simple synchronous function
+final uppercase = syncLambda<String, String>(
+  (input) => input.toUpperCase(),
+);
+
+final result = await uppercase.invoke('hello');
+print(result); // 'HELLO'
+```
+
+### The Four Execution Modes
+
+**1. Invoke Mode (I → Future<O>)**
+
+Basic async execution for single input/output:
+
+```dart
+final processText = lambda<String, int>(
+  (input) async {
+    // Simulate async processing
+    await Future.delayed(Duration(milliseconds: 100));
+    return input.length;
+  },
+);
+
+final result = await processText.invoke('Hello World');
+print(result); // 11
+```
+
+**2. Stream Mode (I → Stream<O>)**
+
+Generate multiple outputs from single input:
+
+```dart
+final tokenize = streamingLambda<String, String>(
+  (input) async* {
+    for (final word in input.split(' ')) {
+      await Future.delayed(Duration(milliseconds: 50));
+      yield word.toUpperCase();
+    }
+  },
+);
+
+await for (final token in tokenize.stream('hello world')) {
+  print(token); // 'HELLO', then 'WORLD'
+}
+```
+
+**3. Collect Mode (Stream<I> → Future<O>)**
+
+Aggregate streaming inputs into single output:
+
+```dart
+final concatenate = Lambda<String, String>(
+  collect: (input, options) async {
+    final items = await input.toList();
+    return items.join(' ');
+  },
+);
+
+final inputStream = Stream.fromIterable(['Hello', 'from', 'stream']);
+final result = await concatenate.collect(inputStream);
+print(result); // 'Hello from stream'
+```
+
+**4. Transform Mode (Stream<I> → Stream<O>)**
+
+Transform each item in a stream:
+
+```dart
+final uppercaseStream = Lambda<String, String>(
+  transform: (input, options) {
+    return input.map((s) => s.toUpperCase());
+  },
+);
+
+final inputStream = Stream.fromIterable(['hello', 'world']);
+final outputStream = uppercaseStream.transform(inputStream);
+
+await for (final item in outputStream) {
+  print(item); // 'HELLO', then 'WORLD'
+}
+```
+
+### Composing Runnables with pipe()
+
+Chain runnables together to create processing pipelines:
+
+```dart
+// Create individual processing steps
+final extractWords = syncLambda<String, List<String>>(
+  (text) => text.split(' '),
+);
+
+final countWords = syncLambda<List<String>, int>(
+  (words) => words.length,
+);
+
+final formatResult = syncLambda<int, String>(
+  (count) => 'Word count: $count',
+);
+
+// Compose them into a pipeline
+final wordCounter = extractWords
+    .pipe(countWords)
+    .pipe(formatResult);
+
+final result = await wordCounter.invoke('Hello world from Threepio');
+print(result); // 'Word count: 4'
+```
+
+### Batch Processing
+
+Process multiple inputs efficiently:
+
+```dart
+final doubleNumber = syncLambda<int, int>(
+  (n) => n * 2,
+);
+
+// Sequential batch
+final results = await doubleNumber.batch([1, 2, 3, 4, 5]);
+print(results); // [2, 4, 6, 8, 10]
+
+// Parallel batch (faster for async operations)
+final parallelResults = await doubleNumber.batchParallel([1, 2, 3, 4, 5]);
+print(parallelResults); // [2, 4, 6, 8, 10]
+```
+
+### Advanced Lambda Patterns
+
+**Multiple Execution Modes**
+
+Lambda can provide different implementations for each mode:
+
+```dart
+final smartProcessor = Lambda<String, String>(
+  // For single inputs, process normally
+  invoke: (input, options) async {
+    return input.toUpperCase();
+  },
+
+  // For streaming, emit character by character
+  stream: (input, options) async* {
+    for (final char in input.split('')) {
+      yield char.toUpperCase();
+      await Future.delayed(Duration(milliseconds: 10));
+    }
+  },
+
+  // For stream inputs, concatenate then process
+  collect: (input, options) async {
+    final items = await input.toList();
+    return items.join('').toUpperCase();
+  },
+
+  // For stream transform, map each item
+  transform: (input, options) {
+    return input.map((s) => s.toUpperCase());
+  },
+);
+
+// Use whichever mode fits your needs
+final result1 = await smartProcessor.invoke('hello');
+final result2 = await smartProcessor.stream('hello').toList();
+final result3 = await smartProcessor.collect(Stream.fromIterable(['a', 'b']));
+```
+
+**With Runnable Options**
+
+Pass metadata and callbacks through execution:
+
+```dart
+final logger = Lambda<String, String>(
+  invoke: (input, options) async {
+    print('Processing: $input');
+    print('Metadata: ${options?.metadata}');
+    return input.toUpperCase();
+  },
+);
+
+final result = await logger.invoke(
+  'hello',
+  options: RunnableOptions(
+    metadata: {'user_id': '123', 'request_id': 'abc'},
+    tags: ['production', 'api_v2'],
+  ),
+);
+```
+
+### Real-World Example: Data Processing Pipeline
+
+Complete example combining multiple runnables:
+
+```dart
+void main() async {
+  // Step 1: Clean and validate input
+  final cleanInput = syncLambda<String, String>(
+    (text) => text.trim().toLowerCase(),
+  );
+
+  // Step 2: Extract keywords
+  final extractKeywords = lambda<String, List<String>>(
+    (text) async {
+      final words = text.split(' ');
+      return words.where((w) => w.length > 3).toList();
+    },
+  );
+
+  // Step 3: Call LLM to categorize keywords
+  final categorize = lambda<List<String>, Map<String, dynamic>>(
+    (keywords) async {
+      final model = OpenAIChatModel(config: config);
+      final prompt = 'Categorize these keywords: ${keywords.join(", ")}';
+      final response = await model.generate([Message.user(prompt)]);
+
+      return {
+        'keywords': keywords,
+        'categories': response.content,
+      };
+    },
+  );
+
+  // Step 4: Format output
+  final formatOutput = syncLambda<Map<String, dynamic>, String>(
+    (data) {
+      final keywords = data['keywords'] as List;
+      final categories = data['categories'];
+      return 'Found ${keywords.length} keywords: $categories';
+    },
+  );
+
+  // Compose the entire pipeline
+  final pipeline = cleanInput
+      .pipe(extractKeywords)
+      .pipe(categorize)
+      .pipe(formatOutput);
+
+  // Process single input
+  final result = await pipeline.invoke(
+    '  Machine Learning and Artificial Intelligence in Healthcare  ',
+  );
+  print(result);
+
+  // Or process batch
+  final batch = await pipeline.batch([
+    'Natural Language Processing',
+    'Computer Vision Applications',
+    'Reinforcement Learning Algorithms',
+  ]);
+
+  for (final result in batch) {
+    print(result);
+  }
+}
+```
+
+### Runnables vs Chains
+
+**Runnables** are the generic, low-level abstraction:
+- Work with any input/output types
+- 4 execution modes
+- Type-safe composition
+
+**Chains** are specialized Runnables for `Map<String, dynamic>`:
+- Convenient for named parameters
+- Input/output key validation
+- Built specifically for prompt/LLM workflows
+
+```dart
+// Generic Runnable
+final runnable = lambda<String, int>((s) async => s.length);
+await runnable.invoke('hello'); // 5
+
+// Chain (specialized Runnable)
+final chain = LLMChain(
+  template: template,
+  model: model,
+  outputKey: 'response',
+);
+await chain.invoke({'query': 'hello'}); // {'response': '...'}
+```
+
+Both can be composed together using `pipe()`!
+
+## Prompt Templates & Chains
+
+Build reusable, composable prompt templates and processing pipelines.
+
+### Basic Prompt Templates
+
+Simple string templates with variable substitution:
+
+```dart
+import 'package:threepio_core/src/components/prompt/prompt_template.dart';
+
+void main() {
+  // Create a template
+  final template = PromptTemplate.fromTemplate(
+    'Write a {length} {style} story about {topic}.',
+  );
+
+  // Format with variables
+  final prompt = template.format({
+    'length': 'short',
+    'style': 'funny',
+    'topic': 'a robot learning to dance',
+  });
+
+  print(prompt);
+  // Output: "Write a short funny story about a robot learning to dance."
+}
+```
+
+### Chat Prompt Templates
+
+Create conversation templates with multiple roles:
+
+```dart
+import 'package:threepio_core/src/components/prompt/chat_prompt_template.dart';
+
+void main() async {
+  // Define a chat template
+  final template = ChatPromptTemplate.fromMessages([
+    MessageTemplate.system('You are a {role} who answers in a {style} way.'),
+    MessageTemplate.user('Question: {question}'),
+  ]);
+
+  // Format into messages
+  final messages = await template.format({
+    'role': 'teacher',
+    'style': 'simple and clear',
+    'question': 'What is photosynthesis?',
+  });
+
+  // Use with model
+  final response = await model.generate(messages);
+  print(response.content);
+}
+```
+
+### Partial Templates
+
+Preset some variables for reuse:
+
+```dart
+void main() {
+  final baseTemplate = PromptTemplate.fromTemplate(
+    'You are a {role}. {instruction}',
+  );
+
+  // Create a partial with role preset
+  final teacherTemplate = baseTemplate.partial({'role': 'teacher'});
+
+  // Only need to provide instruction now
+  final prompt = teacherTemplate.format({
+    'instruction': 'Explain this concept simply.',
+  });
+}
+```
+
+### Few-Shot Learning Templates
+
+Include examples for better results:
+
+```dart
+import 'package:threepio_core/src/components/prompt/few_shot_prompt_template.dart';
+
+void main() async {
+  // Create a few-shot template
+  final template = FewShotChatPromptTemplate(
+    systemTemplate: 'You translate English to French.',
+    examples: [
+      Example({'input': 'Hello', 'output': 'Bonjour'}),
+      Example({'input': 'Goodbye', 'output': 'Au revoir'}),
+      Example({'input': 'Thank you', 'output': 'Merci'}),
+    ],
+    inputVariables: ['input'],
+  );
+
+  // Format with new input
+  final messages = await template.format({
+    'input': 'Good morning',
+  });
+
+  // The messages will include all examples plus the new input
+  final response = await model.generate(messages);
+  print(response.content); // "Bonjour" or similar
+}
+```
+
+### LLM Chain - Combine Templates with Models
+
+Chains make it easy to combine templates with models:
+
+```dart
+import 'package:threepio_core/src/components/chain/llm_chain.dart';
+
+void main() async {
+  // Create a template
+  final template = ChatPromptTemplate.fromTemplate(
+    systemTemplate: 'You are a {role}.',
+    userTemplate: '{input}',
+  );
+
+  // Create a chain
+  final chain = LLMChain(
+    template: template,
+    model: OpenAIChatModel(config: config),
+    outputKey: 'response',
+  );
+
+  // Run the chain - template formatting happens automatically
+  final result = await chain.run({
+    'role': 'helpful assistant',
+    'input': 'What is the weather like today?',
+  });
+
+  print(result['response']); // Model's answer
+}
+```
+
+### Sequential Chains - Multi-Step Processing
+
+Chain multiple operations together:
+
+```dart
+import 'package:threepio_core/src/components/chain/base_chain.dart';
+
+void main() async {
+  // First chain: Generate a story
+  final storyChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Write a short story about {topic}.',
+    ),
+    model: model,
+    outputKey: 'story',
+  );
+
+  // Second chain: Summarize the story
+  final summaryChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Summarize this story in one sentence: {story}',
+    ),
+    model: model,
+    outputKey: 'summary',
+  );
+
+  // Combine into a sequential chain
+  final sequential = SequentialChain(
+    chains: [storyChain, summaryChain],
+  );
+
+  // Run both chains - output of first becomes input to second
+  final result = await sequential.run({
+    'topic': 'a time-traveling cat',
+  });
+
+  print('Story: ${result['story']}');
+  print('Summary: ${result['summary']}');
+}
+```
+
+### Parallel Chains - Run Multiple Chains Concurrently
+
+Execute chains in parallel for better performance:
+
+```dart
+import 'package:threepio_core/src/components/chain/base_chain.dart';
+
+void main() async {
+  // Create multiple chains for different analyses
+  final sentimentChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Analyze the sentiment (positive/negative/neutral): {text}',
+    ),
+    model: model,
+    outputKey: 'sentiment',
+  );
+
+  final topicsChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Extract main topics from: {text}',
+    ),
+    model: model,
+    outputKey: 'topics',
+  );
+
+  final summaryChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Summarize: {text}',
+    ),
+    model: model,
+    outputKey: 'summary',
+  );
+
+  // Run all chains in parallel
+  final parallel = ParallelChain(
+    chains: [sentimentChain, topicsChain, summaryChain],
+  );
+
+  final result = await parallel.run({
+    'text': 'Your long text here...',
+  });
+
+  // All results available at once
+  print('Sentiment: ${result['sentiment']}');
+  print('Topics: ${result['topics']}');
+  print('Summary: ${result['summary']}');
+}
+```
+
+### Transform Chains - Process Text
+
+Apply transformations in your pipeline:
+
+```dart
+import 'package:threepio_core/src/components/chain/llm_chain.dart';
+
+void main() async {
+  // Chain to clean/normalize text
+  final cleanChain = TransformChain.sync(
+    inputKey: 'raw_text',
+    outputKey: 'clean_text',
+    transform: (text) => text.trim().toLowerCase(),
+  );
+
+  // Chain to process cleaned text
+  final processChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Analyze: {clean_text}',
+    ),
+    model: model,
+    outputKey: 'analysis',
+  );
+
+  // Combine
+  final pipeline = SequentialChain(
+    chains: [cleanChain, processChain],
+  );
+
+  final result = await pipeline.run({
+    'raw_text': '  MESSY INPUT TEXT  ',
+  });
+}
+```
+
+### Router Chain - Conditional Routing
+
+Route to different chains based on input:
+
+```dart
+import 'package:threepio_core/src/components/chain/llm_chain.dart';
+
+void main() async {
+  // Different chains for different question types
+  final mathChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Solve this math problem: {question}',
+    ),
+    model: model,
+    outputKey: 'answer',
+  );
+
+  final scienceChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      systemTemplate: 'You are a science expert.',
+      userTemplate: '{question}',
+    ),
+    model: model,
+    outputKey: 'answer',
+  );
+
+  final generalChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: '{question}',
+    ),
+    model: model,
+    outputKey: 'answer',
+  );
+
+  // Create router
+  final router = RouterChain(
+    routes: {
+      'math': mathChain,
+      'science': scienceChain,
+    },
+    routeKey: 'category',
+    defaultChain: generalChain,
+  );
+
+  // Route based on input
+  final result = await router.run({
+    'category': 'math',
+    'question': 'What is 15 * 23?',
+  });
+}
+```
+
+### Streaming Chains
+
+Stream responses in real-time:
+
+```dart
+import 'package:threepio_core/src/components/chain/llm_chain.dart';
+
+void main() async {
+  final template = ChatPromptTemplate.fromTemplate(
+    userTemplate: 'Write a story about {topic}.',
+  );
+
+  final streamingChain = StreamingLLMChain(
+    template: template,
+    model: model,
+  );
+
+  // Stream the response
+  await for (final chunk in streamingChain.stream({'topic': 'dragons'})) {
+    print(chunk); // Print each token as it arrives
+  }
+}
+```
+
+### Real-World Example: Content Analysis Pipeline
+
+Complete example combining multiple chains:
+
+```dart
+void main() async {
+  final config = OpenAIConfig(apiKey: 'your-api-key');
+  final model = OpenAIChatModel(config: config);
+
+  // Step 1: Extract key information
+  final extractChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      systemTemplate: 'Extract the main points from the following text.',
+      userTemplate: '{article}',
+    ),
+    model: model,
+    outputKey: 'key_points',
+  );
+
+  // Step 2: Analyze sentiment
+  final sentimentChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: 'Analyze sentiment of these points: {key_points}',
+    ),
+    model: model,
+    outputKey: 'sentiment',
+  );
+
+  // Step 3: Generate summary
+  final summaryChain = LLMChain(
+    template: ChatPromptTemplate.fromTemplate(
+      userTemplate: '''Based on these key points: {key_points}
+And this sentiment: {sentiment}
+Write a brief summary.''',
+    ),
+    model: model,
+    outputKey: 'summary',
+  );
+
+  // Combine all steps
+  final pipeline = SequentialChain(
+    chains: [extractChain, sentimentChain, summaryChain],
+    returnAll: true, // Return outputs from all chains
+  );
+
+  // Run the pipeline
+  final result = await pipeline.run({
+    'article': '''
+      Your long article text here...
+      This could be news, blog post, research paper, etc.
+    ''',
+  });
+
+  print('Key Points: ${result['key_points']}');
+  print('Sentiment: ${result['sentiment']}');
+  print('Summary: ${result['summary']}');
+}
+```
+
+### Best Practices
+
+**1. Use Templates for Reusability**
+```dart
+// Bad: Hardcoded prompt
+final prompt = 'You are a teacher. Explain quantum physics.';
+
+// Good: Reusable template
+final template = ChatPromptTemplate.fromTemplate(
+  systemTemplate: 'You are a {role}.',
+  userTemplate: 'Explain {topic}.',
+);
+```
+
+**2. Chain for Complex Workflows**
+```dart
+// Bad: Manual chaining with lots of code
+final step1 = await model.generate([...]);
+final step2 = await model.generate([Message.user(step1.content)]);
+
+// Good: Declarative chain
+final pipeline = SequentialChain(chains: [chain1, chain2]);
+final result = await pipeline.run({...});
+```
+
+**3. Use Parallel for Independent Operations**
+```dart
+// Bad: Sequential when operations are independent
+final sentiment = await sentimentChain.run(input);
+final topics = await topicsChain.run(input);
+
+// Good: Parallel execution
+final parallel = ParallelChain(chains: [sentimentChain, topicsChain]);
+final result = await parallel.run(input);
+```
+
+**4. Partial Templates for Common Patterns**
+```dart
+// Create specialized templates from base template
+final baseTemplate = ChatPromptTemplate.fromTemplate(
+  systemTemplate: 'You are a {role}. {instruction}',
+  userTemplate: '{input}',
+);
+
+final teacherTemplate = baseTemplate.partial({
+  'role': 'teacher',
+  'instruction': 'Explain concepts clearly and simply.',
+});
+
+final writerTemplate = baseTemplate.partial({
+  'role': 'creative writer',
+  'instruction': 'Write engaging and imaginative content.',
+});
+```
+
+## Configuration
+
+### Environment Variables
+
+Create a `.env` file in your project root:
+
+```env
+OPENAI_API_KEY=sk-your-api-key-here
+```
+
+Load it in your code:
+
+```dart
+import 'package:dotenv/dotenv.dart';
+
+void main() {
+  final env = DotEnv()..load(['.env']);
+  final apiKey = env['OPENAI_API_KEY']!;
+
+  final config = OpenAIConfig(apiKey: apiKey);
+  // ...
+}
+```
+
+### Model Configuration
+
+```dart
+final config = OpenAIConfig(
+  apiKey: 'your-api-key',
+  baseUrl: 'https://api.openai.com/v1',  // Custom endpoint if needed
+  organization: 'org-123',                // Optional organization ID
+  defaultModel: 'gpt-4o-mini',           // Default model to use
+  timeout: Duration(seconds: 60),         // Request timeout
+);
+```
+
+### Chat Options
+
+```dart
+final options = ChatModelOptions(
+  model: 'gpt-4',                  // Override default model
+  temperature: 0.7,                 // Creativity (0-2)
+  maxTokens: 1000,                  // Max response length
+  topP: 0.9,                        // Nucleus sampling
+  stop: ['END'],                    // Stop sequences
+  tools: toolInfoList,              // Available tools
+  toolChoice: ToolChoice.auto,      // Tool usage policy
+);
+
+final response = await model.generate(messages, options: options);
+```
+
+## Built-in Tools
+
+Threepio includes example tools:
+
+### Calculator Tool
+
+```dart
+import 'package:threepio_core/src/components/tool/examples/calculator_tool.dart';
+
+final calc = CalculatorTool();
+final result = await calc.run('{"operation": "multiply", "a": 6, "b": 7}');
+print(result); // {"result": 42}
+```
+
+### Weather Tool (Mock)
+
+```dart
+import 'package:threepio_core/src/components/tool/examples/weather_tool.dart';
+
+final weather = WeatherTool();
+final result = await weather.run('{"location": "Paris", "units": "celsius"}');
+print(result); // {"location": "Paris", "temperature": 22, ...}
+```
+
+### Search Tool
+
+```dart
+import 'package:threepio_core/src/components/tool/examples/search_tool.dart';
+
+final search = SearchTool();
+final result = await search.run('{"query": "Dart programming", "max_results": 5}');
+print(result); // {"query": "Dart programming", "results": [...]}
+```
+
+## Advanced Usage
+
+### Custom Message Types
+
+```dart
+// System message
+final systemMsg = Message(
+  role: RoleType.system,
+  content: 'You are a helpful coding assistant.',
+);
+
+// User message
+final userMsg = Message.user('How do I use async/await?');
+
+// Assistant message
+final assistantMsg = Message(
+  role: RoleType.assistant,
+  content: 'To use async/await in Dart...',
+);
+
+// Tool result message
+final toolMsg = Message(
+  role: RoleType.tool,
+  content: '{"result": 42}',
+  toolCallId: 'call_123',
+  name: 'calculator',
+);
+```
+
+### Multi-Modal Input (Images)
+
+```dart
+final message = Message(
+  role: RoleType.user,
+  content: '',
+  userInputMultiContent: [
+    MessageInputPart.text('What is in this image?'),
+    MessageInputPart.imageUrl(
+      'https://example.com/image.png',
+      detail: ImageURLDetail.high,
+    ),
+  ],
+);
+
+final response = await model.generate([message]);
+```
+
+### Error Handling
+
+```dart
+try {
+  final response = await model.generate(messages);
+  print(response.content);
+} on OpenAIException catch (e) {
+  print('OpenAI API error: $e');
+  if (e.statusCode == 401) {
+    print('Invalid API key');
+  } else if (e.statusCode == 429) {
+    print('Rate limit exceeded');
+  }
+} on TimeoutException {
+  print('Request timed out');
+} catch (e) {
+  print('Unexpected error: $e');
+}
+```
+
+### Token Usage Tracking
+
+```dart
+final response = await model.generate(messages);
+
+if (response.responseMeta?.usage != null) {
+  final usage = response.responseMeta!.usage!;
+  print('Prompt tokens: ${usage.promptTokens}');
+  print('Completion tokens: ${usage.completionTokens}');
+  print('Total tokens: ${usage.totalTokens}');
+
+  if (usage.promptTokenDetails?.cachedTokens != null) {
+    print('Cached tokens: ${usage.promptTokenDetails!.cachedTokens}');
+  }
+}
+```
+
+## Testing
+
+### Unit Tests
+
+```bash
+# Run all unit tests
+flutter test
+
+# Run specific test file
+flutter test test/components/tool/calculator_tool_test.dart
+
+# Run with coverage
+flutter test --coverage
+```
+
+### Integration Tests
+
+Integration tests require a valid OpenAI API key in `.env`:
+
+```bash
+# Run integration tests (makes real API calls)
+flutter test test/integration/openai_integration_test.dart
+```
+
+## Architecture
+
+```
+threepio_core/
+   lib/src/
+      schema/              # Core data structures
+         message.dart     # Message types and content
+         tool_info.dart   # Tool definitions and schemas
+         document.dart    # Document types for RAG
+   
+      streaming/           # Stream infrastructure
+         stream_reader.dart
+         stream_writer.dart
+         stream_item.dart
+         stream_utils.dart
+   
+      components/
+         model/          # Chat model implementations
+            base_chat_model.dart
+            chat_model_options.dart
+            providers/
+                openai/
+                    openai_chat_model.dart
+                    openai_config.dart
+                    openai_converters.dart
+      
+         tool/           # Tool execution and agents
+             invokable_tool.dart
+             tool_registry.dart
+             tool_executor.dart
+             agent.dart
+             examples/
+                 calculator_tool.dart
+                 weather_tool.dart
+                 search_tool.dart
+   
+      ...
+   test/                   # Comprehensive test suite
+```
+
+## Design Principles
+
+1. **Idiomatic Dart/Flutter** - Follows platform conventions and best practices
+2. **Type Safety** - Leverages Dart's strong typing with freezed for immutability
+3. **Streaming First** - Built-in support for real-time responses
+4. **Testability** - Dependency injection and mocking support throughout
+5. **Modularity** - Composable components that can be used independently
+6. **Clean Architecture** - Clear separation between schema, components, and providers
+
+## Roadmap
+
+- [ ] Additional LLM providers (Anthropic Claude, Google Gemini)
+- [ ] RAG (Retrieval Augmented Generation) support
+- [ ] Vector database integration
+- [x] Prompt templates and chains
+- [ ] Memory/conversation persistence
+- [ ] Batch processing support
+- [ ] Cost tracking and optimization
+
+## Contributing
+
+Contributions are welcome! Please read the contributing guidelines before submitting PRs.
+
+## License
+
+[Your License Here]
+
+## Acknowledgments
+
+Inspired by the [Eino](https://github.com/cloudwego/eino) LLM framework from CloudWeGo.
+
+---
+
+Built with d using Flutter and Dart

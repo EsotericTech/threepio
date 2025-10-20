@@ -1,0 +1,43 @@
+name: threepio_core
+description: Production-ready LLM application framework for Dart/Flutter. Build intelligent apps with chat models, RAG, agents, graphs, and observability. Inspired by Eino and LangChain.
+version: 0.1.0
+homepage: https://github.com/EsotericTech/threepio
+repository: https://github.com/EsotericTech/threepio
+issue_tracker: https://github.com/EsotericTech/threepio/issues
+documentation: https://github.com/EsotericTech/threepio/blob/main/README.md
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  # Core
+  meta: ^1.9.0
+
+  # JSON & Serialization
+  freezed_annotation: ^2.4.0
+  json_annotation: ^4.8.0
+
+  # Utilities
+  equatable: ^2.0.5
+  uuid: ^4.2.0
+
+  # Streams & Async
+  rxdart: ^0.27.7
+  async: ^2.11.0
+
+  # HTTP Client
+  http: ^1.1.0
+
+dev_dependencies:
+  # Testing
+  test: ^1.24.0
+  mockito: ^5.4.0
+  dotenv: ^4.2.0
+
+  # Code Generation
+  build_runner: ^2.4.0
+  freezed: ^2.4.0
+  json_serializable: ^6.7.0
+
+  # Linting
+  very_good_analysis: ^5.1.0
