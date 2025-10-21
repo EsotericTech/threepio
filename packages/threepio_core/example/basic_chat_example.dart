@@ -1,5 +1,6 @@
 // ignore_for_file: avoid_print
 
+import 'package:threepio_core/src/components/model/providers/openai/openai_config.dart';
 import 'package:threepio_core/threepio_core.dart';
 
 /// Basic example showing how to use Threepio Core with OpenAI
@@ -9,7 +10,7 @@ import 'package:threepio_core/threepio_core.dart';
 /// 2. Run: dart run basic_chat_example.dart
 Future<void> main() async {
   // Configure OpenAI
-  final config = OpenAIConfig(
+  const config = OpenAIConfig(
     apiKey: 'your-api-key-here', // Replace with your actual API key
     defaultModel: 'gpt-4o-mini',
   );

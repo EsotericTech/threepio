@@ -4,6 +4,8 @@
 /// composition framework, and streaming infrastructure for building LLM applications.
 library threepio_core;
 
+// Callback system exports
+export 'src/callbacks/callback_exports.dart';
 export 'src/components/embedding/embedder.dart';
 // Component exports
 export 'src/components/document_loader/document_loader_exports.dart';
@@ -33,3 +35,6 @@ export 'src/streaming/stream_item.dart';
 export 'src/streaming/stream_reader.dart';
 export 'src/streaming/stream_utils.dart';
 export 'src/streaming/stream_writer.dart';
+
+// Provider exports
+export 'src/components/model/providers/openai/openai_chat_model.dart';
