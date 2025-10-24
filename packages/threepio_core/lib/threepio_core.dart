@@ -38,3 +38,6 @@ export 'src/streaming/stream_writer.dart';
 
 // Provider exports
 export 'src/components/model/providers/openai/openai_chat_model.dart';
+export 'src/components/model/providers/openai/openai_config.dart';
+export 'src/components/model/providers/openrouter/openrouter_chat_model.dart';
+export 'src/components/model/providers/openrouter/openrouter_config.dart';

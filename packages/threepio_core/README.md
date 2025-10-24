@@ -4,7 +4,7 @@ A Flutter/Dart port of the Eino LLM application development framework. Threepio 
 
 ## Features
 
-- **Multiple LLM Providers** - Currently supports OpenAI (GPT-4, GPT-4o-mini, etc.)
+- **Multiple LLM Providers** - Supports OpenAI (GPT-4, GPT-4o-mini) and OpenRouter (Gemini, Claude, Llama, DALL-E, and 100+ models)
 - **Runnables & Lambdas** - Core Eino-inspired abstraction for composable components
 - **Graph Orchestration** - Complex multi-step workflows with conditional routing, loops, and parallel execution
 - **Memory & Persistence** - Conversation history management with multiple strategies (buffer, window, token-limited, LLM-summarization) and pluggable storage backends
@@ -106,6 +106,154 @@ void main() async {
   conversationHistory.add(Message.user('What is my name?'));
   response = await model.generate(conversationHistory);
   print('Assistant: ${response.content}'); // "Your name is Alice."
+}
+```
+
+## Using OpenRouter
+
+OpenRouter provides access to 100+ LLM models through a single API, including Gemini, Claude, Llama, and image generation models. Threepio's OpenRouter provider supports all these models with both text and image generation.
+
+### Why a Separate OpenRouter Provider?
+
+While OpenRouter uses an OpenAI-compatible API, it routes to many different underlying models (Gemini, Claude, Llama, etc.), and **each model can return responses in slightly different formats**. This is especially true for multi-modal responses like image generation.
+
+**Key Differences from OpenAI Provider:**
+
+1. **Multi-Modal Response Handling**: OpenRouter's image generation models (like Gemini 2.5 Flash Image) return images in a structured `images` field, separate from the `content` field. The OpenAI provider expects everything in `content`.
+
+2. **Flexible Response Parsing**: The OpenRouter parser automatically detects and handles:
+   - Structured image responses (Gemini format with separate `images` field)
+   - Inline base64 image data (raw base64 strings in `content`)
+   - Standard text responses (OpenAI-compatible format)
+
+3. **Provider-Specific Headers**: OpenRouter supports optional `siteName` and `siteUrl` headers for tracking and analytics.
+
+**What This Means for You:**
+
+When you use `OpenRouterChatModel` for image generation, the generated images are automatically extracted and placed in the `assistantGenMultiContent` field of the response Message, regardless of which underlying model format was used. You don't need to worry about the parsing details—it just works across all 100+ models.
+
+```dart
+// This works seamlessly across different image models:
+final response = await model.generate(
+  [Message.user('Generate an image')],
+  options: const ChatModelOptions(model: 'google/gemini-2.5-flash-image'),
+);
+
+// Images are always in the same place:
+final imagePart = response.assistantGenMultiContent!.first;
+```
+
+### Text Generation with OpenRouter
+
+```dart
+import 'package:threepio_core/src/components/model/providers/openrouter/openrouter_chat_model.dart';
+import 'package:threepio_core/src/components/model/providers/openrouter/openrouter_config.dart';
+import 'package:threepio_core/src/schema/message.dart';
+
+void main() async {
+  // Configure OpenRouter
+  final config = OpenRouterConfig(
+    apiKey: 'your-openrouter-api-key',
+    siteName: 'My App', // Optional: for tracking
+    siteUrl: 'https://myapp.com', // Optional: for analytics
+  );
+
+  final model = OpenRouterChatModel(config: config);
+
+  // Use any model from OpenRouter's catalog
+  final messages = [Message.user('Explain quantum computing in one sentence.')];
+
+  // Try Gemini
+  var response = await model.generate(
+    messages,
+    options: const ChatModelOptions(model: 'google/gemini-2.5-flash'),
+  );
+  print('Gemini: ${response.content}');
+
+  // Or Claude
+  response = await model.generate(
+    messages,
+    options: const ChatModelOptions(model: 'anthropic/claude-3.5-sonnet'),
+  );
+  print('Claude: ${response.content}');
+
+  // Or Llama
+  response = await model.generate(
+    messages,
+    options: const ChatModelOptions(model: 'meta-llama/llama-3.1-70b-instruct'),
+  );
+  print('Llama: ${response.content}');
+}
+```
+
+### Image Generation with OpenRouter
+
+OpenRouter supports image generation models like Gemini 2.5 Flash Image. Generated images are returned in the `assistantGenMultiContent` field as base64-encoded data URLs.
+
+```dart
+import 'package:threepio_core/src/components/model/chat_model_options.dart';
+
+void main() async {
+  final config = OpenRouterConfig(apiKey: 'your-api-key');
+  final model = OpenRouterChatModel(config: config);
+
+  final messages = [
+    Message.user('Generate a beautiful sunset over mountains'),
+  ];
+
+  // Generate image with Gemini 2.5 Flash Image
+  final response = await model.generate(
+    messages,
+    options: const ChatModelOptions(
+      model: 'google/gemini-2.5-flash-image',
+      maxTokens: 4096,
+    ),
+  );
+
+  // Extract image from multi-content response
+  if (response.assistantGenMultiContent != null) {
+    final imagePart = response.assistantGenMultiContent!.firstWhere(
+      (part) => part.type == ChatMessagePartType.imageUrl,
+    );
+
+    if (imagePart.image?.url != null) {
+      // imagePart.image.url contains the data URL (data:image/png;base64,...)
+      final imageDataUrl = imagePart.image!.url!;
+      print('Image generated: ${imageDataUrl.length} characters');
+
+      // Display in Flutter:
+      // Image.memory(base64Decode(imageDataUrl.split(',')[1]))
+    }
+  }
+}
+```
+
+### Streaming with OpenRouter
+
+```dart
+import 'package:threepio_core/src/streaming/stream_reader.dart';
+
+void main() async {
+  final config = OpenRouterConfig(apiKey: 'your-api-key');
+  final model = OpenRouterChatModel(config: config);
+
+  final messages = [Message.user('Write a haiku about programming')];
+
+  final reader = await model.stream(
+    messages,
+    options: const ChatModelOptions(model: 'google/gemini-2.5-flash'),
+  );
+
+  try {
+    while (true) {
+      final chunk = await reader.recv();
+      print(chunk.content); // Stream each word as it arrives
+    }
+  } on StreamEOFException {
+    // Stream complete
+  } finally {
+    await reader.close();
+  }
 }
 ```
 

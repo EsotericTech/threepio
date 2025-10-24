@@ -36,7 +36,7 @@ dev_dependencies:
 
   # Code Generation
   build_runner: ^2.4.0
-  freezed: ^2.4.0
+  freezed: ^3.2.3
   json_serializable: ^6.7.0
 
   # Linting
