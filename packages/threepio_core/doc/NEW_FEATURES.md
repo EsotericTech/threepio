@@ -202,6 +202,65 @@ if (response.assistantGenMultiContent != null) {
 }
 ```
 
+### Imagen Image Generation
+
+For dedicated image generation, use Google's Imagen models which provide higher quality and more control.
+
+```dart
+// Available Imagen models:
+// - imagen-4.0-generate-001 (Standard)
+// - imagen-4.0-ultra-generate-001 (Ultra - higher quality)
+// - imagen-4.0-fast-generate-001 (Fast - lower latency)
+
+final imagenModel = GeminiChatModel(
+  config: GeminiConfig(
+    apiKey: apiKey,
+    defaultModel: 'imagen-4.0-generate-001',
+  ),
+);
+
+// Basic image generation
+final response = await imagenModel.generate([
+  Message.user('A serene mountain landscape at sunset with snow-capped peaks'),
+]);
+
+// With options
+final response2 = await imagenModel.generate(
+  [Message.user('A cute robot playing with a kitten')],
+  options: const ChatModelOptions(
+    extra: {
+      'numberOfImages': 2,          // 1-4 images
+      'aspectRatio': '16:9',        // '1:1', '3:4', '4:3', '9:16', '16:9'
+      'personGeneration': 'dont_allow', // 'dont_allow', 'allow_adult', 'allow_all'
+      'imageSize': '2K',            // '1K', '2K' (Standard/Ultra only)
+    },
+  ),
+);
+
+// Access generated images
+if (response.assistantGenMultiContent != null) {
+  for (final part in response.assistantGenMultiContent!) {
+    if (part.type == ChatMessagePartType.imageUrl) {
+      final dataUrl = part.image?.url; // data:image/png;base64,...
+      final base64Data = dataUrl!.split(',')[1];
+      final bytes = base64Decode(base64Data);
+      await File('generated_image.png').writeAsBytes(bytes);
+    }
+  }
+}
+```
+
+**Imagen vs Gemini Image Generation:**
+
+| Feature | Gemini (gemini-*-image) | Imagen (imagen-*) |
+|---------|------------------------|-------------------|
+| API Endpoint | :generateContent | :predict |
+| Conversation | Yes (chat context) | No (single prompt) |
+| Image Count | 1 | 1-4 |
+| Aspect Ratios | Limited | 5 options |
+| Quality Control | Basic | Advanced |
+| Person Generation | No control | Configurable |
+
 ### Tool/Function Calling
 
 ```dart

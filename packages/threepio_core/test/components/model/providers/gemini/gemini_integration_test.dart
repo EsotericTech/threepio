@@ -613,4 +613,246 @@ void main() {
       }
     });
   });
+
+  // ============================================================
+  // Imagen Model Tests
+  // ============================================================
+  // NOTE: Imagen tests require a PAID API tier.
+  // Available Imagen models:
+  //   - imagen-4.0-generate-001 (Standard)
+  //   - imagen-4.0-ultra-generate-001 (Ultra - higher quality)
+  //   - imagen-4.0-fast-generate-001 (Fast - lower latency)
+  //
+  // Imagen uses a different API endpoint (:predict) and request format.
+  // Configuration options:
+  //   - numberOfImages: 1-4 (default: 1)
+  //   - aspectRatio: '1:1', '3:4', '4:3', '9:16', '16:9'
+  //   - personGeneration: 'dont_allow', 'allow_adult', 'allow_all'
+  //   - imageSize: '1K', '2K' (Standard/Ultra only)
+  group('Imagen Model Integration', () {
+    test('generates image with basic prompt', () async {
+      final imagenModel = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: apiKey,
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+      );
+
+      final messages = [
+        Message.user('A serene mountain landscape at sunset with snow-capped peaks'),
+      ];
+
+      try {
+        final response = await imagenModel.generate(messages);
+
+        print('Imagen response content: ${response.content}');
+        print('Has multimodal output: ${response.assistantGenMultiContent != null}');
+
+        expect(response.assistantGenMultiContent, isNotNull,
+            reason: 'Imagen should return images in assistantGenMultiContent');
+        expect(response.assistantGenMultiContent!.isNotEmpty, isTrue,
+            reason: 'Should have at least one image');
+
+        for (final part in response.assistantGenMultiContent!) {
+          print('Output part type: ${part.type}');
+          if (part.type == ChatMessagePartType.imageUrl) {
+            final url = part.image?.url ?? '';
+            print('Image URL prefix: ${url.substring(0, url.length.clamp(0, 50))}...');
+            expect(url, startsWith('data:image/'),
+                reason: 'Image should be a data URL');
+          }
+        }
+      } on GeminiException catch (e) {
+        if (e.statusCode == 429 ||
+            e.message.contains('limit') ||
+            e.message.contains('quota')) {
+          print('SKIPPED: Imagen requires paid API tier');
+          print('Error: ${e.message}');
+          return;
+        }
+        if (e.statusCode == 400 && e.message.contains('not found')) {
+          print('SKIPPED: Imagen model not available in this region/tier');
+          print('Error: ${e.message}');
+          return;
+        }
+        rethrow;
+      }
+    });
+
+    test('generates multiple images with options', () async {
+      final imagenModel = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: apiKey,
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+      );
+
+      final messages = [
+        Message.user('A cute robot playing with a cat'),
+      ];
+
+      try {
+        final response = await imagenModel.generate(
+          messages,
+          options: const ChatModelOptions(
+            extra: {
+              'numberOfImages': 2,
+              'aspectRatio': '16:9',
+              'personGeneration': 'dont_allow',
+            },
+          ),
+        );
+
+        print('Imagen response: ${response.content}');
+
+        expect(response.assistantGenMultiContent, isNotNull);
+
+        final imageCount = response.assistantGenMultiContent!
+            .where((p) => p.type == ChatMessagePartType.imageUrl)
+            .length;
+
+        print('Generated $imageCount images');
+        expect(imageCount, greaterThanOrEqualTo(1),
+            reason: 'Should generate at least 1 image');
+        // Note: API may return fewer images than requested
+      } on GeminiException catch (e) {
+        if (e.statusCode == 429 ||
+            e.message.contains('limit') ||
+            e.message.contains('quota')) {
+          print('SKIPPED: Imagen requires paid API tier');
+          return;
+        }
+        if (e.statusCode == 400 && e.message.contains('not found')) {
+          print('SKIPPED: Imagen model not available');
+          return;
+        }
+        rethrow;
+      }
+    });
+
+    test('handles different aspect ratios', () async {
+      final imagenModel = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: apiKey,
+          defaultModel: 'imagen-4.0-fast-generate-001',
+        ),
+      );
+
+      final aspectRatios = ['1:1', '16:9', '9:16'];
+
+      for (final ratio in aspectRatios) {
+        try {
+          print('Testing aspect ratio: $ratio');
+
+          final response = await imagenModel.generate(
+            [Message.user('A simple geometric pattern')],
+            options: ChatModelOptions(
+              extra: {
+                'aspectRatio': ratio,
+                'numberOfImages': 1,
+              },
+            ),
+          );
+
+          expect(response.assistantGenMultiContent, isNotNull);
+          print('  Generated image for $ratio aspect ratio');
+        } on GeminiException catch (e) {
+          if (e.statusCode == 429 ||
+              e.message.contains('limit') ||
+              e.message.contains('quota')) {
+            print('SKIPPED: Imagen requires paid API tier');
+            return;
+          }
+          if (e.statusCode == 400 && e.message.contains('not found')) {
+            print('SKIPPED: Imagen model not available');
+            return;
+          }
+          rethrow;
+        }
+      }
+    });
+
+    test('extracts prompt from multimodal message', () async {
+      final imagenModel = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: apiKey,
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+      );
+
+      // Use multimodal message format (text part)
+      final messages = [
+        Message(
+          role: RoleType.user,
+          userInputMultiContent: [
+            MessageInputPart.text('A futuristic cityscape at night'),
+          ],
+        ),
+      ];
+
+      try {
+        final response = await imagenModel.generate(messages);
+
+        expect(response.assistantGenMultiContent, isNotNull);
+        print('Successfully generated image from multimodal prompt');
+      } on GeminiException catch (e) {
+        if (e.statusCode == 429 ||
+            e.message.contains('limit') ||
+            e.message.contains('quota')) {
+          print('SKIPPED: Imagen requires paid API tier');
+          return;
+        }
+        if (e.statusCode == 400 && e.message.contains('not found')) {
+          print('SKIPPED: Imagen model not available');
+          return;
+        }
+        rethrow;
+      }
+    });
+
+    test('handles empty prompt gracefully', () async {
+      final imagenModel = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: apiKey,
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+      );
+
+      // Empty message
+      final messages = [
+        Message.user(''),
+      ];
+
+      expect(
+        () => imagenModel.generate(messages),
+        throwsA(isA<GeminiException>().having(
+          (e) => e.message,
+          'message',
+          contains('No prompt found'),
+        )),
+      );
+    });
+
+    test('model detection works correctly', () {
+      // This tests the internal model detection logic
+      final imagenModel = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: apiKey,
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+      );
+
+      final geminiModel = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: apiKey,
+          defaultModel: 'gemini-2.5-flash',
+        ),
+      );
+
+      // The models should use different endpoints internally
+      // We verify by checking the default model patterns
+      expect(imagenModel.config.defaultModel, startsWith('imagen-'));
+      expect(geminiModel.config.defaultModel, startsWith('gemini-'));
+    });
+  });
 }

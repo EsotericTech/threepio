@@ -455,4 +455,312 @@ void main() {
       expect(str, contains('INVALID_ARGUMENT'));
     });
   });
+
+  group('Imagen Support', () {
+    test('uses :predict endpoint for imagen models', () async {
+      Uri? capturedUri;
+
+      final mockClient = MockClient((request) async {
+        capturedUri = request.url;
+        return http.Response(
+          jsonEncode({
+            'predictions': [
+              {
+                'bytesBase64Encoded': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                'mimeType': 'image/png',
+              }
+            ],
+          }),
+          200,
+        );
+      });
+
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+        httpClient: mockClient,
+      );
+
+      await model.generate([Message.user('A sunset')]);
+
+      expect(capturedUri, isNotNull);
+      expect(capturedUri!.path, contains('imagen-4.0-generate-001'));
+      expect(capturedUri!.path, endsWith(':predict'));
+    });
+
+    test('uses :generateContent endpoint for gemini models', () async {
+      Uri? capturedUri;
+
+      final mockClient = MockClient((request) async {
+        capturedUri = request.url;
+        return http.Response(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': 'Hello!'}
+                  ],
+                  'role': 'model',
+                },
+              }
+            ],
+          }),
+          200,
+        );
+      });
+
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'gemini-2.5-flash',
+        ),
+        httpClient: mockClient,
+      );
+
+      await model.generate([Message.user('Hello')]);
+
+      expect(capturedUri, isNotNull);
+      expect(capturedUri!.path, contains('gemini-2.5-flash'));
+      expect(capturedUri!.path, endsWith(':generateContent'));
+    });
+
+    test('builds correct Imagen request body', () async {
+      Map<String, dynamic>? capturedBody;
+
+      final mockClient = MockClient((request) async {
+        capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'predictions': [
+              {
+                'bytesBase64Encoded': 'base64data',
+                'mimeType': 'image/png',
+              }
+            ],
+          }),
+          200,
+        );
+      });
+
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+        httpClient: mockClient,
+      );
+
+      await model.generate(
+        [Message.user('A mountain landscape')],
+        options: const ChatModelOptions(
+          extra: {
+            'numberOfImages': 2,
+            'aspectRatio': '16:9',
+            'personGeneration': 'dont_allow',
+            'imageSize': '2K',
+          },
+        ),
+      );
+
+      expect(capturedBody, isNotNull);
+      expect(capturedBody!['instances'], isA<List>());
+      expect(capturedBody!['instances'][0]['prompt'], equals('A mountain landscape'));
+      expect(capturedBody!['parameters']['sampleCount'], equals(2));
+      expect(capturedBody!['parameters']['aspectRatio'], equals('16:9'));
+      expect(capturedBody!['parameters']['personGeneration'], equals('dont_allow'));
+      expect(capturedBody!['parameters']['imageSize'], equals('2K'));
+    });
+
+    test('parses Imagen response correctly', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'predictions': [
+              {
+                'bytesBase64Encoded': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                'mimeType': 'image/png',
+              },
+              {
+                'bytesBase64Encoded': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P9fHwAE/gH8KX+hqwAAAABJRU5ErkJggg==',
+                'mimeType': 'image/png',
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+        httpClient: mockClient,
+      );
+
+      final response = await model.generate([Message.user('Test prompt')]);
+
+      expect(response.role, equals(RoleType.assistant));
+      expect(response.assistantGenMultiContent, isNotNull);
+      expect(response.assistantGenMultiContent!.length, equals(2));
+
+      for (final part in response.assistantGenMultiContent!) {
+        expect(part.type, equals(ChatMessagePartType.imageUrl));
+        expect(part.image?.url, startsWith('data:image/png;base64,'));
+        expect(part.image?.mimeType, equals('image/png'));
+      }
+    });
+
+    test('throws error for empty prompt', () async {
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+      );
+
+      expect(
+        () => model.generate([Message.user('')]),
+        throwsA(isA<GeminiException>().having(
+          (e) => e.message,
+          'message',
+          contains('No prompt found'),
+        )),
+      );
+    });
+
+    test('extracts prompt from multimodal message', () async {
+      Map<String, dynamic>? capturedBody;
+
+      final mockClient = MockClient((request) async {
+        capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'predictions': [
+              {'bytesBase64Encoded': 'base64', 'mimeType': 'image/png'}
+            ],
+          }),
+          200,
+        );
+      });
+
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+        httpClient: mockClient,
+      );
+
+      await model.generate([
+        Message(
+          role: RoleType.user,
+          userInputMultiContent: [
+            MessageInputPart.text('A beautiful sunset'),
+          ],
+        ),
+      ]);
+
+      expect(capturedBody!['instances'][0]['prompt'], equals('A beautiful sunset'));
+    });
+
+    test('handles Imagen API error response', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'error': {
+              'code': 400,
+              'message': 'Invalid prompt',
+              'status': 'INVALID_ARGUMENT',
+            },
+          }),
+          400,
+        );
+      });
+
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+        httpClient: mockClient,
+      );
+
+      expect(
+        () => model.generate([Message.user('Test')]),
+        throwsA(isA<GeminiException>().having(
+          (e) => e.message,
+          'message',
+          contains('Invalid prompt'),
+        )),
+      );
+    });
+
+    test('handles empty predictions response', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'predictions': []}),
+          200,
+        );
+      });
+
+      final model = GeminiChatModel(
+        config: GeminiConfig(
+          apiKey: 'test-key',
+          defaultModel: 'imagen-4.0-generate-001',
+        ),
+        httpClient: mockClient,
+      );
+
+      expect(
+        () => model.generate([Message.user('Test')]),
+        throwsA(isA<GeminiException>().having(
+          (e) => e.message,
+          'message',
+          contains('No images generated'),
+        )),
+      );
+    });
+
+    test('detects all Imagen model variants', () async {
+      final imagenModels = [
+        'imagen-4.0-generate-001',
+        'imagen-4.0-ultra-generate-001',
+        'imagen-4.0-fast-generate-001',
+        'imagen-3.0-generate-001', // Even deprecated models should be detected
+      ];
+
+      for (final modelName in imagenModels) {
+        Uri? capturedUri;
+
+        final mockClient = MockClient((request) async {
+          capturedUri = request.url;
+          return http.Response(
+            jsonEncode({
+              'predictions': [
+                {'bytesBase64Encoded': 'base64', 'mimeType': 'image/png'}
+              ],
+            }),
+            200,
+          );
+        });
+
+        final model = GeminiChatModel(
+          config: GeminiConfig(
+            apiKey: 'test-key',
+            defaultModel: modelName,
+          ),
+          httpClient: mockClient,
+        );
+
+        await model.generate([Message.user('Test')]);
+
+        expect(capturedUri!.path, endsWith(':predict'),
+            reason: '$modelName should use :predict endpoint');
+      }
+    });
+  });
 }

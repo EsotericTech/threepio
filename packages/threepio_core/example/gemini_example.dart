@@ -41,6 +41,7 @@ Future<void> main() async {
   await streamingExample(model);
   await toolCallingExample(model);
   await agentExample(model);
+  await imagenExample(apiKey);
 }
 
 /// Example 1: Basic text generation
@@ -239,5 +240,68 @@ class _CalculatorTool extends InvokableTool {
     }
 
     return 'Could not parse expression: $expr';
+  }
+}
+
+/// Example 5: Imagen image generation
+Future<void> imagenExample(String apiKey) async {
+  print('\n=== Imagen Image Generation ===\n');
+
+  // Create Imagen model
+  // Available models:
+  //   - imagen-4.0-generate-001 (Standard)
+  //   - imagen-4.0-ultra-generate-001 (Ultra - higher quality)
+  //   - imagen-4.0-fast-generate-001 (Fast - lower latency)
+  final imagenModel = GeminiChatModel(
+    config: GeminiConfig(
+      apiKey: apiKey,
+      defaultModel: 'imagen-4.0-generate-001',
+    ),
+  );
+
+  print('Generating image with Imagen...');
+  print('Prompt: "A serene mountain landscape at sunset"');
+
+  try {
+    final response = await imagenModel.generate(
+      [Message.user('A serene mountain landscape at sunset with snow-capped peaks')],
+      options: const ChatModelOptions(
+        extra: {
+          'numberOfImages': 1,        // 1-4 images
+          'aspectRatio': '16:9',      // Widescreen
+          'personGeneration': 'dont_allow',
+        },
+      ),
+    );
+
+    print('\nResponse: ${response.content}');
+
+    if (response.assistantGenMultiContent != null) {
+      print('Generated ${response.assistantGenMultiContent!.length} image(s)');
+
+      for (var i = 0; i < response.assistantGenMultiContent!.length; i++) {
+        final part = response.assistantGenMultiContent![i];
+        if (part.type == ChatMessagePartType.imageUrl) {
+          final url = part.image?.url ?? '';
+          final mimeType = part.image?.mimeType ?? 'unknown';
+          print('Image ${i + 1}: $mimeType (${url.length} bytes base64)');
+
+          // In a real app, you would save the image:
+          // final base64Data = url.split(',')[1];
+          // final bytes = base64Decode(base64Data);
+          // await File('output_$i.png').writeAsBytes(bytes);
+        }
+      }
+    }
+  } on GeminiException catch (e) {
+    if (e.statusCode == 429 || e.message.contains('quota')) {
+      print('Note: Imagen requires a paid API tier');
+      print('Error: ${e.message}');
+    } else if (e.statusCode == 400 && e.message.contains('not found')) {
+      print('Note: Imagen model not available in this region');
+      print('Error: ${e.message}');
+    } else {
+      print('Error: $e');
+    }
   }
 }
