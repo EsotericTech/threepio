@@ -1,8 +1,15 @@
 import 'dart:async';
 
-import '../callbacks/callback_handler.dart';
+import 'package:uuid/uuid.dart';
+
 import '../callbacks/callback_manager.dart';
 import '../callbacks/run_info.dart';
+import 'checkpoint/checkpoint.dart';
+import 'checkpoint/checkpoint_config.dart';
+import 'checkpoint/checkpoint_store.dart';
+import 'checkpoint/exceptions.dart';
+import 'checkpoint/execution_address.dart';
+import 'checkpoint/hitl.dart';
 import 'graph_edge.dart';
 import 'graph_node.dart';
 import 'graph_state.dart';
@@ -29,16 +36,31 @@ import 'graph_state.dart';
 class StateGraph<S extends GraphState> {
   StateGraph({
     this.maxIterations = 100,
-  });
+    this.checkpointStore,
+    this.checkpointConfig,
+    String? graphId,
+  }) : graphId = graphId ?? const Uuid().v4();
 
   /// Maximum iterations to prevent infinite loops
   final int maxIterations;
+
+  /// Optional checkpoint store for persistence
+  final CheckpointStore<S>? checkpointStore;
+
+  /// Checkpoint configuration
+  final CheckpointConfig? checkpointConfig;
+
+  /// Unique identifier for this graph
+  final String graphId;
 
   /// All nodes in the graph
   final Map<String, GraphNode<S>> _nodes = {};
 
   /// All edges in the graph
   final List<GraphEdge<S>> _edges = [];
+
+  /// Human-in-the-loop nodes
+  final Map<String, HumanInputNode<S, dynamic>> _hitlNodes = {};
 
   /// Entry point node name
   String? _entryPoint;
@@ -154,14 +176,133 @@ class StateGraph<S extends GraphState> {
     return this;
   }
 
+  /// Add a human-in-the-loop node to the graph.
+  ///
+  /// HITL nodes pause execution and throw [HumanInputRequired] when reached.
+  /// Use [resumeWithHumanInput] to continue execution with the provided input.
+  ///
+  /// Example:
+  /// ```dart
+  /// final approvalNode = HumanInputNode<MyState, bool>(
+  ///   name: 'approval',
+  ///   prompt: (state) => 'Approve: ${state.summary}?',
+  ///   processInput: (state, approved) => state.copyWith(approved: approved),
+  /// );
+  ///
+  /// graph.addHumanInputNode(approvalNode);
+  /// ```
+  StateGraph<S> addHumanInputNode<I>(HumanInputNode<S, I> hitlNode) {
+    // Store the HITL node for later resume
+    _hitlNodes[hitlNode.name] = hitlNode;
+
+    // Add a node that triggers the interrupt
+    return addNode(
+      hitlNode.name,
+      (state) async {
+        // Create checkpoint for the interrupt
+        final checkpoint = Checkpoint<S>.now(
+          state: state,
+          currentNode: hitlNode.name,
+          path: [], // Will be filled by execution context
+          iteration: 0, // Will be filled by execution context
+          interruptType: InterruptType.humanInput,
+          interruptReason: hitlNode.prompt(state),
+        );
+
+        throw HumanInputRequired<S, I>(
+          nodeName: hitlNode.name,
+          prompt: hitlNode.prompt(state),
+          checkpoint: checkpoint,
+          validator: hitlNode.validator,
+          timeout: hitlNode.timeout,
+        );
+      },
+      description: hitlNode.description ?? 'Human input: ${hitlNode.name}',
+    );
+  }
+
+  /// Resume execution from a checkpoint with human input.
+  ///
+  /// Use this after catching [HumanInputRequired] to continue execution.
+  ///
+  /// Example:
+  /// ```dart
+  /// try {
+  ///   await graph.invoke(initialState, threadId: 'user-123');
+  /// } on HumanInputRequired<MyState, bool> catch (e) {
+  ///   final userApproval = await getUserApproval();
+  ///   final result = await graph.resumeWithHumanInput<bool>(
+  ///     e.checkpoint.id!,
+  ///     input: userApproval,
+  ///     threadId: 'user-123',
+  ///   );
+  /// }
+  /// ```
+  Future<GraphResult<S>> resumeWithHumanInput<I>(
+    String checkpointId, {
+    required I input,
+    String? threadId,
+    CallbackManager? callbackManager,
+  }) async {
+    if (checkpointStore == null) {
+      throw StateError(
+        'Cannot resume without checkpoint store. '
+        'Provide checkpointStore when creating StateGraph.',
+      );
+    }
+
+    final checkpoint = await checkpointStore!.load(checkpointId, threadId: threadId);
+    if (checkpoint == null) {
+      throw CheckpointNotFoundException(checkpointId, threadId: threadId);
+    }
+
+    final hitlNode = _hitlNodes[checkpoint.currentNode];
+    if (hitlNode == null) {
+      throw CheckpointIncompatibleException(
+        'Node "${checkpoint.currentNode}" is not a HITL node',
+        checkpointId: checkpointId,
+      );
+    }
+
+    // Process the input and update state
+    final updatedState = hitlNode.resumeWithInput(checkpoint.state, input);
+
+    // Find the next node after the HITL node
+    final nextNodes = await _getNextNodes(checkpoint.currentNode, updatedState);
+    final nextNode = nextNodes.isNotEmpty ? nextNodes.first : END;
+
+    // Continue execution from the next node
+    return _executeGraph(
+      updatedState,
+      startNode: nextNode,
+      startIteration: checkpoint.iteration,
+      existingPath: [...checkpoint.path, checkpoint.currentNode],
+      threadId: threadId,
+      callbackManager: callbackManager,
+    );
+  }
+
   /// Execute the graph with the given initial state
   ///
-  /// [initialState] - Starting state
+  /// [initialState] - Starting state (ignored if resuming from checkpoint)
   /// [callbackManager] - Optional callback manager for observability
+  /// [checkpointId] - Optional checkpoint ID to resume from
+  /// [threadId] - Optional thread ID for checkpoint isolation
   Future<GraphResult<S>> invoke(
     S initialState, {
     CallbackManager? callbackManager,
+    String? checkpointId,
+    String? threadId,
   }) async {
+    // Resume from checkpoint if provided
+    if (checkpointId != null) {
+      return _resumeFromCheckpoint(
+        checkpointId,
+        threadId: threadId,
+        callbackManager: callbackManager,
+      );
+    }
+
     if (_entryPoint == null) {
       throw StateError('Entry point not set. Call setEntryPoint() first.');
     }
@@ -175,6 +316,7 @@ class StateGraph<S extends GraphState> {
           'entry_point': _entryPoint,
           'node_count': _nodes.length,
           'edge_count': _edges.length,
+          'graph_id': graphId,
         },
       );
 
@@ -182,27 +324,184 @@ class StateGraph<S extends GraphState> {
         {},
         runInfo,
         initialState,
-        () => _executeGraph(initialState),
+        () => _executeGraph(
+          initialState,
+          threadId: threadId,
+          callbackManager: callbackManager,
+        ),
       );
     } else {
-      return _executeGraph(initialState);
+      return _executeGraph(
+        initialState,
+        threadId: threadId,
+        callbackManager: callbackManager,
+      );
     }
   }
 
-  /// Internal graph execution
-  Future<GraphResult<S>> _executeGraph(S initialState) async {
+  /// Resume execution from a checkpoint.
+  Future<GraphResult<S>> _resumeFromCheckpoint(
+    String checkpointId, {
+    String? threadId,
+    CallbackManager? callbackManager,
+  }) async {
+    if (checkpointStore == null) {
+      throw StateError(
+        'Cannot resume without checkpoint store. '
+        'Provide checkpointStore when creating StateGraph.',
+      );
+    }
+
+    final checkpoint = await checkpointStore!.load(checkpointId, threadId: threadId);
+    if (checkpoint == null) {
+      throw CheckpointNotFoundException(checkpointId, threadId: threadId);
+    }
+
+    // For HITL checkpoints, throw error - use resumeWithHumanInput instead
+    if (checkpoint.interruptType == InterruptType.humanInput) {
+      throw CheckpointIncompatibleException(
+        'Checkpoint requires human input. Use resumeWithHumanInput() instead.',
+        checkpointId: checkpointId,
+      );
+    }
+
+    // Determine start node based on interrupt type
+    String startNode;
+    if (checkpoint.interruptType == InterruptType.beforeNode) {
+      // Resume at the node that was about to execute
+      startNode = checkpoint.currentNode;
+    } else {
+      // Resume at next node after the checkpoint node
+      final nextNodes = await _getNextNodes(checkpoint.currentNode, checkpoint.state);
+      startNode = nextNodes.isNotEmpty ? nextNodes.first : END;
+    }
+
+    return _executeGraph(
+      checkpoint.state,
+      startNode: startNode,
+      startIteration: checkpoint.iteration,
+      existingPath: checkpoint.path,
+      threadId: threadId ?? checkpoint.threadId,
+      callbackManager: callbackManager,
+    );
+  }
+
+  /// Internal graph execution with checkpoint support.
+  Future<GraphResult<S>> _executeGraph(
+    S initialState, {
+    String? startNode,
+    int startIteration = 0,
+    List<String>? existingPath,
+    String? threadId,
+    CallbackManager? callbackManager,
+  }) async {
     var currentState = initialState;
-    var currentNode = _entryPoint!;
-    final path = <String>[];
-    var iterations = 0;
+    var currentNode = startNode ?? _entryPoint!;
+    final path = existingPath?.toList() ?? <String>[];
+    var iterations = startIteration;
+
+    final config = checkpointConfig;
+    final effectiveThreadId = threadId ?? config?.threadIdProvider?.call();
 
     while (currentNode != END && iterations < maxIterations) {
       iterations++;
+
+      // Check for interrupt BEFORE node
+      if (config != null && config.shouldInterruptBefore(currentNode)) {
+        final checkpoint = await _createCheckpoint(
+          state: currentState,
+          currentNode: currentNode,
+          path: path,
+          iteration: iterations,
+          threadId: effectiveThreadId,
+          interruptType: InterruptType.beforeNode,
+          interruptReason: 'Interrupt before node: $currentNode',
+        );
+
+        throw GraphInterruptException<S>(
+          checkpoint: checkpoint,
+          reason: 'Interrupt before node: $currentNode',
+        );
+      }
+
       path.add(currentNode);
 
       // Execute current node
       final node = _nodes[currentNode]!;
-      currentState = await node.execute(currentState);
+      try {
+        currentState = await node.execute(currentState);
+      } on HumanInputRequired<S, dynamic> catch (e) {
+        // Update checkpoint with current execution context
+        final checkpoint = Checkpoint<S>.now(
+          state: e.checkpoint.state,
+          currentNode: currentNode,
+          path: path,
+          iteration: iterations,
+          threadId: effectiveThreadId,
+          interruptType: InterruptType.humanInput,
+          interruptReason: e.prompt,
+          address: ExecutionAddress(graphId: graphId, nodeName: currentNode),
+        );
+
+        // Save checkpoint if configured
+        if (checkpointStore != null && (config?.autoSave ?? false)) {
+          await checkpointStore!.save(checkpoint, threadId: effectiveThreadId);
+        }
+
+        throw HumanInputRequired<S, dynamic>(
+          nodeName: e.nodeName,
+          prompt: e.prompt,
+          checkpoint: checkpoint,
+          validator: e.validator,
+          timeout: e.timeout,
+        );
+      } catch (error) {
+        // Create checkpoint on error if configured
+        if (config != null && config.checkpointOnError && checkpointStore != null) {
+          final errorCheckpoint = await _createCheckpoint(
+            state: currentState,
+            currentNode: currentNode,
+            path: path,
+            iteration: iterations,
+            threadId: effectiveThreadId,
+            interruptType: InterruptType.error,
+            interruptReason: 'Error: $error',
+          );
+
+          await checkpointStore!.save(errorCheckpoint, threadId: effectiveThreadId);
+        }
+        rethrow;
+      }
+
+      // Check for interrupt AFTER node
+      if (config != null && config.shouldInterruptAfter(currentNode)) {
+        final checkpoint = await _createCheckpoint(
+          state: currentState,
+          currentNode: currentNode,
+          path: path,
+          iteration: iterations,
+          threadId: effectiveThreadId,
+          interruptType: InterruptType.afterNode,
+          interruptReason: 'Interrupt after node: $currentNode',
+        );
+
+        throw GraphInterruptException<S>(
+          checkpoint: checkpoint,
+          reason: 'Interrupt after node: $currentNode',
+        );
+      }
+
+      // Checkpoint every node if configured
+      if (config != null && config.checkpointEveryNode && checkpointStore != null) {
+        final nodeCheckpoint = await _createCheckpoint(
+          state: currentState,
+          currentNode: currentNode,
+          path: path,
+          iteration: iterations,
+          threadId: effectiveThreadId,
+        );
+        await checkpointStore!.save(nodeCheckpoint, threadId: effectiveThreadId);
+      }
 
       // Find next node(s)
       final nextNodes = await _getNextNodes(currentNode, currentState);
@@ -226,16 +525,67 @@ class StateGraph<S extends GraphState> {
     }
 
     if (iterations >= maxIterations) {
-      throw StateError(
-        'Graph exceeded maximum iterations ($maxIterations). Possible infinite loop.',
+      // Create checkpoint before throwing
+      if (config != null && config.checkpointOnError && checkpointStore != null) {
+        final maxIterCheckpoint = await _createCheckpoint(
+          state: currentState,
+          currentNode: currentNode,
+          path: path,
+          iteration: iterations,
+          threadId: effectiveThreadId,
+          interruptType: InterruptType.error,
+          interruptReason: 'Max iterations exceeded',
+        );
+        await checkpointStore!.save(maxIterCheckpoint, threadId: effectiveThreadId);
+      }
+
+      throw MaxIterationsExceededException(
+        maxIterations: maxIterations,
+        currentNode: currentNode,
       );
     }
 
     return GraphResult<S>(
       state: currentState,
       path: path,
-      metadata: {'iterations': iterations},
+      metadata: {
+        'iterations': iterations,
+        'graph_id': graphId,
+        if (effectiveThreadId != null) 'thread_id': effectiveThreadId,
+      },
     );
+  }
+
+  /// Creates a checkpoint at the current execution point.
+  Future<Checkpoint<S>> _createCheckpoint({
+    required S state,
+    required String currentNode,
+    required List<String> path,
+    required int iteration,
+    String? threadId,
+    InterruptType? interruptType,
+    String? interruptReason,
+  }) async {
+    final checkpoint = Checkpoint<S>.now(
+      state: state,
+      currentNode: currentNode,
+      path: List.from(path),
+      iteration: iteration,
+      threadId: threadId,
+      address: ExecutionAddress(
+        graphId: graphId,
+        nodeName: currentNode,
+      ),
+      interruptType: interruptType,
+      interruptReason: interruptReason,
+    );
+
+    // Auto-save if configured
+    if (checkpointStore != null && (checkpointConfig?.autoSave ?? false)) {
+      await checkpointStore!.save(checkpoint, threadId: threadId);
+    }
+
+    return checkpoint;
   }
 
   /// Get next node(s) from current node

@@ -6,6 +6,7 @@
 /// - Parallel execution
 /// - Loops and cycles
 /// - Checkpoint/resume support
+/// - Human-in-the-loop patterns
 ///
 /// Example:
 /// ```dart
@@ -20,8 +21,29 @@
 ///
 /// final result = await graph.invoke(MyState(query: 'hello'));
 /// ```
+///
+/// ## Checkpoint & Resume
+///
+/// ```dart
+/// final store = InMemoryCheckpointStore<MyState>();
+/// final graph = StateGraph<MyState>(
+///   checkpointStore: store,
+///   checkpointConfig: CheckpointConfig(
+///     interruptBefore: ['human_review'],
+///     autoSave: true,
+///   ),
+/// );
+///
+/// try {
+///   await graph.invoke(initialState, threadId: 'user-123');
+/// } on GraphInterruptException catch (e) {
+///   // Resume later with checkpoint ID
+///   await graph.invoke(state, checkpointId: e.checkpoint.id);
+/// }
+/// ```
+export 'checkpoint/checkpoint_exports.dart';
 export 'graph_builder.dart';
-export 'graph_checkpoint.dart';
+export 'graph_checkpoint.dart' show JsonCheckpoint; // Keep for backwards compatibility
 export 'graph_edge.dart';
 export 'graph_node.dart';
 export 'graph_state.dart';
