@@ -31,9 +31,9 @@ Future<void> main() async {
 
     print('Response: ${response.content}');
     print('\nToken usage:');
-    print('  Prompt tokens: ${response.tokenUsage?.promptTokens}');
-    print('  Completion tokens: ${response.tokenUsage?.completionTokens}');
-    print('  Total tokens: ${response.tokenUsage?.totalTokens}');
+    print('  Prompt tokens: ${response.responseMeta?.usage?.promptTokens}');
+    print('  Completion tokens: ${response.responseMeta?.usage?.completionTokens}');
+    print('  Total tokens: ${response.responseMeta?.usage?.totalTokens}');
   } catch (e) {
     print('Error: $e');
   }
