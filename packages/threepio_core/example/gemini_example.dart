@@ -44,7 +44,7 @@ Future<void> main() async {
   await imagenExample(apiKey);
 }
 
-/// Example 1: Basic text generation
+// Example 1: Basic text generation
 Future<void> basicGeneration(GeminiChatModel model) async {
   print('\n=== Basic Generation ===\n');
 

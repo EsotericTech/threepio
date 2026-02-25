@@ -149,7 +149,11 @@ class GeminiConverters {
 
   /// Guess MIME type from URL
   static String _guessMimeType(String url, String defaultType) {
-    final lower = url.toLowerCase();
+    // Strip query parameters and fragments before checking extension
+    // Firebase Storage URLs have format: ...uuid.png?alt=media&token=xxx
+    final urlWithoutQuery = url.split('?').first.split('#').first;
+    final lower = urlWithoutQuery.toLowerCase();
+
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
     if (lower.endsWith('.gif')) return 'image/gif';
