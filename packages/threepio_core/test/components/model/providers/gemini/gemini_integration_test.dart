@@ -129,9 +129,14 @@ class TemperatureConverterTool extends InvokableTool {
 }
 
 void main() {
-  // API key from environment or hardcoded for testing
-  final apiKey = Platform.environment['GEMINI_API_KEY'] ??
-      '***REMOVED***';
+  // API key must be provided via environment variable
+  final apiKey = Platform.environment['GEMINI_API_KEY'];
+  if (apiKey == null || apiKey.isEmpty) {
+    test('GEMINI_API_KEY not set - skipping integration tests', () {
+      print('Skipping Gemini integration tests: GEMINI_API_KEY not set');
+    });
+    return;
+  }
 
   late GeminiConfig config;
   late GeminiChatModel model;
