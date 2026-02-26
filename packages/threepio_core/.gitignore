@@ -42,6 +42,4 @@ coverage/
 *.incremental.dill
 
 # Flutter/Dart specific
-*.g.dart
-*.freezed.dart
 *.mocks.dart
