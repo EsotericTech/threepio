@@ -24,7 +24,7 @@ enum RoleType {
 
 /// Function call in a message
 @freezed
-class FunctionCall with _$FunctionCall {
+abstract class FunctionCall with _$FunctionCall {
   const factory FunctionCall({
     /// Name of the function to call
     required String name,
@@ -39,7 +39,7 @@ class FunctionCall with _$FunctionCall {
 
 /// Tool call in a message
 @freezed
-class ToolCall with _$ToolCall {
+abstract class ToolCall with _$ToolCall {
   const factory ToolCall({
     /// Index for multiple tool calls
     int? index,
@@ -101,7 +101,7 @@ enum ImageURLDetail {
 
 /// Common structure for multi-modal message parts
 @freezed
-class MessagePartCommon with _$MessagePartCommon {
+abstract class MessagePartCommon with _$MessagePartCommon {
   const factory MessagePartCommon({
     /// URL (traditional or RFC-2397 data URI)
     String? url,
@@ -122,7 +122,7 @@ class MessagePartCommon with _$MessagePartCommon {
 
 /// Image input in a message
 @freezed
-class MessageInputImage with _$MessageInputImage {
+abstract class MessageInputImage with _$MessageInputImage {
   const factory MessageInputImage({
     /// Common fields
     required MessagePartCommon common,
@@ -137,7 +137,7 @@ class MessageInputImage with _$MessageInputImage {
 
 /// Audio input in a message
 @freezed
-class MessageInputAudio with _$MessageInputAudio {
+abstract class MessageInputAudio with _$MessageInputAudio {
   const factory MessageInputAudio({
     /// Common fields
     required MessagePartCommon common,
@@ -149,7 +149,7 @@ class MessageInputAudio with _$MessageInputAudio {
 
 /// Video input in a message
 @freezed
-class MessageInputVideo with _$MessageInputVideo {
+abstract class MessageInputVideo with _$MessageInputVideo {
   const factory MessageInputVideo({
     /// Common fields
     required MessagePartCommon common,
@@ -161,7 +161,7 @@ class MessageInputVideo with _$MessageInputVideo {
 
 /// File input in a message
 @freezed
-class MessageInputFile with _$MessageInputFile {
+abstract class MessageInputFile with _$MessageInputFile {
   const factory MessageInputFile({
     /// Common fields
     required MessagePartCommon common,
@@ -173,7 +173,7 @@ class MessageInputFile with _$MessageInputFile {
 
 /// Input part of a message (user-provided)
 @freezed
-class MessageInputPart with _$MessageInputPart {
+abstract class MessageInputPart with _$MessageInputPart {
   const factory MessageInputPart({
     /// Type of the part
     required ChatMessagePartType type,
@@ -216,7 +216,7 @@ class MessageInputPart with _$MessageInputPart {
 
 /// Output part of a message (model-generated)
 @freezed
-class MessageOutputPart with _$MessageOutputPart {
+abstract class MessageOutputPart with _$MessageOutputPart {
   const factory MessageOutputPart({
     /// Type of the part
     required ChatMessagePartType type,
@@ -240,7 +240,7 @@ class MessageOutputPart with _$MessageOutputPart {
 
 /// Token usage information
 @freezed
-class TokenUsage with _$TokenUsage {
+abstract class TokenUsage with _$TokenUsage {
   const factory TokenUsage({
     /// Number of prompt tokens
     required int promptTokens,
@@ -261,7 +261,7 @@ class TokenUsage with _$TokenUsage {
 
 /// Prompt token details
 @freezed
-class PromptTokenDetails with _$PromptTokenDetails {
+abstract class PromptTokenDetails with _$PromptTokenDetails {
   const factory PromptTokenDetails({
     /// Cached tokens in the prompt
     @Default(0) int cachedTokens,
@@ -273,7 +273,7 @@ class PromptTokenDetails with _$PromptTokenDetails {
 
 /// Log probability information for a token
 @freezed
-class LogProb with _$LogProb {
+abstract class LogProb with _$LogProb {
   const factory LogProb({
     /// The token text
     required String token,
@@ -294,7 +294,7 @@ class LogProb with _$LogProb {
 
 /// Top log probability information
 @freezed
-class TopLogProb with _$TopLogProb {
+abstract class TopLogProb with _$TopLogProb {
   const factory TopLogProb({
     /// The token text
     required String token,
@@ -312,7 +312,7 @@ class TopLogProb with _$TopLogProb {
 
 /// Log probabilities structure
 @freezed
-class LogProbs with _$LogProbs {
+abstract class LogProbs with _$LogProbs {
   const factory LogProbs({
     /// Content with log probability information
     @Default([]) List<LogProb> content,
@@ -324,7 +324,7 @@ class LogProbs with _$LogProbs {
 
 /// Response metadata
 @freezed
-class ResponseMeta with _$ResponseMeta {
+abstract class ResponseMeta with _$ResponseMeta {
   const factory ResponseMeta({
     /// Reason for finishing (e.g., "stop", "length", "tool_calls")
     String? finishReason,
@@ -342,7 +342,7 @@ class ResponseMeta with _$ResponseMeta {
 
 /// Main message class
 @freezed
-class Message with _$Message {
+abstract class Message with _$Message {
   const factory Message({
     /// Role of the message sender
     required RoleType role,

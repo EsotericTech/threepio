@@ -20,7 +20,7 @@ enum ToolChoice {
 
 /// JSON Schema property definition
 @freezed
-class JSONSchemaProperty with _$JSONSchemaProperty {
+abstract class JSONSchemaProperty with _$JSONSchemaProperty {
   const factory JSONSchemaProperty({
     /// Property type (string, number, boolean, object, array, etc.)
     required String type,
@@ -99,7 +99,7 @@ class JSONSchemaProperty with _$JSONSchemaProperty {
 
 /// JSON Schema for function parameters
 @freezed
-class JSONSchema with _$JSONSchema {
+abstract class JSONSchema with _$JSONSchema {
   const factory JSONSchema({
     /// Schema type (always "object" for function parameters)
     @Default('object') String type,
@@ -120,7 +120,7 @@ class JSONSchema with _$JSONSchema {
 
 /// Function information for tool calling
 @freezed
-class FunctionInfo with _$FunctionInfo {
+abstract class FunctionInfo with _$FunctionInfo {
   const factory FunctionInfo({
     /// Name of the function
     required String name,
@@ -141,7 +141,7 @@ class FunctionInfo with _$FunctionInfo {
 
 /// Tool information for LLM tool calling
 @freezed
-class ToolInfo with _$ToolInfo {
+abstract class ToolInfo with _$ToolInfo {
   const factory ToolInfo({
     /// Tool type (typically "function")
     @Default('function') String type,

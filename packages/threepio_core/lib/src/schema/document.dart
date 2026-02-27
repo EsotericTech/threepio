@@ -5,7 +5,7 @@ part 'document.g.dart';
 
 /// Document source information
 @freezed
-class DocumentSource with _$DocumentSource {
+abstract class DocumentSource with _$DocumentSource {
   const factory DocumentSource({
     /// URI of the document source
     required String uri,
@@ -20,7 +20,7 @@ class DocumentSource with _$DocumentSource {
 
 /// Document for RAG (Retrieval-Augmented Generation)
 @freezed
-class Document with _$Document {
+abstract class Document with _$Document {
   const factory Document({
     /// Unique identifier for the document
     String? id,
@@ -70,7 +70,7 @@ class Document with _$Document {
 
 /// Document chunk (for splitting large documents)
 @freezed
-class DocumentChunk with _$DocumentChunk {
+abstract class DocumentChunk with _$DocumentChunk {
   const factory DocumentChunk({
     /// Chunk content
     required String content,
@@ -97,7 +97,7 @@ class DocumentChunk with _$DocumentChunk {
 
 /// Document with chunks
 @freezed
-class ChunkedDocument with _$ChunkedDocument {
+abstract class ChunkedDocument with _$ChunkedDocument {
   const factory ChunkedDocument({
     /// Original document
     required Document document,

@@ -4,7 +4,7 @@ part 'stream_item.freezed.dart';
 
 /// Represents an item in a stream with optional error information
 @freezed
-class StreamItem<T> with _$StreamItem<T> {
+abstract class StreamItem<T> with _$StreamItem<T> {
   const factory StreamItem({
     /// The chunk of data (null for error-only items)
     T? chunk,
