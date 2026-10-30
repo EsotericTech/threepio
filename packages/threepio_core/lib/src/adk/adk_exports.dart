@@ -92,7 +92,12 @@ export 'events/agent_action.dart';
 export 'events/agent_event.dart' hide TokenUsage;
 
 // Agents
-export 'agents/chat_model_agent.dart';
+export 'agents/legacy_chat_model_agent.dart';
+// Eino v0.9-shaped runtime: ChatModelAgent + Runner, handlers, approval, cancel
+export 'runtime/agent_handler.dart';
+export 'runtime/chat_model_agent.dart';
+export 'runtime/runner.dart';
+export 'runtime/tool_call_context.dart';
 export 'agents/workflow_agent.dart';
 export 'agents/plan_execute_agent.dart';
 export 'agents/supervisor_agent.dart';

@@ -253,10 +253,69 @@ abstract class TokenUsage with _$TokenUsage {
 
     /// Breakdown of prompt token details
     PromptTokenDetails? promptTokenDetails,
+
+    /// Breakdown of completion token details (reasoning, image, audio)
+    CompletionTokenDetails? completionTokenDetails,
+
+    /// Cost in USD as reported by the provider (OpenRouter `usage.cost`)
+    double? cost,
   }) = _TokenUsage;
+
+  const TokenUsage._();
 
   factory TokenUsage.fromJson(Map<String, dynamic> json) =>
       _$TokenUsageFromJson(json);
+
+  /// Usage with every counter at zero
+  static const TokenUsage zero =
+      TokenUsage(promptTokens: 0, completionTokens: 0, totalTokens: 0);
+
+  /// Sum of two usages (details and cost included)
+  TokenUsage operator +(TokenUsage other) => TokenUsage(
+        promptTokens: promptTokens + other.promptTokens,
+        completionTokens: completionTokens + other.completionTokens,
+        totalTokens: totalTokens + other.totalTokens,
+        promptTokenDetails: promptTokenDetails == null &&
+                other.promptTokenDetails == null
+            ? null
+            : PromptTokenDetails(
+                cachedTokens: (promptTokenDetails?.cachedTokens ?? 0) +
+                    (other.promptTokenDetails?.cachedTokens ?? 0),
+              ),
+        completionTokenDetails: completionTokenDetails == null &&
+                other.completionTokenDetails == null
+            ? null
+            : CompletionTokenDetails(
+                reasoningTokens:
+                    (completionTokenDetails?.reasoningTokens ?? 0) +
+                        (other.completionTokenDetails?.reasoningTokens ?? 0),
+                imageTokens: (completionTokenDetails?.imageTokens ?? 0) +
+                    (other.completionTokenDetails?.imageTokens ?? 0),
+                audioTokens: (completionTokenDetails?.audioTokens ?? 0) +
+                    (other.completionTokenDetails?.audioTokens ?? 0),
+              ),
+        cost: cost == null && other.cost == null
+            ? null
+            : (cost ?? 0) + (other.cost ?? 0),
+      );
+}
+
+/// Completion token details
+@freezed
+abstract class CompletionTokenDetails with _$CompletionTokenDetails {
+  const factory CompletionTokenDetails({
+    /// Tokens spent on reasoning / thinking
+    @Default(0) int reasoningTokens,
+
+    /// Tokens spent producing images
+    @Default(0) int imageTokens,
+
+    /// Tokens spent producing audio
+    @Default(0) int audioTokens,
+  }) = _CompletionTokenDetails;
+
+  factory CompletionTokenDetails.fromJson(Map<String, dynamic> json) =>
+      _$CompletionTokenDetailsFromJson(json);
 }
 
 /// Prompt token details
@@ -533,9 +592,34 @@ class MessageConcatenator {
         reasoningContents.add(msg.reasoningContent!);
       }
 
-      // Collect tool calls
+      // Collect tool calls: streamed deltas share an `index` and arrive as
+      // fragments (id/name first, then argument pieces) — merge by index.
       if (msg.toolCalls != null) {
-        toolCalls.addAll(msg.toolCalls!);
+        for (final tc in msg.toolCalls!) {
+          final index = tc.index;
+          if (index == null) {
+            toolCalls.add(tc);
+            continue;
+          }
+          final existingAt = toolCalls.indexWhere((e) => e.index == index);
+          if (existingAt < 0) {
+            toolCalls.add(tc);
+          } else {
+            final existing = toolCalls[existingAt];
+            toolCalls[existingAt] = ToolCall(
+              id: existing.id.isNotEmpty ? existing.id : tc.id,
+              type: existing.type,
+              function: FunctionCall(
+                name: existing.function.name.isNotEmpty
+                    ? existing.function.name
+                    : tc.function.name,
+                arguments: existing.function.arguments + tc.function.arguments,
+              ),
+              index: index,
+              extra: tc.extra ?? existing.extra,
+            );
+          }
+        }
       }
 
       // Collect extras
@@ -567,9 +651,18 @@ class MessageConcatenator {
     if (extras.isEmpty) return null;
     if (extras.length == 1) return extras.first;
 
+    // List-valued entries (e.g. streamed `reasoning_details`) are appended;
+    // everything else is last-writer-wins.
     final merged = <String, dynamic>{};
     for (final extra in extras) {
-      merged.addAll(extra);
+      for (final entry in extra.entries) {
+        final current = merged[entry.key];
+        if (current is List && entry.value is List) {
+          merged[entry.key] = [...current, ...entry.value as List];
+        } else {
+          merged[entry.key] = entry.value;
+        }
+      }
     }
     return merged;
   }

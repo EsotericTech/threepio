@@ -13,9 +13,9 @@ import '../events/agent_action.dart';
 import '../events/agent_event.dart';
 
 /// Configuration for ChatModelAgent execution.
-class ChatModelAgentConfig {
+class LegacyChatModelAgentConfig {
   /// Creates agent configuration.
-  const ChatModelAgentConfig({
+  const LegacyChatModelAgentConfig({
     this.maxIterations = 10,
     this.maxToolCalls = 50,
     this.emitPartialOutputs = true,
@@ -35,14 +35,19 @@ class ChatModelAgentConfig {
   final bool emitThinking;
 }
 
-/// Enhanced chat model agent with event streaming.
+/// Previous-generation chat model agent (v0.5-era Eino ADK shape).
+///
+/// Superseded by `ChatModelAgent` + `Runner` in `adk/runtime`, which add
+/// cancellation at safe points, tool approval, parallel tool execution with
+/// ordered results, handlers (middleware) and reasoning events. Kept for
+/// compatibility; new code should not use it.
 ///
 /// Implements the ReAct (Reasoning + Acting) pattern with full event
 /// visibility. Emits events for all actions, tool calls, and state changes.
 ///
 /// Example:
 /// ```dart
-/// final agent = ChatModelAgent(
+/// final agent = LegacyChatModelAgent(
 ///   name: 'assistant',
 ///   description: 'A helpful assistant',
 ///   model: chatModel,
@@ -62,15 +67,15 @@ class ChatModelAgentConfig {
 ///   }
 /// }
 /// ```
-class ChatModelAgent with AgentMixin implements BaseAgent {
+class LegacyChatModelAgent with AgentMixin implements BaseAgent {
   /// Creates a chat model agent.
-  ChatModelAgent({
+  LegacyChatModelAgent({
     required this.name,
     required this.description,
     required ToolCallingChatModel model,
     required ToolRegistry toolRegistry,
     this.systemPrompt,
-    this.config = const ChatModelAgentConfig(),
+    this.config = const LegacyChatModelAgentConfig(),
   })  : _model = model,
         _toolRegistry = toolRegistry,
         _executor = ToolExecutor(registry: toolRegistry);
@@ -89,7 +94,7 @@ class ChatModelAgent with AgentMixin implements BaseAgent {
   final String? systemPrompt;
 
   /// Agent configuration.
-  final ChatModelAgentConfig config;
+  final LegacyChatModelAgentConfig config;
 
   @override
   Future<StreamReader<AgentEvent>> run(
@@ -148,7 +153,7 @@ class ChatModelAgent with AgentMixin implements BaseAgent {
     String? name,
     String? description,
   }) {
-    return ChatModelAgent(
+    return LegacyChatModelAgent(
       name: name ?? this.name,
       description: description ?? this.description,
       model: _model,

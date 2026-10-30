@@ -46,30 +46,64 @@ class OpenRouterResponseParser implements ResponseParser {
       );
     }
 
-    // Try standard OpenAI parsing
-    return OpenAIConverters.openAIToMessage(
+    // Try standard OpenAI parsing, then attach reasoning + cost-aware usage.
+    final message = OpenAIConverters.openAIToMessage(
       messageData,
       finishReason: choice['finish_reason'] as String?,
-      usage: usage,
+      usage: null,
+    );
+    final reasoning = messageData['reasoning'] as String?;
+    final reasoningDetails = messageData['reasoning_details'] as List<dynamic>?;
+    return message.copyWith(
+      reasoningContent:
+          reasoning != null && reasoning.isNotEmpty ? reasoning : null,
+      extra: reasoningDetails != null && reasoningDetails.isNotEmpty
+          ? {...?message.extra, reasoningDetailsKey: reasoningDetails}
+          : message.extra,
+      responseMeta: ResponseMeta(
+        finishReason: choice['finish_reason'] as String?,
+        usage: usage != null ? _usageFromMap(usage) : null,
+      ),
     );
   }
 
   @override
   Message? parseStreamChunk(Map<String, dynamic> chunk) {
+    // Mid-stream provider error (OpenRouter sends it as a normal chunk).
+    final error = chunk['error'];
+    if (error is Map<String, dynamic>) {
+      throw OpenRouterParseException(
+        'Provider error: ${error['message'] ?? error}',
+        code: error['code'],
+      );
+    }
+
+    final usage = chunk['usage'] as Map<String, dynamic>?;
     final choices = chunk['choices'] as List<dynamic>?;
     if (choices == null || choices.isEmpty) {
-      return null;
+      // Usage-only final chunk (`usage: {include: true}`).
+      if (usage == null) return null;
+      return Message(
+        role: RoleType.assistant,
+        responseMeta: ResponseMeta(usage: _usageFromMap(usage)),
+      );
     }
 
     final choice = choices.first as Map<String, dynamic>;
-    final delta = choice['delta'] as Map<String, dynamic>?;
-    if (delta == null || delta.isEmpty) {
+    final delta = choice['delta'] as Map<String, dynamic>? ?? const {};
+    final finishReason = choice['finish_reason'] as String?;
+    if (delta.isEmpty && finishReason == null && usage == null) {
       return null;
     }
 
-    return parseDelta(
-      delta,
-      finishReason: choice['finish_reason'] as String?,
+    final message = parseDelta(delta, finishReason: finishReason) ??
+        const Message(role: RoleType.assistant);
+    if (usage == null) return message;
+    return message.copyWith(
+      responseMeta: ResponseMeta(
+        finishReason: finishReason ?? message.responseMeta?.finishReason,
+        usage: _usageFromMap(usage),
+      ),
     );
   }
 
@@ -79,7 +113,12 @@ class OpenRouterResponseParser implements ResponseParser {
     String? finishReason,
   }) {
     if (delta.isEmpty) {
-      return null;
+      return finishReason == null
+          ? null
+          : Message(
+              role: RoleType.assistant,
+              responseMeta: ResponseMeta(finishReason: finishReason),
+            );
     }
 
     // Extract role
@@ -119,6 +158,11 @@ class OpenRouterResponseParser implements ResponseParser {
       responseMeta = ResponseMeta(finishReason: finishReason);
     }
 
+    // Reasoning deltas: plain text in `reasoning`, structured blocks in
+    // `reasoning_details` (kept raw so they can be echoed back).
+    final reasoning = delta['reasoning'] as String?;
+    final reasoningDetails = delta['reasoning_details'] as List<dynamic>?;
+
     return Message(
       role: role,
       content: textContent != null && !_looksLikeImageContent(textContent)
@@ -127,6 +171,11 @@ class OpenRouterResponseParser implements ResponseParser {
       assistantGenMultiContent: multiContent,
       toolCalls: toolCalls,
       responseMeta: responseMeta,
+      reasoningContent:
+          reasoning != null && reasoning.isNotEmpty ? reasoning : null,
+      extra: reasoningDetails != null && reasoningDetails.isNotEmpty
+          ? {reasoningDetailsKey: reasoningDetails}
+          : null,
     );
   }
 
@@ -383,27 +432,45 @@ class OpenRouterResponseParser implements ResponseParser {
     );
   }
 
-  /// Convert usage map to TokenUsage
+  /// Convert OpenRouter usage map (with `cost` and token details) to TokenUsage
   TokenUsage _usageFromMap(Map<String, dynamic> usage) {
+    final promptDetails = usage['prompt_tokens_details'] as Map<String, dynamic>?;
+    final completionDetails =
+        usage['completion_tokens_details'] as Map<String, dynamic>?;
     return TokenUsage(
-      promptTokens: usage['prompt_tokens'] as int? ?? 0,
-      completionTokens: usage['completion_tokens'] as int? ?? 0,
-      totalTokens: usage['total_tokens'] as int? ?? 0,
-      promptTokenDetails: usage['prompt_tokens_details'] != null
+      promptTokens: (usage['prompt_tokens'] as num?)?.toInt() ?? 0,
+      completionTokens: (usage['completion_tokens'] as num?)?.toInt() ?? 0,
+      totalTokens: (usage['total_tokens'] as num?)?.toInt() ?? 0,
+      promptTokenDetails: promptDetails != null
           ? PromptTokenDetails(
               cachedTokens:
-                  usage['prompt_tokens_details']['cached_tokens'] as int? ?? 0,
+                  (promptDetails['cached_tokens'] as num?)?.toInt() ?? 0,
             )
           : null,
+      completionTokenDetails: completionDetails != null
+          ? CompletionTokenDetails(
+              reasoningTokens:
+                  (completionDetails['reasoning_tokens'] as num?)?.toInt() ?? 0,
+              imageTokens:
+                  (completionDetails['image_tokens'] as num?)?.toInt() ?? 0,
+              audioTokens:
+                  (completionDetails['audio_tokens'] as num?)?.toInt() ?? 0,
+            )
+          : null,
+      cost: (usage['cost'] as num?)?.toDouble(),
     );
   }
 }
 
-/// Exception thrown when parsing OpenRouter responses fails
+/// Exception thrown when parsing OpenRouter responses fails, or when the
+/// provider reports an error inside the stream.
 class OpenRouterParseException implements Exception {
-  OpenRouterParseException(this.message);
+  OpenRouterParseException(this.message, {this.code});
 
   final String message;
+
+  /// Provider error code when the exception wraps an in-stream error.
+  final Object? code;
 
   @override
   String toString() => 'OpenRouterParseException: $message';

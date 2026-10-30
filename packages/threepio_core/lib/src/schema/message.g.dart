@@ -170,6 +170,11 @@ _TokenUsage _$TokenUsageFromJson(Map<String, dynamic> json) => _TokenUsage(
           ? null
           : PromptTokenDetails.fromJson(
               json['promptTokenDetails'] as Map<String, dynamic>),
+      completionTokenDetails: json['completionTokenDetails'] == null
+          ? null
+          : CompletionTokenDetails.fromJson(
+              json['completionTokenDetails'] as Map<String, dynamic>),
+      cost: (json['cost'] as num?)?.toDouble(),
     );
 
 Map<String, dynamic> _$TokenUsageToJson(_TokenUsage instance) =>
@@ -178,6 +183,24 @@ Map<String, dynamic> _$TokenUsageToJson(_TokenUsage instance) =>
       'completionTokens': instance.completionTokens,
       'totalTokens': instance.totalTokens,
       'promptTokenDetails': instance.promptTokenDetails?.toJson(),
+      'completionTokenDetails': instance.completionTokenDetails?.toJson(),
+      'cost': instance.cost,
+    };
+
+_CompletionTokenDetails _$CompletionTokenDetailsFromJson(
+        Map<String, dynamic> json) =>
+    _CompletionTokenDetails(
+      reasoningTokens: (json['reasoningTokens'] as num?)?.toInt() ?? 0,
+      imageTokens: (json['imageTokens'] as num?)?.toInt() ?? 0,
+      audioTokens: (json['audioTokens'] as num?)?.toInt() ?? 0,
+    );
+
+Map<String, dynamic> _$CompletionTokenDetailsToJson(
+        _CompletionTokenDetails instance) =>
+    <String, dynamic>{
+      'reasoningTokens': instance.reasoningTokens,
+      'imageTokens': instance.imageTokens,
+      'audioTokens': instance.audioTokens,
     };
 
 _PromptTokenDetails _$PromptTokenDetailsFromJson(Map<String, dynamic> json) =>

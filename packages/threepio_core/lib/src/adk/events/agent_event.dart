@@ -6,7 +6,9 @@ library;
 
 import 'package:uuid/uuid.dart';
 
+import '../../schema/message.dart' as schema;
 import '../../schema/message.dart';
+import '../runtime/tool_call_context.dart';
 import 'agent_action.dart';
 
 const _uuid = Uuid();
@@ -47,6 +49,12 @@ sealed class AgentEvent {
       'transfer' => AgentTransferEvent.fromJson(json),
       'error' => AgentErrorEvent.fromJson(json),
       'state_update' => AgentStateUpdateEvent.fromJson(json),
+      'reasoning' => AgentReasoningEvent.fromJson(json),
+      'message' => AgentMessageEvent.fromJson(json),
+      'approval_request' => AgentApprovalRequestEvent.fromJson(json),
+      'artifact' => AgentArtifactEvent.fromJson(json),
+      'cancelled' => AgentCancelledEvent.fromJson(json),
+      'usage' => AgentUsageEvent.fromJson(json),
       _ => throw ArgumentError('Unknown event type: $type'),
     };
   }
@@ -474,4 +482,235 @@ class TokenUsage {
       totalTokens: json['total_tokens'] as int?,
     );
   }
+}
+
+/// A reasoning (thinking) delta streamed by the model.
+class AgentReasoningEvent extends AgentEvent {
+  /// Creates a reasoning event.
+  AgentReasoningEvent({
+    required this.delta,
+    super.runId,
+    super.timestamp,
+  });
+
+  /// Reasoning text fragment.
+  final String delta;
+
+  @override
+  String get eventType => 'reasoning';
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'event_type': eventType,
+        'run_id': runId,
+        'timestamp': timestamp.toIso8601String(),
+        'delta': delta,
+      };
+
+  /// Create from JSON.
+  factory AgentReasoningEvent.fromJson(Map<String, dynamic> json) =>
+      AgentReasoningEvent(
+        runId: json['run_id'] as String,
+        timestamp: DateTime.parse(json['timestamp'] as String),
+        delta: json['delta'] as String,
+      );
+}
+
+/// A message the agent appended to the conversation history (an assistant
+/// turn including its tool calls and reasoning blocks, or a tool result).
+/// Persist these to reproduce the exact history the model saw.
+class AgentMessageEvent extends AgentEvent {
+  /// Creates a message event.
+  AgentMessageEvent({
+    required this.message,
+    super.runId,
+    super.timestamp,
+  });
+
+  /// The appended message.
+  final Message message;
+
+  @override
+  String get eventType => 'message';
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'event_type': eventType,
+        'run_id': runId,
+        'timestamp': timestamp.toIso8601String(),
+        'message': message.toJson(),
+      };
+
+  /// Create from JSON.
+  factory AgentMessageEvent.fromJson(Map<String, dynamic> json) =>
+      AgentMessageEvent(
+        runId: json['run_id'] as String,
+        timestamp: DateTime.parse(json['timestamp'] as String),
+        message: Message.fromJson(json['message'] as Map<String, dynamic>),
+      );
+}
+
+/// The agent is waiting for the user to allow or deny a tool call.
+class AgentApprovalRequestEvent extends AgentEvent {
+  /// Creates an approval request event.
+  AgentApprovalRequestEvent({
+    required this.toolCall,
+    this.reason,
+    super.runId,
+    super.timestamp,
+  });
+
+  /// The tool call awaiting approval.
+  final ToolCall toolCall;
+
+  /// Why approval is needed (from the policy).
+  final String? reason;
+
+  @override
+  String get eventType => 'approval_request';
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'event_type': eventType,
+        'run_id': runId,
+        'timestamp': timestamp.toIso8601String(),
+        'tool_call': toolCall.toJson(),
+        if (reason != null) 'reason': reason,
+      };
+
+  /// Create from JSON.
+  factory AgentApprovalRequestEvent.fromJson(Map<String, dynamic> json) =>
+      AgentApprovalRequestEvent(
+        runId: json['run_id'] as String,
+        timestamp: DateTime.parse(json['timestamp'] as String),
+        toolCall: ToolCall.fromJson(json['tool_call'] as Map<String, dynamic>),
+        reason: json['reason'] as String?,
+      );
+}
+
+/// A tool produced a file (image, document).
+class AgentArtifactEvent extends AgentEvent {
+  /// Creates an artifact event.
+  AgentArtifactEvent({
+    required this.artifact,
+    required this.toolCallId,
+    super.runId,
+    super.timestamp,
+  });
+
+  /// The artifact (referenced by local path, never by bytes).
+  final ToolArtifact artifact;
+
+  /// The tool call that produced it.
+  final String toolCallId;
+
+  @override
+  String get eventType => 'artifact';
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'event_type': eventType,
+        'run_id': runId,
+        'timestamp': timestamp.toIso8601String(),
+        'artifact': artifact.toJson(),
+        'tool_call_id': toolCallId,
+      };
+
+  /// Create from JSON.
+  factory AgentArtifactEvent.fromJson(Map<String, dynamic> json) =>
+      AgentArtifactEvent(
+        runId: json['run_id'] as String,
+        timestamp: DateTime.parse(json['timestamp'] as String),
+        artifact:
+            ToolArtifact.fromJson(json['artifact'] as Map<String, dynamic>),
+        toolCallId: json['tool_call_id'] as String,
+      );
+}
+
+/// The run stopped at a safe point because it was cancelled. History stays
+/// valid: pending tool calls received synthetic "cancelled" results.
+class AgentCancelledEvent extends AgentEvent {
+  /// Creates a cancelled event.
+  AgentCancelledEvent({
+    this.reason,
+    this.cancelledToolCallIds = const [],
+    super.runId,
+    super.timestamp,
+  });
+
+  /// Reason passed to `CancelToken.cancel`.
+  final String? reason;
+
+  /// Tool calls that were still running when the run was cancelled.
+  final List<String> cancelledToolCallIds;
+
+  @override
+  String get eventType => 'cancelled';
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'event_type': eventType,
+        'run_id': runId,
+        'timestamp': timestamp.toIso8601String(),
+        if (reason != null) 'reason': reason,
+        'cancelled_tool_call_ids': cancelledToolCallIds,
+      };
+
+  /// Create from JSON.
+  factory AgentCancelledEvent.fromJson(Map<String, dynamic> json) =>
+      AgentCancelledEvent(
+        runId: json['run_id'] as String,
+        timestamp: DateTime.parse(json['timestamp'] as String),
+        reason: json['reason'] as String?,
+        cancelledToolCallIds:
+            (json['cancelled_tool_call_ids'] as List<dynamic>? ?? const [])
+                .cast<String>(),
+      );
+}
+
+/// Token usage (and cost) of one model call.
+class AgentUsageEvent extends AgentEvent {
+  /// Creates a usage event.
+  AgentUsageEvent({
+    required this.usage,
+    this.model,
+    this.latency,
+    super.runId,
+    super.timestamp,
+  });
+
+  /// Usage reported by the provider.
+  final schema.TokenUsage usage;
+
+  /// Model id that served the call.
+  final String? model;
+
+  /// Wall-clock time of the call.
+  final Duration? latency;
+
+  @override
+  String get eventType => 'usage';
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'event_type': eventType,
+        'run_id': runId,
+        'timestamp': timestamp.toIso8601String(),
+        'usage': usage.toJson(),
+        if (model != null) 'model': model,
+        if (latency != null) 'latency_ms': latency!.inMilliseconds,
+      };
+
+  /// Create from JSON.
+  factory AgentUsageEvent.fromJson(Map<String, dynamic> json) =>
+      AgentUsageEvent(
+        runId: json['run_id'] as String,
+        timestamp: DateTime.parse(json['timestamp'] as String),
+        usage:
+            schema.TokenUsage.fromJson(json['usage'] as Map<String, dynamic>),
+        model: json['model'] as String?,
+        latency: json['latency_ms'] != null
+            ? Duration(milliseconds: json['latency_ms'] as int)
+            : null,
+      );
 }

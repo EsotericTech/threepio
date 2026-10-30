@@ -1,4 +1,5 @@
 import '../../schema/tool_info.dart';
+import 'cancel_token.dart';
 
 /// Common options for chat models
 class ChatModelOptions {
@@ -14,6 +15,7 @@ class ChatModelOptions {
     this.callbackManager,
     this.context,
     this.metadata,
+    this.cancelToken,
   });
 
   /// Temperature for controlling randomness (typically 0.0-2.0)
@@ -56,6 +58,9 @@ class ChatModelOptions {
   /// Arbitrary metadata to pass through execution
   final Map<String, dynamic>? metadata;
 
+  /// Cancels an in-flight request (streams stop, pending calls abort).
+  final CancelToken? cancelToken;
+
   /// Copy with method for creating modified copies
   ChatModelOptions copyWith({
     double? temperature,
@@ -69,6 +74,7 @@ class ChatModelOptions {
     dynamic callbackManager,
     Map<String, dynamic>? context,
     Map<String, dynamic>? metadata,
+    CancelToken? cancelToken,
   }) {
     return ChatModelOptions(
       temperature: temperature ?? this.temperature,
@@ -82,6 +88,7 @@ class ChatModelOptions {
       callbackManager: callbackManager ?? this.callbackManager,
       context: context ?? this.context,
       metadata: metadata ?? this.metadata,
+      cancelToken: cancelToken ?? this.cancelToken,
     );
   }
 
@@ -101,6 +108,7 @@ class ChatModelOptions {
       callbackManager: other.callbackManager ?? callbackManager,
       context: other.context ?? context,
       metadata: other.metadata ?? metadata,
+      cancelToken: other.cancelToken ?? cancelToken,
     );
   }
 

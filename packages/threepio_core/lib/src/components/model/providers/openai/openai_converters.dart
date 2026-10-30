@@ -1,6 +1,10 @@
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 
+/// Key under `Message.extra` holding the provider's raw `reasoning_details`
+/// blocks so they can be echoed back on the next request.
+const String reasoningDetailsKey = 'reasoning_details';
+
 /// Converters between Threepio schema and OpenAI API format
 class OpenAIConverters {
   /// Convert Message to OpenAI message format
@@ -18,6 +22,20 @@ class OpenAIConverters {
     } else if (message.content.isNotEmpty) {
       // Simple text content
       result['content'] = message.content;
+    } else if (message.role == RoleType.assistant) {
+      // An assistant turn that only carried tool calls: content is null,
+      // not absent — some providers reject a missing key.
+      result['content'] = null;
+    } else if (message.role == RoleType.tool) {
+      result['content'] = '';
+    }
+
+    // Echo provider reasoning blocks back verbatim (interleaved thinking).
+    final reasoningDetails = message.extra?[reasoningDetailsKey];
+    if (message.role == RoleType.assistant &&
+        reasoningDetails is List &&
+        reasoningDetails.isNotEmpty) {
+      result['reasoning_details'] = reasoningDetails;
     }
 
     // Add name if present
@@ -181,9 +199,19 @@ class OpenAIConverters {
             if (part.image!.detail != null) 'detail': part.image!.detail!.name,
           },
         };
+      case ChatMessagePartType.fileUrl:
+        // OpenRouter / OpenAI file input: inline data URL plus a file name.
+        final common = part.file?.common;
+        return {
+          'type': 'file',
+          'file': {
+            'filename': (common?.extra?['filename'] as String?) ?? 'document',
+            'file_data': common?.url ??
+                'data:${common?.mimeType ?? 'application/octet-stream'};base64,${common?.base64Data ?? ''}',
+          },
+        };
       case ChatMessagePartType.audioUrl:
       case ChatMessagePartType.videoUrl:
-      case ChatMessagePartType.fileUrl:
         throw UnimplementedError(
             'OpenAI does not support ${part.type} in standard API');
     }

@@ -1,3 +1,5 @@
+import 'openrouter_options.dart';
+
 /// Configuration for OpenRouter API
 ///
 /// OpenRouter (https://openrouter.ai) is a unified API gateway that provides
@@ -20,8 +22,10 @@ class OpenRouterConfig {
     this.siteName,
     this.siteUrl,
     this.timeout = const Duration(seconds: 60),
+    this.idleTimeout = const Duration(seconds: 90),
     this.includeRawResponse = false,
     this.transforms,
+    this.defaultRequestOptions = const OpenRouterRequestOptions(),
   });
 
   /// API key for authentication with OpenRouter
@@ -52,8 +56,17 @@ class OpenRouterConfig {
 
   /// Request timeout duration
   ///
-  /// Maximum time to wait for API responses before timing out.
+  /// Maximum time to wait for the response headers (non-streaming: the whole
+  /// response) before timing out.
   final Duration timeout;
+
+  /// Maximum silence between two streamed chunks before the stream fails.
+  final Duration idleTimeout;
+
+  /// OpenRouter-specific fields added to every request (reasoning, usage
+  /// accounting, provider routing…). Per-call [OpenRouterRequestOptions]
+  /// merged through `ChatModelOptions.extra` take precedence.
+  final OpenRouterRequestOptions defaultRequestOptions;
 
   /// Include raw OpenRouter response in metadata
   ///
@@ -100,8 +113,10 @@ class OpenRouterConfig {
     String? siteName,
     String? siteUrl,
     Duration? timeout,
+    Duration? idleTimeout,
     bool? includeRawResponse,
     Map<String, dynamic>? transforms,
+    OpenRouterRequestOptions? defaultRequestOptions,
   }) {
     return OpenRouterConfig(
       apiKey: apiKey ?? this.apiKey,
@@ -110,8 +125,11 @@ class OpenRouterConfig {
       siteName: siteName ?? this.siteName,
       siteUrl: siteUrl ?? this.siteUrl,
       timeout: timeout ?? this.timeout,
+      idleTimeout: idleTimeout ?? this.idleTimeout,
       includeRawResponse: includeRawResponse ?? this.includeRawResponse,
       transforms: transforms ?? this.transforms,
+      defaultRequestOptions:
+          defaultRequestOptions ?? this.defaultRequestOptions,
     );
   }
 }

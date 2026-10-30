@@ -3591,6 +3591,12 @@ mixin _$TokenUsage {
   /// Breakdown of prompt token details
   PromptTokenDetails? get promptTokenDetails;
 
+  /// Breakdown of completion token details (reasoning, image, audio)
+  CompletionTokenDetails? get completionTokenDetails;
+
+  /// Cost in USD as reported by the provider (OpenRouter `usage.cost`)
+  double? get cost;
+
   /// Create a copy of TokenUsage
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -3613,17 +3619,20 @@ mixin _$TokenUsage {
             (identical(other.totalTokens, totalTokens) ||
                 other.totalTokens == totalTokens) &&
             (identical(other.promptTokenDetails, promptTokenDetails) ||
-                other.promptTokenDetails == promptTokenDetails));
+                other.promptTokenDetails == promptTokenDetails) &&
+            (identical(other.completionTokenDetails, completionTokenDetails) ||
+                other.completionTokenDetails == completionTokenDetails) &&
+            (identical(other.cost, cost) || other.cost == cost));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(runtimeType, promptTokens, completionTokens,
-      totalTokens, promptTokenDetails);
+      totalTokens, promptTokenDetails, completionTokenDetails, cost);
 
   @override
   String toString() {
-    return 'TokenUsage(promptTokens: $promptTokens, completionTokens: $completionTokens, totalTokens: $totalTokens, promptTokenDetails: $promptTokenDetails)';
+    return 'TokenUsage(promptTokens: $promptTokens, completionTokens: $completionTokens, totalTokens: $totalTokens, promptTokenDetails: $promptTokenDetails, completionTokenDetails: $completionTokenDetails, cost: $cost)';
   }
 }
 
@@ -3637,9 +3646,12 @@ abstract mixin class $TokenUsageCopyWith<$Res> {
       {int promptTokens,
       int completionTokens,
       int totalTokens,
-      PromptTokenDetails? promptTokenDetails});
+      PromptTokenDetails? promptTokenDetails,
+      CompletionTokenDetails? completionTokenDetails,
+      double? cost});
 
   $PromptTokenDetailsCopyWith<$Res>? get promptTokenDetails;
+  $CompletionTokenDetailsCopyWith<$Res>? get completionTokenDetails;
 }
 
 /// @nodoc
@@ -3658,6 +3670,8 @@ class _$TokenUsageCopyWithImpl<$Res> implements $TokenUsageCopyWith<$Res> {
     Object? completionTokens = null,
     Object? totalTokens = null,
     Object? promptTokenDetails = freezed,
+    Object? completionTokenDetails = freezed,
+    Object? cost = freezed,
   }) {
     return _then(_self.copyWith(
       promptTokens: null == promptTokens
@@ -3676,6 +3690,14 @@ class _$TokenUsageCopyWithImpl<$Res> implements $TokenUsageCopyWith<$Res> {
           ? _self.promptTokenDetails
           : promptTokenDetails // ignore: cast_nullable_to_non_nullable
               as PromptTokenDetails?,
+      completionTokenDetails: freezed == completionTokenDetails
+          ? _self.completionTokenDetails
+          : completionTokenDetails // ignore: cast_nullable_to_non_nullable
+              as CompletionTokenDetails?,
+      cost: freezed == cost
+          ? _self.cost
+          : cost // ignore: cast_nullable_to_non_nullable
+              as double?,
     ));
   }
 
@@ -3691,6 +3713,21 @@ class _$TokenUsageCopyWithImpl<$Res> implements $TokenUsageCopyWith<$Res> {
     return $PromptTokenDetailsCopyWith<$Res>(_self.promptTokenDetails!,
         (value) {
       return _then(_self.copyWith(promptTokenDetails: value));
+    });
+  }
+
+  /// Create a copy of TokenUsage
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $CompletionTokenDetailsCopyWith<$Res>? get completionTokenDetails {
+    if (_self.completionTokenDetails == null) {
+      return null;
+    }
+
+    return $CompletionTokenDetailsCopyWith<$Res>(_self.completionTokenDetails!,
+        (value) {
+      return _then(_self.copyWith(completionTokenDetails: value));
     });
   }
 }
@@ -3788,16 +3825,26 @@ extension TokenUsagePatterns on TokenUsage {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>(
-    TResult Function(int promptTokens, int completionTokens, int totalTokens,
-            PromptTokenDetails? promptTokenDetails)?
+    TResult Function(
+            int promptTokens,
+            int completionTokens,
+            int totalTokens,
+            PromptTokenDetails? promptTokenDetails,
+            CompletionTokenDetails? completionTokenDetails,
+            double? cost)?
         $default, {
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case _TokenUsage() when $default != null:
-        return $default(_that.promptTokens, _that.completionTokens,
-            _that.totalTokens, _that.promptTokenDetails);
+        return $default(
+            _that.promptTokens,
+            _that.completionTokens,
+            _that.totalTokens,
+            _that.promptTokenDetails,
+            _that.completionTokenDetails,
+            _that.cost);
       case _:
         return orElse();
     }
@@ -3818,15 +3865,25 @@ extension TokenUsagePatterns on TokenUsage {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>(
-    TResult Function(int promptTokens, int completionTokens, int totalTokens,
-            PromptTokenDetails? promptTokenDetails)
+    TResult Function(
+            int promptTokens,
+            int completionTokens,
+            int totalTokens,
+            PromptTokenDetails? promptTokenDetails,
+            CompletionTokenDetails? completionTokenDetails,
+            double? cost)
         $default,
   ) {
     final _that = this;
     switch (_that) {
       case _TokenUsage():
-        return $default(_that.promptTokens, _that.completionTokens,
-            _that.totalTokens, _that.promptTokenDetails);
+        return $default(
+            _that.promptTokens,
+            _that.completionTokens,
+            _that.totalTokens,
+            _that.promptTokenDetails,
+            _that.completionTokenDetails,
+            _that.cost);
       case _:
         throw StateError('Unexpected subclass');
     }
@@ -3846,15 +3903,25 @@ extension TokenUsagePatterns on TokenUsage {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>(
-    TResult? Function(int promptTokens, int completionTokens, int totalTokens,
-            PromptTokenDetails? promptTokenDetails)?
+    TResult? Function(
+            int promptTokens,
+            int completionTokens,
+            int totalTokens,
+            PromptTokenDetails? promptTokenDetails,
+            CompletionTokenDetails? completionTokenDetails,
+            double? cost)?
         $default,
   ) {
     final _that = this;
     switch (_that) {
       case _TokenUsage() when $default != null:
-        return $default(_that.promptTokens, _that.completionTokens,
-            _that.totalTokens, _that.promptTokenDetails);
+        return $default(
+            _that.promptTokens,
+            _that.completionTokens,
+            _that.totalTokens,
+            _that.promptTokenDetails,
+            _that.completionTokenDetails,
+            _that.cost);
       case _:
         return null;
     }
@@ -3863,12 +3930,15 @@ extension TokenUsagePatterns on TokenUsage {
 
 /// @nodoc
 @JsonSerializable()
-class _TokenUsage implements TokenUsage {
+class _TokenUsage extends TokenUsage {
   const _TokenUsage(
       {required this.promptTokens,
       required this.completionTokens,
       required this.totalTokens,
-      this.promptTokenDetails});
+      this.promptTokenDetails,
+      this.completionTokenDetails,
+      this.cost})
+      : super._();
   factory _TokenUsage.fromJson(Map<String, dynamic> json) =>
       _$TokenUsageFromJson(json);
 
@@ -3887,6 +3957,14 @@ class _TokenUsage implements TokenUsage {
   /// Breakdown of prompt token details
   @override
   final PromptTokenDetails? promptTokenDetails;
+
+  /// Breakdown of completion token details (reasoning, image, audio)
+  @override
+  final CompletionTokenDetails? completionTokenDetails;
+
+  /// Cost in USD as reported by the provider (OpenRouter `usage.cost`)
+  @override
+  final double? cost;
 
   /// Create a copy of TokenUsage
   /// with the given fields replaced by the non-null parameter values.
@@ -3915,17 +3993,20 @@ class _TokenUsage implements TokenUsage {
             (identical(other.totalTokens, totalTokens) ||
                 other.totalTokens == totalTokens) &&
             (identical(other.promptTokenDetails, promptTokenDetails) ||
-                other.promptTokenDetails == promptTokenDetails));
+                other.promptTokenDetails == promptTokenDetails) &&
+            (identical(other.completionTokenDetails, completionTokenDetails) ||
+                other.completionTokenDetails == completionTokenDetails) &&
+            (identical(other.cost, cost) || other.cost == cost));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(runtimeType, promptTokens, completionTokens,
-      totalTokens, promptTokenDetails);
+      totalTokens, promptTokenDetails, completionTokenDetails, cost);
 
   @override
   String toString() {
-    return 'TokenUsage(promptTokens: $promptTokens, completionTokens: $completionTokens, totalTokens: $totalTokens, promptTokenDetails: $promptTokenDetails)';
+    return 'TokenUsage(promptTokens: $promptTokens, completionTokens: $completionTokens, totalTokens: $totalTokens, promptTokenDetails: $promptTokenDetails, completionTokenDetails: $completionTokenDetails, cost: $cost)';
   }
 }
 
@@ -3941,10 +4022,14 @@ abstract mixin class _$TokenUsageCopyWith<$Res>
       {int promptTokens,
       int completionTokens,
       int totalTokens,
-      PromptTokenDetails? promptTokenDetails});
+      PromptTokenDetails? promptTokenDetails,
+      CompletionTokenDetails? completionTokenDetails,
+      double? cost});
 
   @override
   $PromptTokenDetailsCopyWith<$Res>? get promptTokenDetails;
+  @override
+  $CompletionTokenDetailsCopyWith<$Res>? get completionTokenDetails;
 }
 
 /// @nodoc
@@ -3963,6 +4048,8 @@ class __$TokenUsageCopyWithImpl<$Res> implements _$TokenUsageCopyWith<$Res> {
     Object? completionTokens = null,
     Object? totalTokens = null,
     Object? promptTokenDetails = freezed,
+    Object? completionTokenDetails = freezed,
+    Object? cost = freezed,
   }) {
     return _then(_TokenUsage(
       promptTokens: null == promptTokens
@@ -3981,6 +4068,14 @@ class __$TokenUsageCopyWithImpl<$Res> implements _$TokenUsageCopyWith<$Res> {
           ? _self.promptTokenDetails
           : promptTokenDetails // ignore: cast_nullable_to_non_nullable
               as PromptTokenDetails?,
+      completionTokenDetails: freezed == completionTokenDetails
+          ? _self.completionTokenDetails
+          : completionTokenDetails // ignore: cast_nullable_to_non_nullable
+              as CompletionTokenDetails?,
+      cost: freezed == cost
+          ? _self.cost
+          : cost // ignore: cast_nullable_to_non_nullable
+              as double?,
     ));
   }
 
@@ -3997,6 +4092,381 @@ class __$TokenUsageCopyWithImpl<$Res> implements _$TokenUsageCopyWith<$Res> {
         (value) {
       return _then(_self.copyWith(promptTokenDetails: value));
     });
+  }
+
+  /// Create a copy of TokenUsage
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $CompletionTokenDetailsCopyWith<$Res>? get completionTokenDetails {
+    if (_self.completionTokenDetails == null) {
+      return null;
+    }
+
+    return $CompletionTokenDetailsCopyWith<$Res>(_self.completionTokenDetails!,
+        (value) {
+      return _then(_self.copyWith(completionTokenDetails: value));
+    });
+  }
+}
+
+/// @nodoc
+mixin _$CompletionTokenDetails {
+  /// Tokens spent on reasoning / thinking
+  int get reasoningTokens;
+
+  /// Tokens spent producing images
+  int get imageTokens;
+
+  /// Tokens spent producing audio
+  int get audioTokens;
+
+  /// Create a copy of CompletionTokenDetails
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $CompletionTokenDetailsCopyWith<CompletionTokenDetails> get copyWith =>
+      _$CompletionTokenDetailsCopyWithImpl<CompletionTokenDetails>(
+          this as CompletionTokenDetails, _$identity);
+
+  /// Serializes this CompletionTokenDetails to a JSON map.
+  Map<String, dynamic> toJson();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is CompletionTokenDetails &&
+            (identical(other.reasoningTokens, reasoningTokens) ||
+                other.reasoningTokens == reasoningTokens) &&
+            (identical(other.imageTokens, imageTokens) ||
+                other.imageTokens == imageTokens) &&
+            (identical(other.audioTokens, audioTokens) ||
+                other.audioTokens == audioTokens));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode =>
+      Object.hash(runtimeType, reasoningTokens, imageTokens, audioTokens);
+
+  @override
+  String toString() {
+    return 'CompletionTokenDetails(reasoningTokens: $reasoningTokens, imageTokens: $imageTokens, audioTokens: $audioTokens)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $CompletionTokenDetailsCopyWith<$Res> {
+  factory $CompletionTokenDetailsCopyWith(CompletionTokenDetails value,
+          $Res Function(CompletionTokenDetails) _then) =
+      _$CompletionTokenDetailsCopyWithImpl;
+  @useResult
+  $Res call({int reasoningTokens, int imageTokens, int audioTokens});
+}
+
+/// @nodoc
+class _$CompletionTokenDetailsCopyWithImpl<$Res>
+    implements $CompletionTokenDetailsCopyWith<$Res> {
+  _$CompletionTokenDetailsCopyWithImpl(this._self, this._then);
+
+  final CompletionTokenDetails _self;
+  final $Res Function(CompletionTokenDetails) _then;
+
+  /// Create a copy of CompletionTokenDetails
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? reasoningTokens = null,
+    Object? imageTokens = null,
+    Object? audioTokens = null,
+  }) {
+    return _then(_self.copyWith(
+      reasoningTokens: null == reasoningTokens
+          ? _self.reasoningTokens
+          : reasoningTokens // ignore: cast_nullable_to_non_nullable
+              as int,
+      imageTokens: null == imageTokens
+          ? _self.imageTokens
+          : imageTokens // ignore: cast_nullable_to_non_nullable
+              as int,
+      audioTokens: null == audioTokens
+          ? _self.audioTokens
+          : audioTokens // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
+  }
+}
+
+/// Adds pattern-matching-related methods to [CompletionTokenDetails].
+extension CompletionTokenDetailsPatterns on CompletionTokenDetails {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>(
+    TResult Function(_CompletionTokenDetails value)? $default, {
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case _CompletionTokenDetails() when $default != null:
+        return $default(_that);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>(
+    TResult Function(_CompletionTokenDetails value) $default,
+  ) {
+    final _that = this;
+    switch (_that) {
+      case _CompletionTokenDetails():
+        return $default(_that);
+      case _:
+        throw StateError('Unexpected subclass');
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>(
+    TResult? Function(_CompletionTokenDetails value)? $default,
+  ) {
+    final _that = this;
+    switch (_that) {
+      case _CompletionTokenDetails() when $default != null:
+        return $default(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>(
+    TResult Function(int reasoningTokens, int imageTokens, int audioTokens)?
+        $default, {
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case _CompletionTokenDetails() when $default != null:
+        return $default(
+            _that.reasoningTokens, _that.imageTokens, _that.audioTokens);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>(
+    TResult Function(int reasoningTokens, int imageTokens, int audioTokens)
+        $default,
+  ) {
+    final _that = this;
+    switch (_that) {
+      case _CompletionTokenDetails():
+        return $default(
+            _that.reasoningTokens, _that.imageTokens, _that.audioTokens);
+      case _:
+        throw StateError('Unexpected subclass');
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>(
+    TResult? Function(int reasoningTokens, int imageTokens, int audioTokens)?
+        $default,
+  ) {
+    final _that = this;
+    switch (_that) {
+      case _CompletionTokenDetails() when $default != null:
+        return $default(
+            _that.reasoningTokens, _that.imageTokens, _that.audioTokens);
+      case _:
+        return null;
+    }
+  }
+}
+
+/// @nodoc
+@JsonSerializable()
+class _CompletionTokenDetails implements CompletionTokenDetails {
+  const _CompletionTokenDetails(
+      {this.reasoningTokens = 0, this.imageTokens = 0, this.audioTokens = 0});
+  factory _CompletionTokenDetails.fromJson(Map<String, dynamic> json) =>
+      _$CompletionTokenDetailsFromJson(json);
+
+  /// Tokens spent on reasoning / thinking
+  @override
+  @JsonKey()
+  final int reasoningTokens;
+
+  /// Tokens spent producing images
+  @override
+  @JsonKey()
+  final int imageTokens;
+
+  /// Tokens spent producing audio
+  @override
+  @JsonKey()
+  final int audioTokens;
+
+  /// Create a copy of CompletionTokenDetails
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  _$CompletionTokenDetailsCopyWith<_CompletionTokenDetails> get copyWith =>
+      __$CompletionTokenDetailsCopyWithImpl<_CompletionTokenDetails>(
+          this, _$identity);
+
+  @override
+  Map<String, dynamic> toJson() {
+    return _$CompletionTokenDetailsToJson(
+      this,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _CompletionTokenDetails &&
+            (identical(other.reasoningTokens, reasoningTokens) ||
+                other.reasoningTokens == reasoningTokens) &&
+            (identical(other.imageTokens, imageTokens) ||
+                other.imageTokens == imageTokens) &&
+            (identical(other.audioTokens, audioTokens) ||
+                other.audioTokens == audioTokens));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode =>
+      Object.hash(runtimeType, reasoningTokens, imageTokens, audioTokens);
+
+  @override
+  String toString() {
+    return 'CompletionTokenDetails(reasoningTokens: $reasoningTokens, imageTokens: $imageTokens, audioTokens: $audioTokens)';
+  }
+}
+
+/// @nodoc
+abstract mixin class _$CompletionTokenDetailsCopyWith<$Res>
+    implements $CompletionTokenDetailsCopyWith<$Res> {
+  factory _$CompletionTokenDetailsCopyWith(_CompletionTokenDetails value,
+          $Res Function(_CompletionTokenDetails) _then) =
+      __$CompletionTokenDetailsCopyWithImpl;
+  @override
+  @useResult
+  $Res call({int reasoningTokens, int imageTokens, int audioTokens});
+}
+
+/// @nodoc
+class __$CompletionTokenDetailsCopyWithImpl<$Res>
+    implements _$CompletionTokenDetailsCopyWith<$Res> {
+  __$CompletionTokenDetailsCopyWithImpl(this._self, this._then);
+
+  final _CompletionTokenDetails _self;
+  final $Res Function(_CompletionTokenDetails) _then;
+
+  /// Create a copy of CompletionTokenDetails
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? reasoningTokens = null,
+    Object? imageTokens = null,
+    Object? audioTokens = null,
+  }) {
+    return _then(_CompletionTokenDetails(
+      reasoningTokens: null == reasoningTokens
+          ? _self.reasoningTokens
+          : reasoningTokens // ignore: cast_nullable_to_non_nullable
+              as int,
+      imageTokens: null == imageTokens
+          ? _self.imageTokens
+          : imageTokens // ignore: cast_nullable_to_non_nullable
+              as int,
+      audioTokens: null == audioTokens
+          ? _self.audioTokens
+          : audioTokens // ignore: cast_nullable_to_non_nullable
+              as int,
+    ));
   }
 }
 
