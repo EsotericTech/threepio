@@ -11,6 +11,9 @@ import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 import 'package:meta/meta.dart';
 
+import '../../adk/eino/agent_callbacks.dart';
+import '../../adk/eino/agent_event.dart';
+import '../../adk/eino/model_retry.dart';
 import '../../callbacks/callback_timing.dart';
 import '../../callbacks/component_callback_handler.dart';
 import '../../callbacks/run_info.dart';
@@ -595,6 +598,13 @@ final class LangfuseHandler extends ComponentCallbackHandler
   RunContext onEnd(RunContext ctx, RunInfo info, Object? output) {
     final state = ctx.value(_stateKey);
     if (info.isUnknown || state == null) return ctx;
+    if (info.componentType == ComponentType.agent) {
+      final agentOutput = AgentCallbackOutput.from(output);
+      if (agentOutput != null) {
+        _endAgentOutput(state, agentOutput.events);
+        return ctx;
+      }
+    }
     void finish() => state.end(
           _guarded(state, () => _setOutput(state, info, [output], null)),
         );
@@ -699,6 +709,85 @@ final class LangfuseHandler extends ComponentCallbackHandler
       state.end(state.span.output);
     }
     return ctx;
+  }
+
+  /// Reads the events of an agent and ends its observation with its
+  /// messages and custom outputs. Port of `endAgentOutput` and
+  /// `collectAgentMessages`.
+  void _endAgentOutput(_SpanState state, StreamReader<AgentEvent> events) {
+    final started = _async.run(() async {
+      final messages = <Message>[];
+      final customized = <Object?>[];
+      try {
+        for (var event = await events.nextOrNull();
+            event != null;
+            event = await events.nextOrNull()) {
+          final error = event.error;
+          if (error != null) {
+            _guarded(state, () {
+              state.recordAgentError('agent output', error);
+              return '';
+            });
+          }
+          final output = event.output;
+          if (output == null) continue;
+          final variant = output.messageOutput;
+          if (variant != null) {
+            try {
+              messages.add(await variant.getMessage());
+            } on Object catch (error) {
+              _guarded(state, () {
+                state.recordAgentError('agent message', error);
+                return '';
+              });
+            }
+          }
+          final custom = output.customizedOutput;
+          if (custom != null) customized.add(custom);
+        }
+      } on Object catch (error) {
+        _guarded(state, () {
+          state.recordAgentError('agent output', error);
+          return '';
+        });
+      }
+      await state.inputDone.future;
+      state.end(_guarded(state, () => _setAgentOutput(state, messages, customized)));
+    });
+    if (!started) {
+      unawaited(events.close());
+      state.end(state.span.output);
+    }
+  }
+
+  /// Port of `setAgentOutput`: one value is written as it is, several as a
+  /// list; the retry notifications of the agent's model go into metadata.
+  String _setAgentOutput(
+    _SpanState state,
+    List<Message> messages,
+    List<Object?> customized,
+  ) {
+    Object? collapsed(List<Object?> values) =>
+        values.length == 1 ? values.single : values;
+    final output = <String, Object?>{
+      if (messages.isNotEmpty) 'messages': collapsed(messages),
+      if (customized.isNotEmpty) 'customized': collapsed(customized),
+    };
+    final serialized = output.isEmpty
+        ? ''
+        : _setJson(state, 'langfuse.observation.output', output);
+    if (state.retryEvents.isNotEmpty) {
+      state.span.setInt(
+        'langfuse.observation.metadata.eino_retry_event_count',
+        state.retryEvents.length,
+      );
+      _setJson(
+        state,
+        'langfuse.observation.metadata.eino_retry_events',
+        state.retryEvents,
+      );
+    }
+    return serialized;
   }
 
   /// Runs [write], which puts something on the span of [state] and returns
@@ -1251,6 +1340,30 @@ final class _SpanState {
 
   bool _ended = false;
   bool _failed = false;
+
+  /// The retry notifications of an agent's model (`WillRetryException`s in
+  /// its event stream), in order. Port of `spanState.retryEvents`.
+  final List<Map<String, Object?>> retryEvents = [];
+
+  /// Notes an error in an agent's events: a retry notification goes into
+  /// [retryEvents], anything else is recorded as an error. Port of
+  /// `spanState.recordAgentError`.
+  void recordAgentError(String operation, Object error) {
+    final retry = ThreepioException.findCause<WillRetryException>(error);
+    if (retry == null) {
+      recordError(operation, error);
+      return;
+    }
+    var reason = retry.rejectReason;
+    if (reason is Exception || reason is Error) reason = '$reason';
+    if (reason != null && encodeJson(reason) == null) reason = '$reason';
+    retryEvents.add({
+      'operation': operation,
+      'attempt': retry.retryAttempt,
+      'error': retry.errorText,
+      if (reason != null) 'reject_reason': reason,
+    });
+  }
 
   /// Port of `spanState.recordError`. Returns what kind of end this is and,
   /// for a cancellation or an interrupt, its cause.

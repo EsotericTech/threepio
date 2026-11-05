@@ -17,7 +17,10 @@ embedders, retrievers, indexers, loaders, parsers and transformers, their call
 options and callback payloads, and the tools made from functions), the
 Eino `callbacks` package with tracing to Langfuse over OpenTelemetry, and the
 Eino `compose` package: runnables, lambdas, graphs, chains, workflows and the
-tools node, with interrupt, checkpoint and resume.
+tools node, with interrupt, checkpoint and resume, and the core of the Eino
+`adk` package (agents, the runner, interrupt and resume of agents,
+middlewares, retry and failover of the model), on which the Kortney runtime
+now runs.
 
 ### Fixed
 
@@ -60,6 +63,64 @@ tools node, with interrupt, checkpoint and resume.
 
 ### Added
 
+- **ADK** (port of the classic half of Eino `adk`), in the new library
+  `package:threepio_core/adk.dart`, which the umbrella library does not export
+  (several of its names are also names of the Kortney runtime; import it with
+  a prefix when both are needed). It re-exports `compose.dart`.
+  - `Agent` and `ResumableAgent` (`run`/`resume` return a
+    `StreamReader<AgentEvent>`), `AgentInput`, `AgentEvent` (with
+    `AgentOutput`, `AgentAction`, an error in place of a failed stream),
+    `MessageVariant.message`/`.stream` with `getMessage()`,
+    `getMessageFromEvent`, `AgentEvent.fromMessage`.
+  - `ChatModelAgent` (`ChatModelAgentConfig`, `ToolsConfig` with
+    `returnDirectly` and `emitInternalEvents`, `GenModelInput` and
+    `defaultGenModelInput`, which fills `{key}` placeholders of the
+    instruction from session values): the ReAct loop of Eino on a compose
+    graph (`Init`, `ChatModel`, `CancelCheck`, `ToolNode`, `AfterToolCalls`,
+    `AfterToolCallsCancelCheck`, `AfterAgent`, `ToolNodeToEndConverter`), or
+    one model call without tools; `ExceedMaxIterationsException`.
+  - `Runner` (`run`, `query`, `resume`, `resumeWithParams` with
+    `ResumeParams`; a checkpoint is saved under `AgentRunOption.checkpointId`
+    when the run interrupts), `AgentRunOption` (`sessionValues`, `callbacks`,
+    `checkpointId`, `chatModelOptions`, `toolOptions`, `agentToolRunOptions`,
+    `afterToolCallsHook`, `custom<T>`/`customValues<T>`, `designateAgent`).
+  - Interrupts of agents: `interruptEvent`, `statefulInterruptEvent`,
+    `compositeInterruptEvent`, `AgentInterruptInfo`, `ResumeInfo`,
+    `ChatModelAgentInterruptInfo`, `ChatModelAgentResumeData` (a history
+    modifier given with `resumeWithParams`), `addressSegmentAgent`,
+    `addressSegmentTool`. A tool that calls `interrupt` interrupts its
+    agent, and resuming the run resumes the tool.
+  - `extension AgentContext on RunContext`: `sessionValues`,
+    `addSessionValue(s)`, `sessionValue`, `hasSessionValue`,
+    `clearRunContext`, `setRunLocalValue`, `runLocalValue`,
+    `deleteRunLocalValue`, `sendEvent`; and `sendToolGenAction`.
+  - `ChatModelAgentMiddleware` (nine hooks with no-op defaults: `beforeAgent`,
+    `afterAgent`, `beforeModelRewriteState`, `afterModelRewriteState`, four
+    tool wrappers, `wrapModel`), `ChatModelAgentContext`,
+    `ChatModelAgentState`, `ModelContext`, `ToolContext`, the endpoint
+    typedefs, `EventSenderModelWrapper` and `EventSenderToolWrapper` (to place
+    the event senders among the middlewares).
+  - `ModelRetryConfig` (`shouldRetry` with `RetryContext`/`RetryDecision`,
+    `backoff`), `RetryExhaustedException`, `WillRetryException` (ends the
+    stream of an output that will be retried), `ModelFailoverConfig` with
+    `FailoverContext`.
+  - Message ids (`messageIdOf`, `ensureMessageId`, `einoMessageIdKey`): the
+    model's messages (the first chunk of a stream) and tool results get ids,
+    shared by the event and the agent's state.
+  - `AgentTool` (`fullChatHistoryAsInput`, `inputSchema`): an agent as a
+    tool of another, with shared session values, events passed on with
+    `emitInternalEvents`, and interrupts that propagate.
+  - Agent callbacks: `AgentCallbackInput`, `AgentCallbackOutput` (a stream of
+    the events per handler), `typedAgentCallbackHandler`; the runner reports
+    every agent as `ComponentType.agent` with its type (`ChatModel`).
+  - `AdkLanguage`, `setAdkLanguage`, `adkLanguage`.
+  - Human-in-the-loop tools of the Eino examples: `ApprovableTool`
+    (`ApprovalInfo`, `ApprovalResult`), `ReviewEditTool` (`ReviewEditInfo`,
+    `ReviewEditResult`), `FollowUpTool` (`FollowUpInfo`, `FollowUpState`).
+- **Langfuse**: the observation of an agent ends with the messages and custom
+  outputs of its events; retry notifications of its model
+  (`WillRetryException`) are kept as `eino_retry_events` metadata instead of
+  failing it (port of eino-ext `endAgentOutput`).
 - **`RunContext`** (`core/run_context.dart`): the explicit, immutable
   counterpart of Go's `context.Context`, with a `cancelToken` and typed values
   under `ContextKey`s (`value`, `withValue`, `withCancelToken`). New APIs take
@@ -392,6 +453,27 @@ tools node, with interrupt, checkpoint and resume.
 
 ### Changed
 
+- **Kortney runtime** (`Runner`, `ChatModelAgent`, `AgentHandler`,
+  `ContextualTool` of the umbrella library): the loop now runs on the
+  Eino-shaped `ChatModelAgent` and `Runner` of `adk.dart`. The handlers, the
+  approval policy and the tool timeout are middlewares of that agent; its
+  events are mapped to the events of this runtime. The public API, the
+  events, their order and the messages the model is sent are those of
+  earlier releases (pinned by the golden transcripts under
+  `test/adk/golden/`). Approval stays an in-process `Completer` (no
+  checkpoint, no serialization). What a consumer can notice: a tool that
+  calls `interrupt` still ends the run with a non-recoverable
+  `AgentErrorEvent`, whose text now names the interrupt report (it used to
+  be the signal's own text); and handlers registered with `GlobalCallbacks`
+  now also hear the agent, its graph, its lambdas, the tools node and the
+  tools of a run, and hear the model call under the graph node's run info
+  (`ChatModel`) instead of the provider's own (callback handlers given to
+  the legacy `CallbackManager` are not affected).
+- `ContextualTool.invokableRun(ctx, …)` builds the `ToolCallContext` from
+  `ctx`: the tool call id the tools node set and the tool's name (instead of
+  `direct`), the cancel token of `ctx`, and inside a run of the Kortney
+  runtime its run id, session id, metadata and the tool call as the model
+  sent it.
 - **Compose**: compiling a graph with a checkpoint store or with interrupt
   nodes works (it threw `UnimplementedError`). A graph that is compiled with a
   checkpoint store refuses, at `compile`, a local state type that is neither
@@ -584,6 +666,43 @@ tools node, with interrupt, checkpoint and resume.
   `src/compose/lambda.dart` imports `package:threepio_core/legacy_graph.dart`
   and uses the `Legacy…` names. `StateGraph.toRunnable()` and `asNode()` work
   as before.
+- **Differences from Eino in the ADK port.**
+  - *Not ported*, because Eino marks it as not recommended or deprecated:
+    agent transfer (sub-agents, `TransferToAgentAction`, `ExitTool`,
+    `GenTransferMessages`, `WithSkipTransferMessages`, `RunPath`), the
+    workflow agents (sequential, parallel, loop), `OutputKey` (write a session
+    value in a middleware's `afterAgent` instead), the struct-based
+    `AgentMiddleware`/`Middlewares`, `ModelRetryConfig.IsRetryAble` (without
+    `shouldRetry` every error is retried, Eino's default), `ModelContext.Tools`,
+    `WithHistoryModifier`, the embedded `InterruptInfo` of `ResumeInfo`, the
+    deprecated `Info` of the runner's checkpoint, and the agentic message
+    types (later, optional phase). The cancel modes of Eino (`WithCancel`,
+    safe points) and `TurnLoop` come in the next phase; the graph already has
+    the `CancelCheck` nodes.
+  - *Checkpoints* are JSON, not `gob`: the runner's checkpoint keeps the
+    session values, the input of the run, the streaming flag and the
+    interrupt points; there is no event history (it served agent transfer).
+    The interrupt state of a `ChatModelAgent` and of an `AgentTool` (the
+    checkpoint of their inner graph or runner) is a Base64 string, where Go
+    keeps `[]byte`. Values in session values, run-local values and interrupt
+    states must be JSON or registered with `TypeRegistry`.
+    `setRunLocalValue` refuses a value that cannot be written.
+  - *Events* are immutable (`copyWith`); `MessageVariant.role` is nullable
+    (Go's empty role). A streamed message is read once; `getMessage()` keeps
+    the joined message, and `getMessageFromEvent` reads a copy so that the
+    event stays readable.
+  - *Run-local values* are read and written synchronously (Go returns an
+    error; Dart throws `StateError` outside a `ChatModelAgent` run).
+  - *Tools of the model*: a `ChatModelAgent` passes them in
+    `ChatModelOptions.tools` and, for a `ToolCallingChatModel`, also binds
+    them with `withTools`.
+  - *Layer payload*: Go keeps the run path of the interrupting agent in the
+    interrupt state; without run paths it is empty here.
+  - *Callbacks*: `AgentCallbackHandler` of the umbrella library still passes
+    payloads on as they are (earlier releases relied on it);
+    `typedAgentCallbackHandler` gives the typed reports.
+  - *Streams*: the agent reads the output stream of its graph to its end
+    (Go closes it unread), so that an error inside it is not lost.
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

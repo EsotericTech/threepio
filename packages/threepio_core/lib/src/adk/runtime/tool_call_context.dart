@@ -5,9 +5,11 @@ import 'package:meta/meta.dart';
 import '../../components/model/cancel_token.dart';
 import '../../components/tool/invokable_tool.dart';
 import '../../components/tool/tool_options.dart';
+import '../../compose/tools_node.dart';
 import '../../core/run_context.dart';
 import '../../errors.dart';
 import '../../schema/message.dart';
+import 'legacy_run.dart';
 
 /// A file a tool produced, referenced by local path so it can cross engine
 /// and process boundaries without copying bytes.
@@ -120,32 +122,67 @@ abstract class ContextualTool extends InvokableTool {
     String argumentsJson,
   );
 
-  /// Runs the tool outside an agent run that knows about [ToolCallContext]:
-  /// like [run], but the call is cancelled with [ctx].
+  /// Runs the tool when an engine calls it through [invokableRun]: inside a
+  /// tools node (for example of the Eino-shaped `ChatModelAgent`), or
+  /// directly.
+  ///
+  /// The [ToolCallContext] comes from [ctx]: the tool call id the tools node
+  /// set, the cancel token of [ctx], and, inside a run of the Kortney
+  /// runtime, its run id, session id, metadata and the tool call as the
+  /// model sent it. Without a tools node the ids are `direct`, as before. An
+  /// error result is thrown as a [ContextualToolException].
   @override
   Future<String> invokableRun(
     RunContext ctx,
     String argumentsJson, {
     ToolOptions? options,
-  }) =>
-      _runDirect(argumentsJson, ctx.cancelToken);
+  }) async {
+    final callId = toolCallIdOf(ctx);
+    final run = legacyRunOf(ctx);
+    final ToolCall call;
+    if (callId == null) {
+      call = ToolCall(
+        id: 'direct',
+        function: FunctionCall(name: 'direct', arguments: argumentsJson),
+      );
+    } else {
+      final name = (await info()).function.name;
+      call = run?.toolCallFor(callId, name, argumentsJson) ??
+          ToolCall(
+            id: callId,
+            function: FunctionCall(name: name, arguments: argumentsJson),
+          );
+    }
+    return _runDirect(
+      argumentsJson,
+      ToolCallContext(
+        runId: run?.scope.runId ?? 'direct',
+        sessionId: run?.scope.sessionId,
+        toolCall: call,
+        cancelToken: ctx.cancelToken,
+        metadata: run?.scope.metadata ?? const {},
+      ),
+    );
+  }
 
   @override
-  Future<String> run(String argumentsJson) =>
-      _runDirect(argumentsJson, CancelToken());
-
-  Future<String> _runDirect(String argumentsJson, CancelToken cancelToken) async {
-    final output = await runWithContext(
-      ToolCallContext(
-        runId: 'direct',
-        toolCall: ToolCall(
-          id: 'direct',
-          function: FunctionCall(name: 'direct', arguments: argumentsJson),
+  Future<String> run(String argumentsJson) => _runDirect(
+        argumentsJson,
+        ToolCallContext(
+          runId: 'direct',
+          toolCall: ToolCall(
+            id: 'direct',
+            function: FunctionCall(name: 'direct', arguments: argumentsJson),
+          ),
+          cancelToken: CancelToken(),
         ),
-        cancelToken: cancelToken,
-      ),
-      argumentsJson,
-    );
+      );
+
+  Future<String> _runDirect(
+    String argumentsJson,
+    ToolCallContext context,
+  ) async {
+    final output = await runWithContext(context, argumentsJson);
     if (output.isError) throw ContextualToolException(output.content);
     return output.content;
   }
