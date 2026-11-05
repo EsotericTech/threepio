@@ -640,9 +640,10 @@ abstract class Message with _$Message implements MessagesTemplate {
   /// ); // messages.single.content == 'hello, eino'
   /// ```
   ///
-  /// Throws [FormatException] when the text is not a valid template or names
-  /// a variable that [vars] does not have, and [UnsupportedError] for
-  /// [FormatType.goTemplate].
+  /// Throws [FormatException] (a `ThreepioFormatException`, so that it is
+  /// also caught as a `ThreepioException`) when the text is not a valid
+  /// template or names a variable that [vars] does not have, and
+  /// [UnsupportedError] for [FormatType.goTemplate].
   @override
   Future<List<Message>> format(
     RunContext ctx,
@@ -691,10 +692,30 @@ abstract class Message with _$Message implements MessagesTemplate {
 
 /// Helper to concatenate message chunks from a stream
 ///
-/// The class form of [concatMessages], kept for existing callers.
+/// The entry point threepio had before [concatMessages], kept, with its
+/// behaviour, for the code that calls it. New code uses [concatMessages].
 class MessageConcatenator {
   /// Concatenate multiple messages into a single message
   ///
-  /// The same as [concatMessages].
-  static Message concat(List<Message> messages) => concatMessages(messages);
+  /// **Which one to use.** [concatMessages] is the port of eino
+  /// `schema.ConcatMessages` and is strict: chunks that contradict each other
+  /// are an error. This method joins chunks the same way but keeps the
+  /// tolerance it has always had towards streams that are not quite
+  /// consistent, as some providers produce them:
+  ///
+  /// * When the fragments of one tool call (same `index`) carry different
+  ///   ids, types or names, the first non-empty value wins. [concatMessages]
+  ///   throws.
+  /// * When the values under one key of [Message.extra] cannot be joined (a
+  ///   string in one chunk, a number in the next), the last one is kept.
+  ///   [concatMessages] throws.
+  ///
+  /// Use [concatMessages] for new code and wherever a malformed stream should
+  /// be noticed; use this method where a best-effort message is better than
+  /// none.
+  ///
+  /// Like [concatMessages], it throws [ArgumentError] for an empty list and
+  /// for chunks with different roles, names, tool call ids or tool names.
+  static Message concat(List<Message> messages) =>
+      concatMessagesLeniently(messages);
 }

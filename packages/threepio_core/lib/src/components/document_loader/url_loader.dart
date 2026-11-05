@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../../errors.dart';
 import '../../schema/document.dart';
 import '../document_parser/document_parser.dart';
 import '../document_parser/parser_registry.dart';
@@ -337,7 +338,7 @@ class MultiUrlLoader extends DocumentLoader {
 }
 
 /// Exception thrown when URL loading fails.
-class UrlLoaderException implements Exception {
+class UrlLoaderException implements ThreepioException {
   /// Creates a URL loader exception.
   const UrlLoaderException(
     this.message, {
@@ -346,6 +347,7 @@ class UrlLoaderException implements Exception {
   });
 
   /// Error message.
+  @override
   final String message;
 
   /// URL that failed to load.
@@ -353,6 +355,9 @@ class UrlLoaderException implements Exception {
 
   /// HTTP status code if available.
   final int? statusCode;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {

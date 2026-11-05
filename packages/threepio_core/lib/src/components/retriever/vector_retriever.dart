@@ -100,8 +100,11 @@ class VectorRetriever implements Retriever {
     String query,
     RetrieverOptions? options,
   ) async {
-    // Embed the query
-    final embeddings = await embedder.embedStrings([query]);
+    // Embed the query, with the embedder of the call if it brings one
+    final embeddings = await (options?.embedding ?? embedder).embedStrings(
+      [query],
+      options: _embedderOptions(options),
+    );
     final queryEmbedding = embeddings.first;
 
     final topK = options?.topK ?? defaultTopK;
@@ -168,12 +171,21 @@ class VectorRetriever implements Retriever {
     }
   }
 
+  /// The embedder is called under the run context of the retrieval.
+  static EmbedderOptions? _embedderOptions(RetrieverOptions? options) {
+    final runContext = options?.runContext;
+    return runContext == null ? null : EmbedderOptions(runContext: runContext);
+  }
+
   Future<List<SimilaritySearchResult>> _retrieveWithScoresInternal(
     String query,
     RetrieverOptions? options,
   ) async {
-    // Embed the query
-    final embeddings = await embedder.embedStrings([query]);
+    // Embed the query, with the embedder of the call if it brings one
+    final embeddings = await (options?.embedding ?? embedder).embedStrings(
+      [query],
+      options: _embedderOptions(options),
+    );
     final queryEmbedding = embeddings.first;
 
     final topK = options?.topK ?? defaultTopK;

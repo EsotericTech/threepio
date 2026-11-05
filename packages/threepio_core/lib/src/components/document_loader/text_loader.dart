@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../errors.dart';
 import '../../schema/document.dart';
 import 'document_loader.dart';
 
@@ -253,10 +254,14 @@ class DirectoryLoader implements DocumentLoader {
 }
 
 /// Document loader exception
-class DocumentLoaderException implements Exception {
+class DocumentLoaderException implements ThreepioException {
   DocumentLoaderException(this.message);
 
+  @override
   final String message;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'DocumentLoaderException: $message';

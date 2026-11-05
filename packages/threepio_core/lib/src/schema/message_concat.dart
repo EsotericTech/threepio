@@ -3,6 +3,8 @@
 /// Port of the concat functions of eino `schema/message.go`.
 library;
 
+import 'package:meta/meta.dart';
+
 import '../streaming/stream_reader.dart';
 import 'concat.dart';
 import 'message.dart';
@@ -33,7 +35,22 @@ import 'tool_result.dart';
 ///
 /// Throws [ArgumentError] when [chunks] is empty or the chunks contradict each
 /// other.
-Message concatMessages(List<Message> chunks) {
+Message concatMessages(List<Message> chunks) =>
+    _concatMessages(chunks, lenient: false);
+
+/// [concatMessages] with the tolerance `MessageConcatenator.concat` has always
+/// had, for that method alone.
+///
+/// Where the fragments of one tool call disagree about its id, type or name,
+/// the first one that has a value wins, and where the values under one key of
+/// `extra` cannot be joined, the last one is kept. Everything else is as in
+/// [concatMessages], including what makes it throw: an empty list, and chunks
+/// with different roles, names, tool call ids or tool names.
+@internal
+Message concatMessagesLeniently(List<Message> chunks) =>
+    _concatMessages(chunks, lenient: true);
+
+Message _concatMessages(List<Message> chunks, {required bool lenient}) {
   if (chunks.isEmpty) {
     throw ArgumentError('Cannot concatenate empty message list');
   }
@@ -91,7 +108,8 @@ Message concatMessages(List<Message> chunks) {
     if (chunkMeta != null) (meta ??= _ResponseMetaBuilder()).add(chunkMeta);
   }
 
-  final extra = extras.isEmpty ? null : _concatExtra(extras);
+  final extra =
+      extras.isEmpty ? null : _concatExtra(extras, lenient: lenient);
 
   return Message(
     role: role,
@@ -99,12 +117,15 @@ Message concatMessages(List<Message> chunks) {
     name: name,
     toolCallId: toolCallId,
     toolName: toolName,
-    toolCalls: toolCalls.isEmpty ? null : _concatToolCalls(toolCalls),
+    toolCalls: toolCalls.isEmpty
+        ? null
+        : _concatToolCalls(toolCalls, lenient: lenient),
     reasoningContent: hasReasoning ? reasoning.toString() : null,
     responseMeta: meta?.build(),
     extra: extra == null || extra.isEmpty ? null : extra,
-    assistantGenMultiContent:
-        outputParts.isEmpty ? null : _concatOutputParts(outputParts),
+    assistantGenMultiContent: outputParts.isEmpty
+        ? null
+        : _concatOutputParts(outputParts, lenient: lenient),
     userInputMultiContent:
         inputParts.isEmpty ? null : _concatInputParts(inputParts),
   );
@@ -209,10 +230,20 @@ ToolResult concatToolResults(List<ToolResult> chunks) {
 }
 
 /// Merges the extras of chunks; port of eino's `concatExtra`.
-Map<String, dynamic> _concatExtra(List<Map<String, dynamic>> extras) {
+///
+/// When [lenient], values that cannot be joined do not throw: the last one is
+/// kept.
+Map<String, dynamic> _concatExtra(
+  List<Map<String, dynamic>> extras, {
+  bool lenient = false,
+}) {
   if (extras.length == 1) return {...extras.single};
   try {
-    return concatMaps(extras, appendLists: true);
+    return concatMaps(
+      extras,
+      appendLists: true,
+      lastWinsOnConflict: lenient,
+    );
     // Values that cannot be joined are reported like every other
     // contradiction between chunks.
     // ignore: avoid_catching_errors
@@ -226,17 +257,24 @@ Map<String, dynamic> _concatExtra(List<Map<String, dynamic>> extras) {
 
 /// The merged extras of the parts of a group, or `null` when none has any.
 Map<String, dynamic>? _concatPartExtras(
-  Iterable<Map<String, dynamic>?> extras,
-) {
+  Iterable<Map<String, dynamic>?> extras, {
+  bool lenient = false,
+}) {
   final present = [
     for (final extra in extras)
       if (extra != null && extra.isNotEmpty) extra,
   ];
-  return present.isEmpty ? null : _concatExtra(present);
+  return present.isEmpty ? null : _concatExtra(present, lenient: lenient);
 }
 
 /// Port of eino's `concatToolCalls`.
-List<ToolCall> _concatToolCalls(List<ToolCall> chunks) {
+///
+/// When [lenient], fragments of one call that disagree about its id, type or
+/// name do not throw: the first value wins.
+List<ToolCall> _concatToolCalls(
+  List<ToolCall> chunks, {
+  required bool lenient,
+}) {
   final merged = <ToolCall>[];
   final byIndex = <int, List<ToolCall>>{};
   for (final chunk in chunks) {
@@ -251,7 +289,7 @@ List<ToolCall> _concatToolCalls(List<ToolCall> chunks) {
   String agreed(String known, String next, String what) {
     if (next.isEmpty) return known;
     if (known.isEmpty) return next;
-    if (known != next) {
+    if (known != next && !lenient) {
       throw ArgumentError(
         "cannot concat ToolCalls with different $what: '$known' '$next'",
       );
@@ -287,7 +325,10 @@ List<ToolCall> _concatToolCalls(List<ToolCall> chunks) {
 }
 
 /// Port of eino's `concatAssistantMultiContent`.
-List<MessageOutputPart> _concatOutputParts(List<MessageOutputPart> parts) {
+List<MessageOutputPart> _concatOutputParts(
+  List<MessageOutputPart> parts, {
+  required bool lenient,
+}) {
   final merged = <MessageOutputPart>[];
   var i = 0;
   while (i < parts.length) {
@@ -295,7 +336,11 @@ List<MessageOutputPart> _concatOutputParts(List<MessageOutputPart> parts) {
     while (end < parts.length && _canMerge(parts[i], parts[end])) {
       end++;
     }
-    merged.add(end == i + 1 ? parts[i] : _mergeGroup(parts.sublist(i, end)));
+    merged.add(
+      end == i + 1
+          ? parts[i]
+          : _mergeGroup(parts.sublist(i, end), lenient: lenient),
+    );
     i = end;
   }
   return merged;
@@ -321,9 +366,15 @@ bool _canMerge(MessageOutputPart current, MessageOutputPart next) {
       (current.streamingMeta == null) == (next.streamingMeta == null);
 }
 
-MessageOutputPart _mergeGroup(List<MessageOutputPart> group) {
+MessageOutputPart _mergeGroup(
+  List<MessageOutputPart> group, {
+  required bool lenient,
+}) {
   final first = group.first;
-  final extra = _concatPartExtras(group.map((part) => part.extra));
+  final extra = _concatPartExtras(
+    group.map((part) => part.extra),
+    lenient: lenient,
+  );
 
   switch (first.type) {
     case ChatMessagePartType.text:
@@ -360,8 +411,11 @@ MessageOutputPart _mergeGroup(List<MessageOutputPart> group) {
               .map((audio) => audio?.mimeType)
               .firstWhere((type) => type != null && type.isNotEmpty,
                   orElse: () => null),
-          // ignore: deprecated_member_use_from_same_package
-          extra: _concatPartExtras(audios.map((audio) => audio?.extra)),
+          extra: _concatPartExtras(
+            // ignore: deprecated_member_use_from_same_package
+            audios.map((audio) => audio?.extra),
+            lenient: lenient,
+          ),
         ),
         extra: extra,
         streamingMeta: first.streamingMeta,

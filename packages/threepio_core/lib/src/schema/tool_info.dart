@@ -1,6 +1,8 @@
 import 'package:collection/collection.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import '../errors.dart';
+
 part 'tool_info.freezed.dart';
 part 'tool_info.g.dart';
 
@@ -385,7 +387,8 @@ enum DataType {
   /// The data type JSON Schema calls [value].
   static DataType parse(String value) => values.firstWhere(
         (type) => type.value == value,
-        orElse: () => throw FormatException('Unknown data type "$value"'),
+        orElse: () =>
+            throw ThreepioFormatException('Unknown data type "$value"'),
       );
 }
 

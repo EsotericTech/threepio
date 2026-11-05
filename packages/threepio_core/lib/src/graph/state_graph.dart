@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../callbacks/callback_manager.dart';
 import '../callbacks/run_info.dart';
+import '../errors.dart';
 import 'checkpoint/checkpoint.dart';
 import 'checkpoint/checkpoint_config.dart';
 import 'checkpoint/checkpoint_store.dart';
@@ -701,11 +702,13 @@ class StateGraph<S extends GraphState> {
 }
 
 /// Exception thrown during graph execution
-class GraphExecutionException implements Exception {
+class GraphExecutionException implements ThreepioException {
   GraphExecutionException(this.message, {this.nodeName, this.cause});
 
+  @override
   final String message;
   final String? nodeName;
+  @override
   final dynamic cause;
 
   @override

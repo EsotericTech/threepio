@@ -4,8 +4,10 @@
 /// enabling proper error handling and recovery strategies.
 library;
 
+import '../../errors.dart';
+
 /// Base class for all agent exceptions.
-abstract class AgentException implements Exception {
+abstract class AgentException implements ThreepioException {
   /// Creates an agent exception.
   const AgentException({
     required this.message,
@@ -15,6 +17,7 @@ abstract class AgentException implements Exception {
   });
 
   /// Description of what went wrong.
+  @override
   final String message;
 
   /// Name of the agent that encountered the error.
@@ -24,6 +27,7 @@ abstract class AgentException implements Exception {
   final String? runId;
 
   /// Underlying cause of this exception.
+  @override
   final Object? cause;
 
   @override

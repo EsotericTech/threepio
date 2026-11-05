@@ -34,8 +34,13 @@ export 'src/adk/adk_exports.dart';
 export 'src/memory/memory_exports.dart';
 // Structured output parsing exports
 export 'src/output_parser/output_parser_exports.dart';
-// Schema exports (messages, tools, documents, templates, concat, registry)
-// and the core run context
+// Component contracts, options, callback payloads, tool utilities and the
+// platform-neutral implementations (port of the Eino package `components`).
+// The individual component exports above stay: they add what `components.dart`
+// leaves out (providers, file loaders, the pre-ADK tool registry and agent).
+export 'components.dart';
+// Schema exports (messages, tools, documents, templates, concat, registry),
+// the core run context and the exception base types
 export 'schema.dart';
 // Streaming exports
 export 'streaming.dart';

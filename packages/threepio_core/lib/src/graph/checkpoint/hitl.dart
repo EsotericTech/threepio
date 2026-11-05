@@ -1,3 +1,4 @@
+import '../../errors.dart';
 import '../graph_state.dart';
 import 'checkpoint.dart';
 
@@ -165,7 +166,7 @@ class HumanInputRequired<S extends GraphState, I> implements Exception {
 }
 
 /// Exception thrown when invalid human input is provided.
-class InvalidHumanInputException implements Exception {
+class InvalidHumanInputException implements ThreepioException {
   /// Creates an invalid human input exception.
   InvalidHumanInputException({
     required this.nodeName,
@@ -177,10 +178,14 @@ class InvalidHumanInputException implements Exception {
   final String nodeName;
 
   /// Error message describing the validation failure.
+  @override
   final String message;
 
   /// The invalid input that was provided.
   final dynamic input;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {

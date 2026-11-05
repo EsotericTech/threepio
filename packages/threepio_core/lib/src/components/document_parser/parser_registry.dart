@@ -1,9 +1,10 @@
 import 'dart:typed_data';
 
+import '../../errors.dart';
 import 'document_parser.dart';
 
 /// Exception thrown when no suitable parser is found.
-class NoParserFoundException implements Exception {
+class NoParserFoundException implements ThreepioException {
   /// Creates a no parser found exception.
   const NoParserFoundException({
     this.extension,
@@ -25,8 +26,12 @@ class NoParserFoundException implements Exception {
   final List<String>? availableMimeTypes;
 
   @override
-  String toString() {
-    final buffer = StringBuffer('NoParserFoundException: ');
+  Object? get cause => null;
+
+  /// What no parser was found for, and what there are parsers for.
+  @override
+  String get message {
+    final buffer = StringBuffer();
     if (extension != null) {
       buffer.write('No parser for extension "$extension"');
     } else if (mimeType != null) {
@@ -39,6 +44,9 @@ class NoParserFoundException implements Exception {
     }
     return buffer.toString();
   }
+
+  @override
+  String toString() => 'NoParserFoundException: $message';
 }
 
 /// Registry for document parsers with auto-selection.

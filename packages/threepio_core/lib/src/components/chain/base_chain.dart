@@ -1,6 +1,7 @@
 import '../../callbacks/callback_manager.dart';
 import '../../callbacks/run_info.dart';
 import '../../compose/runnable.dart';
+import '../../errors.dart';
 
 /// Base interface for composable processing chains
 ///
@@ -281,11 +282,13 @@ class _ChainPipe<O> implements Runnable<Map<String, dynamic>, O> {
 }
 
 /// Exception thrown when chain execution fails
-class ChainException implements Exception {
+class ChainException implements ThreepioException {
   ChainException(this.message, {this.chainName, this.cause});
 
+  @override
   final String message;
   final String? chainName;
+  @override
   final dynamic cause;
 
   @override

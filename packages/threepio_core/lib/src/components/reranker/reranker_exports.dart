@@ -3,4 +3,5 @@ library;
 
 export 'mmr_reranker.dart';
 export 'reranker.dart';
+export 'reranker_transformer.dart';
 export 'score_reranker.dart';

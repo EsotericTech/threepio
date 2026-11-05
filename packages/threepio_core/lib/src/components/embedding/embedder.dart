@@ -1,8 +1,15 @@
+import '../../core/run_context.dart';
+import '../../internal/option_extensions.dart';
+
 /// Options for embedding operations
+///
+/// Port of eino `embedding.Options`.
 class EmbedderOptions {
   const EmbedderOptions({
     this.model,
     this.extra,
+    this.runContext,
+    this.extensions = const [],
   });
 
   /// Model name/identifier to use for embedding
@@ -10,6 +17,50 @@ class EmbedderOptions {
 
   /// Implementation-specific options
   final Map<String, dynamic>? extra;
+
+  /// The context of the run this call belongs to: its cancellation and its
+  /// values.
+  ///
+  /// [Embedder.embedStrings] keeps the signature it had before [RunContext]
+  /// existed, so the context travels here. A graph sets it for its embedding
+  /// nodes.
+  final RunContext? runContext;
+
+  /// Options that only one implementation understands, each an instance of a
+  /// class that implementation defines.
+  ///
+  /// The counterpart of eino's `embedding.WrapImplSpecificOptFn`.
+  final List<Object> extensions;
+
+  /// The first of the [extensions] that is a [T], or `null`.
+  ///
+  /// The counterpart of eino's `embedding.GetImplSpecificOptions`.
+  T? extension<T extends Object>() => findExtension<T>(extensions);
+
+  /// A copy with the given fields replaced.
+  EmbedderOptions copyWith({
+    String? model,
+    Map<String, dynamic>? extra,
+    RunContext? runContext,
+    List<Object>? extensions,
+  }) =>
+      EmbedderOptions(
+        model: model ?? this.model,
+        extra: extra ?? this.extra,
+        runContext: runContext ?? this.runContext,
+        extensions: extensions ?? this.extensions,
+      );
+
+  /// These options with what [other] sets taking precedence, field by field.
+  /// The [extensions] of both are kept, those of [other] first.
+  EmbedderOptions merge(EmbedderOptions? other) => other == null
+      ? this
+      : EmbedderOptions(
+          model: other.model ?? model,
+          extra: other.extra ?? extra,
+          runContext: other.runContext ?? runContext,
+          extensions: mergeExtensions(extensions, other.extensions),
+        );
 }
 
 /// Interface for text embedding

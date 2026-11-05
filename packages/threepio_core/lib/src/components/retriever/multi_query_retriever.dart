@@ -1,5 +1,7 @@
+import '../../core/run_context.dart';
 import '../../schema/document.dart';
 import '../../schema/message.dart';
+import '../embedding/embedder.dart';
 import '../model/base_chat_model.dart';
 import 'fusion/deduplication.dart';
 import 'fusion/result_fusion.dart';
@@ -214,6 +216,12 @@ class MultiQueryRetrieverOptions extends RetrieverOptions {
     super.callbackManager,
     super.context,
     super.metadata,
+    super.index,
+    super.subIndex,
+    super.embedding,
+    super.dslInfo,
+    super.runContext,
+    super.extensions,
     this.customQueries,
     this.skipQueryGeneration = false,
   });
@@ -223,4 +231,73 @@ class MultiQueryRetrieverOptions extends RetrieverOptions {
 
   /// Skip LLM query generation and use only the original query.
   final bool skipQueryGeneration;
+
+  @override
+  MultiQueryRetrieverOptions copyWith({
+    int? topK,
+    double? scoreThreshold,
+    Map<String, dynamic>? extra,
+    Map<String, dynamic>? metadata,
+    String? index,
+    String? subIndex,
+    Embedder? embedding,
+    Map<String, Object?>? dslInfo,
+    RunContext? runContext,
+    List<Object>? extensions,
+    List<String>? customQueries,
+    bool? skipQueryGeneration,
+  }) =>
+      _from(
+        super.copyWith(
+          topK: topK,
+          scoreThreshold: scoreThreshold,
+          extra: extra,
+          metadata: metadata,
+          index: index,
+          subIndex: subIndex,
+          embedding: embedding,
+          dslInfo: dslInfo,
+          runContext: runContext,
+          extensions: extensions,
+        ),
+        customQueries: customQueries ?? this.customQueries,
+        skipQueryGeneration: skipQueryGeneration ?? this.skipQueryGeneration,
+      );
+
+  /// These options with what [other] sets taking precedence. The fields of
+  /// this class are taken from [other] when it is a
+  /// [MultiQueryRetrieverOptions], and kept otherwise.
+  @override
+  MultiQueryRetrieverOptions merge(RetrieverOptions? other) {
+    if (other == null) return this;
+    final multiQuery = other is MultiQueryRetrieverOptions ? other : null;
+    return _from(
+      super.merge(other),
+      customQueries: multiQuery?.customQueries ?? customQueries,
+      skipQueryGeneration:
+          multiQuery?.skipQueryGeneration ?? skipQueryGeneration,
+    );
+  }
+
+  static MultiQueryRetrieverOptions _from(
+    RetrieverOptions base, {
+    required List<String>? customQueries,
+    required bool skipQueryGeneration,
+  }) =>
+      MultiQueryRetrieverOptions(
+        topK: base.topK,
+        scoreThreshold: base.scoreThreshold,
+        extra: base.extra,
+        callbackManager: base.callbackManager,
+        context: base.context,
+        metadata: base.metadata,
+        index: base.index,
+        subIndex: base.subIndex,
+        embedding: base.embedding,
+        dslInfo: base.dslInfo,
+        runContext: base.runContext,
+        extensions: base.extensions,
+        customQueries: customQueries,
+        skipQueryGeneration: skipQueryGeneration,
+      );
 }

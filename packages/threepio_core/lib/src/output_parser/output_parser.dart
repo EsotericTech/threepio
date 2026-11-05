@@ -1,3 +1,5 @@
+import '../errors.dart';
+
 /// Base interface for output parsers
 ///
 /// **Framework Sources:**
@@ -69,10 +71,11 @@ abstract class TransformingParser<TInput, TOutput>
 }
 
 /// Exception thrown when output parsing fails
-class OutputParserException implements Exception {
+class OutputParserException implements ThreepioException {
   OutputParserException(this.message, {this.output, this.sendToLLM = false});
 
   /// Error message describing what went wrong
+  @override
   final String message;
 
   /// The output that failed to parse
@@ -82,6 +85,9 @@ class OutputParserException implements Exception {
   ///
   /// If true, the LLM can see the error and attempt to fix its output.
   final bool sendToLLM;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {

@@ -4,6 +4,9 @@ import 'package:meta/meta.dart';
 
 import '../../components/model/cancel_token.dart';
 import '../../components/tool/invokable_tool.dart';
+import '../../components/tool/tool_options.dart';
+import '../../core/run_context.dart';
+import '../../errors.dart';
 import '../../schema/message.dart';
 
 /// A file a tool produced, referenced by local path so it can cross engine
@@ -117,8 +120,21 @@ abstract class ContextualTool extends InvokableTool {
     String argumentsJson,
   );
 
+  /// Runs the tool outside an agent run that knows about [ToolCallContext]:
+  /// like [run], but the call is cancelled with [ctx].
   @override
-  Future<String> run(String argumentsJson) async {
+  Future<String> invokableRun(
+    RunContext ctx,
+    String argumentsJson, {
+    ToolOptions? options,
+  }) =>
+      _runDirect(argumentsJson, ctx.cancelToken);
+
+  @override
+  Future<String> run(String argumentsJson) =>
+      _runDirect(argumentsJson, CancelToken());
+
+  Future<String> _runDirect(String argumentsJson, CancelToken cancelToken) async {
     final output = await runWithContext(
       ToolCallContext(
         runId: 'direct',
@@ -126,7 +142,7 @@ abstract class ContextualTool extends InvokableTool {
           id: 'direct',
           function: FunctionCall(name: 'direct', arguments: argumentsJson),
         ),
-        cancelToken: CancelToken(),
+        cancelToken: cancelToken,
       ),
       argumentsJson,
     );
@@ -136,10 +152,14 @@ abstract class ContextualTool extends InvokableTool {
 }
 
 /// Thrown by [ContextualTool.run] when the contextual result was an error.
-class ContextualToolException implements Exception {
+class ContextualToolException implements ThreepioException {
   const ContextualToolException(this.message);
 
+  @override
   final String message;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'ContextualToolException: $message';

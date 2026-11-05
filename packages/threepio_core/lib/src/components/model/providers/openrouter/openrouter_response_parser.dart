@@ -1,3 +1,4 @@
+import '../../../../errors.dart';
 import '../../../../schema/message.dart';
 import '../../response_parser.dart';
 import '../openai/openai_converters.dart';
@@ -464,13 +465,17 @@ class OpenRouterResponseParser implements ResponseParser {
 
 /// Exception thrown when parsing OpenRouter responses fails, or when the
 /// provider reports an error inside the stream.
-class OpenRouterParseException implements Exception {
+class OpenRouterParseException implements ThreepioException {
   OpenRouterParseException(this.message, {this.code});
 
+  @override
   final String message;
 
   /// Provider error code when the exception wraps an in-stream error.
   final Object? code;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'OpenRouterParseException: $message';

@@ -160,11 +160,20 @@ class OpenRouterRequestOptions {
       };
 
   /// Returns [options] with these fields merged into `extra`.
+  ///
+  /// This object is also added to the `extensions` of the result, ahead of
+  /// the ones [options] already has, where
+  /// `options.extension<OpenRouterRequestOptions>()` finds it.
   ChatModelOptions applyTo(ChatModelOptions options) => options.copyWith(
         extra: {...?options.extra, ...toRequestFields()},
+        extensions: [this, ...options.extensions],
       );
 
   /// Builds [ChatModelOptions] carrying these fields.
+  ///
+  /// The fields are in `extra`, as request fields, and this object is in
+  /// `extensions`. Passing it there directly works as well:
+  /// `ChatModelOptions(extensions: [OpenRouterRequestOptions(...)])`.
   ChatModelOptions toOptions({
     String? model,
     double? temperature,
@@ -179,5 +188,6 @@ class OpenRouterRequestOptions {
         topP: topP,
         stop: stop,
         extra: toRequestFields(),
+        extensions: [this],
       );
 }

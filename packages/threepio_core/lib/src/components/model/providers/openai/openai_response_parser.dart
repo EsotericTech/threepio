@@ -1,3 +1,4 @@
+import '../../../../errors.dart';
 import '../../../../schema/message.dart';
 import '../../response_parser.dart';
 import 'openai_converters.dart';
@@ -63,10 +64,14 @@ class OpenAIResponseParser implements ResponseParser {
 }
 
 /// Exception thrown when parsing OpenAI responses fails
-class OpenAIParseException implements Exception {
+class OpenAIParseException implements ThreepioException {
   OpenAIParseException(this.message);
 
+  @override
   final String message;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'OpenAIParseException: $message';

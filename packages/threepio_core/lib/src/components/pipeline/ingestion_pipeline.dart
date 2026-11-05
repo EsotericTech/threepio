@@ -1,11 +1,16 @@
 import 'dart:async';
 
 import '../../schema/document.dart';
+import '../document/transformer.dart';
 import '../document_loader/document_loader.dart';
 import '../document_parser/document_parser.dart';
 import '../embedding/embedder.dart';
 import '../text_splitter/text_splitter.dart';
 import '../vector_store/vector_store.dart';
+
+// `DocumentTransformer` used to be declared in this file. It moved next to
+// the other document contracts; importers of this library still get it.
+export '../document/transformer.dart';
 
 /// Options for document ingestion.
 class IngestionOptions {
@@ -530,14 +535,6 @@ class IngestionPipeline {
   }
 }
 
-/// Interface for document transformers.
-///
-/// Transformers modify documents as they pass through the pipeline.
-abstract class DocumentTransformer {
-  /// Transform a list of documents.
-  Future<List<Document>> transform(List<Document> documents);
-}
-
 /// Transformer that adds metadata to all documents.
 class MetadataTransformer implements DocumentTransformer {
   /// Creates a metadata transformer.
@@ -553,7 +550,10 @@ class MetadataTransformer implements DocumentTransformer {
   final bool overwrite;
 
   @override
-  Future<List<Document>> transform(List<Document> documents) async {
+  Future<List<Document>> transform(
+    List<Document> documents, {
+    TransformerOptions? options,
+  }) async {
     return documents.map((doc) {
       final newMetadata = overwrite
           ? {...doc.metadata, ...metadata}
@@ -580,7 +580,10 @@ class FilterTransformer implements DocumentTransformer {
   final bool Function(Document) predicate;
 
   @override
-  Future<List<Document>> transform(List<Document> documents) async {
+  Future<List<Document>> transform(
+    List<Document> documents, {
+    TransformerOptions? options,
+  }) async {
     return documents.where(predicate).toList();
   }
 }
@@ -608,7 +611,10 @@ class ContentCleanerTransformer implements DocumentTransformer {
   final int maxConsecutiveNewlines;
 
   @override
-  Future<List<Document>> transform(List<Document> documents) async {
+  Future<List<Document>> transform(
+    List<Document> documents, {
+    TransformerOptions? options,
+  }) async {
     return documents.map((doc) {
       var content = doc.content;
 

@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:threepio_core/src/schema/message.dart';
 
+import '../../core/interrupt_signal.dart';
+import '../../core/run_context.dart';
 import 'invokable_tool.dart';
 import 'tool_registry.dart';
 
@@ -66,7 +68,9 @@ class ToolExecutor {
 
   /// Execute a single tool call
   ///
-  /// Returns a [ToolExecutionResult] with the output or error.
+  /// Returns a [ToolExecutionResult] with the output or error. The one thing
+  /// a tool can throw that is not turned into an error result is an
+  /// [InterruptSignal]: it is thrown on.
   Future<ToolExecutionResult> executeToolCall(ToolCall toolCall) async {
     try {
       // Get the tool from registry
@@ -92,13 +96,17 @@ class ToolExecutor {
         );
       }
 
-      // Execute based on tool type
+      // Execute based on tool type. The Eino-shaped entry points are the
+      // ones every tool has: a tool that only overrides `run` or `streamRun`
+      // is reached through their default implementations.
+      final ctx = RunContext.background();
       String output;
       if (tool is InvokableTool) {
-        output = await tool.run(toolCall.function.arguments);
+        output = await tool.invokableRun(ctx, toolCall.function.arguments);
       } else if (tool is StreamableTool) {
         // For streaming tools, collect all results
-        final reader = await tool.streamRun(toolCall.function.arguments);
+        final reader =
+            await tool.streamableRun(ctx, toolCall.function.arguments);
         final chunks = await reader.collectAll();
         output = chunks.join();
         await reader.close();
@@ -117,6 +125,8 @@ class ToolExecutor {
         output: output,
       );
     } catch (e, stackTrace) {
+      // An interrupt is not a failed call: it pauses the run it belongs to.
+      if (isInterrupt(e)) rethrow;
       return ToolExecutionResult(
         toolCallId: toolCall.id,
         toolName: toolCall.function.name,

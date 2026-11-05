@@ -1,3 +1,4 @@
+import '../errors.dart';
 import '../schema/tool_info.dart';
 
 /// Validates JSON data against JSON Schema
@@ -236,10 +237,17 @@ class ValidationResult {
 }
 
 /// Exception thrown when validation fails
-class ValidationException implements Exception {
+class ValidationException implements ThreepioException {
   ValidationException(this.result);
 
   final ValidationResult result;
+
+  /// The validation errors, one per line.
+  @override
+  String get message => result.errorMessage;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {

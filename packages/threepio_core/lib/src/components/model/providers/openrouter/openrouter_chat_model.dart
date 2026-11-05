@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
+import '../../../../internal/call_cancellation.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
@@ -17,6 +18,7 @@ import '../../chat_model_options.dart';
 import '../../model_errors.dart';
 import '../openai/openai_converters.dart';
 import 'openrouter_config.dart';
+import 'openrouter_options.dart';
 import 'openrouter_response_parser.dart';
 
 /// OpenRouter chat model implementation
@@ -97,8 +99,15 @@ class OpenRouterChatModel extends ToolCallingChatModel {
 
     Future<Message> execute() async {
       final requestBody = _buildRequestBody(input, mergedOptions, stream: false);
-      final response = await _makeRequest(requestBody, mergedOptions.cancelToken);
-      return responseParser.parseCompletionResponse(response);
+      // One token for the call, whether it was given in the options, in the
+      // run context or in both.
+      final cancellation = CallCancellation.of(mergedOptions);
+      try {
+        final response = await _makeRequest(requestBody, cancellation.token);
+        return responseParser.parseCompletionResponse(response);
+      } finally {
+        cancellation.release();
+      }
     }
 
     if (callbackManager == null) return execute();
@@ -127,7 +136,16 @@ class OpenRouterChatModel extends ToolCallingChatModel {
   }) async {
     final mergedOptions = _mergeOptions(options);
     final requestBody = _buildRequestBody(input, mergedOptions, stream: true);
-    return _makeStreamingRequest(requestBody, mergedOptions.cancelToken);
+    final cancellation = CallCancellation.of(mergedOptions);
+    var streaming = false;
+    try {
+      final reader = await _makeStreamingRequest(requestBody, cancellation);
+      // From here on the stream releases the cancellation, when it ends.
+      streaming = true;
+      return reader;
+    } finally {
+      if (!streaming) cancellation.release();
+    }
   }
 
   @override
@@ -174,8 +192,11 @@ class OpenRouterChatModel extends ToolCallingChatModel {
 
     if (config.transforms != null) body['transforms'] = config.transforms;
 
-    // Config-level OpenRouter fields first, per-call `extra` wins.
+    // Config-level OpenRouter fields first, then the options of this call
+    // given as an extension; per-call `extra` wins.
     body.addAll(config.defaultRequestOptions.toRequestFields());
+    final requestOptions = options.extension<OpenRouterRequestOptions>();
+    if (requestOptions != null) body.addAll(requestOptions.toRequestFields());
     if (options.extra != null) body.addAll(options.extra!);
 
     return body;
@@ -227,10 +248,14 @@ class OpenRouterChatModel extends ToolCallingChatModel {
   }
 
   /// Make a streaming API request
+  ///
+  /// Once the stream is being read, [cancellation] is released when it ends.
+  /// When this method throws, releasing it is left to the caller.
   Future<StreamReader<Message>> _makeStreamingRequest(
     Map<String, dynamic> requestBody,
-    CancelToken? cancelToken,
+    CallCancellation cancellation,
   ) async {
+    final cancelToken = cancellation.token;
     cancelToken?.throwIfCancelled();
     final url = Uri.parse('${config.baseUrl}/chat/completions');
 
@@ -251,7 +276,10 @@ class OpenRouterChatModel extends ToolCallingChatModel {
       }
 
       final (reader, writer) = pipe<Message>();
-      unawaited(_processStream(response.stream, writer, cancelToken));
+      unawaited(
+        _processStream(response.stream, writer, cancelToken)
+            .whenComplete(cancellation.release),
+      );
       return reader;
     } on TimeoutException {
       throw OpenRouterException(
@@ -439,6 +467,9 @@ class OpenRouterException implements ChatModelException {
 
   /// The account has no credits.
   bool get isPaymentRequired => statusCode == 402 || errorCode == 402;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() =>

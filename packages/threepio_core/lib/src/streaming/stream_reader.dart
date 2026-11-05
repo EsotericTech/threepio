@@ -8,6 +8,8 @@ library;
 import 'dart:async';
 import 'dart:collection';
 
+import '../errors.dart';
+
 part 'readers/array_reader.dart';
 part 'readers/concat_reader.dart';
 part 'readers/convert_reader.dart';
@@ -31,8 +33,15 @@ class StreamEOFException implements Exception {
 /// Exception thrown when receiving after stream is closed
 ///
 /// Port of eino `schema.ErrRecvAfterClosed`.
-class StreamClosedException implements Exception {
+class StreamClosedException implements ThreepioException {
   const StreamClosedException();
+
+  /// What was attempted.
+  @override
+  String get message => 'Attempted to receive from closed stream';
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'Attempted to receive from closed stream';

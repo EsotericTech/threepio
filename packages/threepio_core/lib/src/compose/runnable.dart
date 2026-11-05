@@ -1,3 +1,5 @@
+import '../errors.dart';
+
 /// Core abstraction for composable components in Threepio
 ///
 /// Based on Eino's Runnable interface, this provides four execution modes:
@@ -155,15 +157,17 @@ class RunnableOptions {
 }
 
 /// Exception thrown by runnables
-class RunnableException implements Exception {
+class RunnableException implements ThreepioException {
   RunnableException(
     this.message, {
     this.runnableType,
     this.cause,
   });
 
+  @override
   final String message;
   final String? runnableType;
+  @override
   final Object? cause;
 
   @override

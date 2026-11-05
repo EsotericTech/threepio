@@ -1,16 +1,24 @@
 import 'dart:async';
 
 import '../../components/model/cancel_token.dart';
+import '../../errors.dart';
 import '../../schema/message.dart';
 import '../../streaming/stream_reader.dart';
 import '../events/agent_event.dart' hide TokenUsage;
 import 'chat_model_agent.dart';
 
 /// Thrown when a session already has a run in progress.
-class RunInProgressException implements Exception {
+class RunInProgressException implements ThreepioException {
   const RunInProgressException(this.sessionId);
 
   final String sessionId;
+
+  /// Which session is busy.
+  @override
+  String get message => 'session $sessionId is busy';
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'RunInProgressException: session $sessionId is busy';

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import '../../internal/call_cancellation.dart';
 import '../../schema/message.dart';
 import '../../schema/tool_info.dart';
 import '../../streaming/stream_reader.dart';
@@ -86,13 +87,20 @@ class RetryingChatModel extends ToolCallingChatModel {
         if (attempt >= maxAttempts || !shouldRetry(error, attempt)) rethrow;
         final delay = _delayFor(attempt);
         onRetry?.call(error, attempt, delay);
-        final cancel = options?.cancelToken;
+        // The wait ends early when the call is cancelled, through the token
+        // in the options or the one of the run context.
+        final cancellation = CallCancellation.of(options);
+        final cancel = cancellation.token;
         if (cancel != null) {
-          await Future.any<void>([
-            Future<void>.delayed(delay),
-            cancel.whenCancelled,
-          ]);
-          cancel.throwIfCancelled();
+          try {
+            await Future.any<void>([
+              Future<void>.delayed(delay),
+              cancel.whenCancelled,
+            ]);
+            cancel.throwIfCancelled();
+          } finally {
+            cancellation.release();
+          }
         } else {
           await Future<void>.delayed(delay);
         }

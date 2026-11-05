@@ -1,3 +1,5 @@
+import '../../errors.dart';
+
 /// Basic prompt template with variable substitution
 ///
 /// Supports string templates with variable placeholders using curly braces.
@@ -138,10 +140,14 @@ enum TemplateFormat {
 }
 
 /// Exception thrown when template formatting fails
-class TemplateFormatException implements Exception {
+class TemplateFormatException implements ThreepioException {
   TemplateFormatException(this.message);
 
+  @override
   final String message;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'TemplateFormatException: $message';

@@ -1,3 +1,4 @@
+import '../../../../errors.dart';
 import '../../../../schema/message.dart';
 import '../../response_parser.dart';
 import 'gemini_converters.dart';
@@ -84,7 +85,7 @@ class GeminiResponseParser implements ResponseParser {
 }
 
 /// Exception thrown when parsing Gemini responses fails
-class GeminiParseException implements Exception {
+class GeminiParseException implements ThreepioException {
   GeminiParseException(
     this.message, {
     this.code,
@@ -92,10 +93,14 @@ class GeminiParseException implements Exception {
     this.blockReason,
   });
 
+  @override
   final String message;
   final int? code;
   final String? status;
   final String? blockReason;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {

@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 
+import '../../core/run_context.dart';
 import '../../schema/document.dart';
+import '../embedding/embedder.dart';
 import 'fusion/deduplication.dart';
 import 'fusion/result_fusion.dart';
 import 'fusion/scored_document.dart';
@@ -342,6 +344,12 @@ class HybridRetrieverOptions extends RetrieverOptions {
     super.callbackManager,
     super.context,
     super.metadata,
+    super.index,
+    super.subIndex,
+    super.embedding,
+    super.dslInfo,
+    super.runContext,
+    super.extensions,
     this.vectorTopK,
     this.keywordTopK,
     this.overrideVectorWeight,
@@ -359,4 +367,85 @@ class HybridRetrieverOptions extends RetrieverOptions {
 
   /// Override keyword weight for this query.
   final double? overrideKeywordWeight;
+
+  @override
+  HybridRetrieverOptions copyWith({
+    int? topK,
+    double? scoreThreshold,
+    Map<String, dynamic>? extra,
+    Map<String, dynamic>? metadata,
+    String? index,
+    String? subIndex,
+    Embedder? embedding,
+    Map<String, Object?>? dslInfo,
+    RunContext? runContext,
+    List<Object>? extensions,
+    int? vectorTopK,
+    int? keywordTopK,
+    double? overrideVectorWeight,
+    double? overrideKeywordWeight,
+  }) =>
+      _from(
+        super.copyWith(
+          topK: topK,
+          scoreThreshold: scoreThreshold,
+          extra: extra,
+          metadata: metadata,
+          index: index,
+          subIndex: subIndex,
+          embedding: embedding,
+          dslInfo: dslInfo,
+          runContext: runContext,
+          extensions: extensions,
+        ),
+        vectorTopK: vectorTopK ?? this.vectorTopK,
+        keywordTopK: keywordTopK ?? this.keywordTopK,
+        overrideVectorWeight: overrideVectorWeight ?? this.overrideVectorWeight,
+        overrideKeywordWeight:
+            overrideKeywordWeight ?? this.overrideKeywordWeight,
+      );
+
+  /// These options with what [other] sets taking precedence. The fields of
+  /// this class are taken from [other] when it is a [HybridRetrieverOptions]
+  /// that sets them, and kept otherwise.
+  @override
+  HybridRetrieverOptions merge(RetrieverOptions? other) {
+    if (other == null) return this;
+    final hybrid = other is HybridRetrieverOptions ? other : null;
+    return _from(
+      super.merge(other),
+      vectorTopK: hybrid?.vectorTopK ?? vectorTopK,
+      keywordTopK: hybrid?.keywordTopK ?? keywordTopK,
+      overrideVectorWeight:
+          hybrid?.overrideVectorWeight ?? overrideVectorWeight,
+      overrideKeywordWeight:
+          hybrid?.overrideKeywordWeight ?? overrideKeywordWeight,
+    );
+  }
+
+  static HybridRetrieverOptions _from(
+    RetrieverOptions base, {
+    required int? vectorTopK,
+    required int? keywordTopK,
+    required double? overrideVectorWeight,
+    required double? overrideKeywordWeight,
+  }) =>
+      HybridRetrieverOptions(
+        topK: base.topK,
+        scoreThreshold: base.scoreThreshold,
+        extra: base.extra,
+        callbackManager: base.callbackManager,
+        context: base.context,
+        metadata: base.metadata,
+        index: base.index,
+        subIndex: base.subIndex,
+        embedding: base.embedding,
+        dslInfo: base.dslInfo,
+        runContext: base.runContext,
+        extensions: base.extensions,
+        vectorTopK: vectorTopK,
+        keywordTopK: keywordTopK,
+        overrideVectorWeight: overrideVectorWeight,
+        overrideKeywordWeight: overrideKeywordWeight,
+      );
 }

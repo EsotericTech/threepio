@@ -4,6 +4,7 @@ import 'package:threepio_core/src/streaming/stream_reader.dart';
 import 'package:threepio_core/src/streaming/stream_utils.dart';
 import 'package:threepio_core/src/streaming/stream_writer.dart';
 
+import '../../errors.dart';
 import 'tool_executor.dart';
 import 'tool_registry.dart';
 
@@ -26,10 +27,14 @@ class AgentConfig {
 }
 
 /// Exception thrown when agent limits are exceeded
-class AgentLimitException implements Exception {
+class AgentLimitException implements ThreepioException {
   AgentLimitException(this.message);
 
+  @override
   final String message;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'AgentLimitException: $message';

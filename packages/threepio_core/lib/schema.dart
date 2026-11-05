@@ -11,10 +11,11 @@ library;
 
 export 'src/components/model/cancel_token.dart';
 export 'src/core/run_context.dart';
+export 'src/errors.dart';
 export 'src/schema/concat.dart' hide concatMaps;
 export 'src/schema/document.dart';
 export 'src/schema/message.dart';
-export 'src/schema/message_concat.dart';
+export 'src/schema/message_concat.dart' hide concatMessagesLeniently;
 export 'src/schema/message_parser.dart';
 export 'src/schema/message_template.dart' hide formatMessage;
 export 'src/schema/tool_info.dart';

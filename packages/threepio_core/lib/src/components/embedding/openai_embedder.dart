@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../callbacks/callback_manager.dart';
 import '../../callbacks/run_info.dart';
+import '../../errors.dart';
 import '../../internal/shared_http_client.dart';
 import '../model/providers/openai/openai_config.dart';
 import 'embedder.dart';
@@ -282,16 +283,20 @@ extension OpenAIEmbedderOptions on EmbedderOptions {
 }
 
 /// OpenAI Embedder exception
-class OpenAIEmbedderException implements Exception {
+class OpenAIEmbedderException implements ThreepioException {
   OpenAIEmbedderException(
     this.message, {
     this.statusCode,
     this.response,
   });
 
+  @override
   final String message;
   final int? statusCode;
   final String? response;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() =>

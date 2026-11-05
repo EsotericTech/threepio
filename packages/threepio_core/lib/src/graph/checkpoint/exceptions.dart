@@ -1,3 +1,4 @@
+import '../../errors.dart';
 import '../graph_state.dart';
 import 'checkpoint.dart';
 
@@ -56,7 +57,7 @@ class GraphInterruptException<S extends GraphState> implements Exception {
 }
 
 /// Exception thrown when a checkpoint is not found.
-class CheckpointNotFoundException implements Exception {
+class CheckpointNotFoundException implements ThreepioException {
   /// Creates a checkpoint not found exception.
   CheckpointNotFoundException(this.checkpointId, {this.threadId});
 
@@ -66,6 +67,14 @@ class CheckpointNotFoundException implements Exception {
   /// The thread ID that was searched (if any).
   final String? threadId;
 
+  /// Which checkpoint is missing, and in which thread.
+  @override
+  String get message => 'Checkpoint "$checkpointId" not found'
+      '${threadId != null ? ' in thread $threadId' : ''}';
+
+  @override
+  Object? get cause => null;
+
   @override
   String toString() {
     final thread = threadId != null ? ' in thread $threadId' : '';
@@ -74,7 +83,7 @@ class CheckpointNotFoundException implements Exception {
 }
 
 /// Exception thrown when a checkpoint is corrupted or invalid.
-class CheckpointCorruptedException implements Exception {
+class CheckpointCorruptedException implements ThreepioException {
   /// Creates a checkpoint corrupted exception.
   CheckpointCorruptedException(this.checkpointId, {this.cause});
 
@@ -82,7 +91,12 @@ class CheckpointCorruptedException implements Exception {
   final String checkpointId;
 
   /// The underlying cause (if any).
+  @override
   final dynamic cause;
+
+  /// Which checkpoint cannot be read.
+  @override
+  String get message => 'Checkpoint "$checkpointId" is corrupted';
 
   @override
   String toString() {
@@ -92,17 +106,19 @@ class CheckpointCorruptedException implements Exception {
 }
 
 /// Exception thrown when checkpoint store operations fail.
-class CheckpointStoreException implements Exception {
+class CheckpointStoreException implements ThreepioException {
   /// Creates a checkpoint store exception.
   CheckpointStoreException(this.message, {this.operation, this.cause});
 
   /// Error message.
+  @override
   final String message;
 
   /// The operation that failed (e.g., 'save', 'load', 'delete').
   final String? operation;
 
   /// The underlying cause (if any).
+  @override
   final dynamic cause;
 
   @override
@@ -114,15 +130,19 @@ class CheckpointStoreException implements Exception {
 }
 
 /// Exception thrown when trying to resume from an incompatible checkpoint.
-class CheckpointIncompatibleException implements Exception {
+class CheckpointIncompatibleException implements ThreepioException {
   /// Creates a checkpoint incompatible exception.
   CheckpointIncompatibleException(this.message, {this.checkpointId});
 
   /// Error message describing the incompatibility.
+  @override
   final String message;
 
   /// The checkpoint ID (if known).
   final String? checkpointId;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {
@@ -132,7 +152,7 @@ class CheckpointIncompatibleException implements Exception {
 }
 
 /// Exception thrown when max iterations is reached during checkpointed execution.
-class MaxIterationsExceededException implements Exception {
+class MaxIterationsExceededException implements ThreepioException {
   /// Creates a max iterations exceeded exception.
   MaxIterationsExceededException({
     required this.maxIterations,
@@ -148,6 +168,13 @@ class MaxIterationsExceededException implements Exception {
 
   /// The checkpoint at time of exceeding limit (if available).
   final Checkpoint? checkpoint;
+
+  /// The limit that was reached, and where.
+  @override
+  String get message => 'Exceeded $maxIterations iterations at node "$currentNode"';
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import '../../callbacks/callback_manager.dart';
 import '../../callbacks/run_info.dart';
+import '../../errors.dart';
 import '../../schema/document.dart';
 import 'vector_store.dart';
 
@@ -385,10 +386,14 @@ enum SimilarityMetric {
 }
 
 /// Vector store exception
-class VectorStoreException implements Exception {
+class VectorStoreException implements ThreepioException {
   VectorStoreException(this.message);
 
+  @override
   final String message;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'VectorStoreException: $message';

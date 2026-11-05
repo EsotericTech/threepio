@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import '../../../../errors.dart';
+
 /// Configuration for Google Gemini API
 ///
 /// Provides settings for connecting to the Gemini API, including
@@ -93,10 +95,14 @@ class GeminiConfig {
 }
 
 /// Exception thrown when Gemini configuration is invalid
-class GeminiConfigException implements Exception {
+class GeminiConfigException implements ThreepioException {
   GeminiConfigException(this.message);
 
+  @override
   final String message;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() => 'GeminiConfigException: $message';

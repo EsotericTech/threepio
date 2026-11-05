@@ -2,33 +2,66 @@
 ///
 /// These represent the abstract component categories in Threepio,
 /// matching Eino's component abstraction model.
+///
+/// Port of eino `components.Component` and of the component kinds of the
+/// compose package. [einoName] is the name Eino gives each kind.
 enum ComponentType {
   /// Chat model or LLM
-  chatModel,
+  chatModel('ChatModel'),
 
   /// Tool or function that can be called
-  tool,
+  tool('Tool'),
 
   /// Chain or composed runnable
-  chain,
+  chain('Chain'),
 
   /// Document retriever
-  retriever,
+  retriever('Retriever'),
 
   /// Text embedder
-  embedder,
+  embedder('Embedding'),
 
   /// Prompt template
-  promptTemplate,
+  promptTemplate('ChatTemplate'),
 
   /// Generic runnable or lambda
-  runnable,
+  runnable('Runnable'),
 
   /// Agent with autonomous behavior
-  agent,
+  agent('Agent'),
 
   /// Custom or unknown component type
-  custom,
+  custom('Unknown'),
+
+  /// Stores documents so that a retriever finds them again
+  indexer('Indexer'),
+
+  /// Loads documents from a source
+  loader('Loader'),
+
+  /// Turns a list of documents into another one (splitter, filter, reranker)
+  documentTransformer('DocumentTransformer'),
+
+  /// Graph of nodes
+  graph('Graph'),
+
+  /// Workflow: a graph whose nodes are wired field by field
+  workflow('Workflow'),
+
+  /// Function used as a graph node
+  lambda('Lambda'),
+
+  /// Graph node that executes the tool calls of a message
+  toolsNode('ToolsNode');
+
+  const ComponentType(this.einoName);
+
+  /// The name of this kind of component in Eino, as it appears in traces and
+  /// in callback payloads exchanged with Eino-based tooling.
+  ///
+  /// [runnable] has no counterpart in Eino and [custom] stands for Eino's
+  /// `Unknown`.
+  final String einoName;
 }
 
 /// Metadata about a running component

@@ -1,4 +1,5 @@
 import '../../schema/document.dart';
+import '../document/transformer.dart';
 
 /// Options for text splitting operations
 class TextSplitterOptions {
@@ -67,7 +68,11 @@ class TextSplitterOptions {
 ///
 /// final splitDocs = await splitter.splitDocuments(documents);
 /// ```
-abstract class TextSplitter {
+///
+/// A splitter is also a [DocumentTransformer], Eino's contract for everything
+/// that turns documents into documents, and can be used wherever one is
+/// expected: see [transform] and [withOptions].
+abstract class TextSplitter implements DocumentTransformer {
   /// Split a single text string into chunks
   ///
   /// Returns a list of text chunks, each respecting the configured
@@ -85,6 +90,40 @@ abstract class TextSplitter {
     List<Document> documents, {
     TextSplitterOptions? options,
   });
+
+  /// Splits [documents] into chunks: [splitDocuments] under the name of the
+  /// [DocumentTransformer] contract.
+  ///
+  /// The chunk size and the other [TextSplitterOptions] of the call are taken
+  /// from the extensions of [options],
+  /// `TransformerOptions(extensions: [TextSplitterOptions(chunkSize: 500)])`,
+  /// and are the defaults when there are none. Use [withOptions] to fix them
+  /// once instead of passing them with every call.
+  @override
+  Future<List<Document>> transform(
+    List<Document> documents, {
+    TransformerOptions? options,
+  }) =>
+      splitDocuments(
+        documents,
+        options: options?.extension<TextSplitterOptions>(),
+      );
+
+  /// A transformer that splits with this splitter and [options].
+  ///
+  /// This is the form to give to a pipeline or a graph, which call
+  /// `transform` without knowing that they are talking to a splitter:
+  ///
+  /// ```dart
+  /// final chunker = RecursiveCharacterTextSplitter()
+  ///     .withOptions(const TextSplitterOptions(chunkSize: 500, chunkOverlap: 50));
+  /// final chunks = await chunker.transform(documents);
+  /// ```
+  ///
+  /// [TextSplitterOptions] among the extensions of a call still take
+  /// precedence over [options].
+  DocumentTransformer withOptions(TextSplitterOptions options) =>
+      _SplitterWithOptions(this, options);
 
   /// Create metadata for a chunk
   ///
@@ -106,4 +145,22 @@ abstract class TextSplitter {
       if (endPosition != null) 'end_position': endPosition,
     };
   }
+}
+
+/// A [TextSplitter] together with the options it splits with.
+final class _SplitterWithOptions extends DocumentTransformer {
+  const _SplitterWithOptions(this._splitter, this._options);
+
+  final TextSplitter _splitter;
+  final TextSplitterOptions _options;
+
+  @override
+  Future<List<Document>> transform(
+    List<Document> documents, {
+    TransformerOptions? options,
+  }) =>
+      _splitter.splitDocuments(
+        documents,
+        options: options?.extension<TextSplitterOptions>() ?? _options,
+      );
 }

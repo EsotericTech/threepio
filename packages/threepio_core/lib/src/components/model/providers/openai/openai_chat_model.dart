@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
+import '../../../../errors.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
@@ -379,12 +380,16 @@ class OpenAIChatModel extends ToolCallingChatModel {
 }
 
 /// OpenAI API exception
-class OpenAIException implements Exception {
+class OpenAIException implements ThreepioException {
   OpenAIException(this.message, {this.statusCode, this.response});
 
+  @override
   final String message;
   final int? statusCode;
   final String? response;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() =>

@@ -8,10 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Work towards parity with Eino v0.9 (`feat/eino-parity`). So far: the test
-suite is safe to run, bugs found while auditing the code are fixed, and the
-Eino `schema` package is ported (messages, tool definitions and results,
+suite is safe to run, bugs found while auditing the code are fixed, the Eino
+`schema` package is ported (messages, tool definitions and results,
 documents, templates, stream readers, chunk concatenation, the type registry)
-together with the run context every later API takes.
+together with the run context every later API takes, and so is the Eino
+`components` package (the contracts of chat models, tools, templates,
+embedders, retrievers, indexers, loaders, parsers and transformers, their call
+options and callback payloads, and the tools made from functions).
 
 ### Fixed
 
@@ -109,6 +112,83 @@ together with the run context every later API takes.
     types registered.
 - Entry points `package:threepio_core/schema.dart` and
   `package:threepio_core/streaming.dart`; the umbrella library exports both.
+- **Components** (port of Eino `components`), with the entry point
+  `package:threepio_core/components.dart`, which the umbrella library exports:
+  - **Tools.** `InvokableTool.invokableRun(ctx, argumentsJson, {options})` and
+    `StreamableTool.streamableRun(...)`, the Eino-shaped entry points; their
+    default implementations call `run` and `streamRun`, so existing tools work
+    through them unchanged. `ToolOptions`. `EnhancedInvokableTool` and
+    `EnhancedStreamableTool` for tools that return a multimodal `ToolResult`
+    (`enhancedInvokableRun`, `enhancedStreamableRun`).
+  - **Tools from functions** (port of `tool/utils`): `FunctionTool`,
+    `StreamFunctionTool`, `EnhancedFunctionTool` and
+    `EnhancedStreamFunctionTool`, each also `.fromInfo(toolInfo, …)`. Go infers
+    the parameter schema from struct tags; here a tool is given its
+    `ParamsOneOf` and a `fromJson` for its input.
+  - `wrapToolWithErrorHandler`, `wrapInvokableToolWithErrorHandler` and
+    `wrapStreamableToolWithErrorHandler`: a failed tool call returns the text
+    a handler makes of the error instead of ending the run. An
+    `InterruptSignal`, and anything thrown after the run was cancelled, is
+    never handed to the handler.
+  - `InterruptSignal`: the marker of an interrupt on its way up the call
+    stack, and `isInterrupt(error)`, which also recognises one wrapped in
+    another exception. The engine that creates and catches interrupts comes
+    with the compose port; code that catches tool errors can already let it
+    through, and `ToolExecutor` and the runtime `ChatModelAgent` do.
+  - **Chat models.** `ChatModelOptions` gains `deferredTools`,
+    `toolSearchTool`, `allowedToolNames`, `runContext` and `extensions` with
+    `extension<T>()`. The providers that ship do not act on the first three
+    yet.
+  - **Chat templates.** `ChatTemplate.fromMessages(formatType, templates)`
+    (`DefaultChatTemplate`, port of `prompt.FromMessages`): a list of
+    `Message`s with placeholders and `MessagesPlaceholder`s, rendered as
+    f-strings or Jinja2. `ChatTemplateOptions` gains `runContext` and
+    `extensions`.
+  - **Indexers.** `Indexer.store(ctx, docs, {options})`, `IndexerOptions`, and
+    `VectorStoreIndexer`, which stores into any `VectorStore` and embeds the
+    documents that come without a vector.
+  - **Documents.** `Loader.load(ctx, source, {options})` with `LoaderOptions`;
+    `Parser.parse(ctx, bytes, {options})` with `ParserOptions`, `TextParser`
+    and `ExtParser` (a parser by file extension, with a fallback);
+    `TransformerOptions`. `TextSplitter` is a `DocumentTransformer`
+    (`transform`, and `withOptions` to fix the chunk size).
+  - **Adapters** from the components threepio already had:
+    `DocumentParser.asParser()` (`DocumentParserAdapter`), `LoaderAdapter` for
+    `DocumentLoader`s, `RerankerTransformer` for `Reranker`s.
+  - `RetrieverOptions` gains `index`, `subIndex`, `embedding`, `dslInfo`,
+    `runContext` and `extensions`; `EmbedderOptions` gains `runContext` and
+    `extensions`. Every option class has `copyWith` and `merge`
+    (`HybridRetrieverOptions` and `MultiQueryRetrieverOptions` keep their own
+    fields through both). `VectorRetriever` embeds the query with
+    `RetrieverOptions.embedding` when a call brings one.
+  - **Implementation-specific options.** Every option class carries
+    `extensions`, a list of objects of types the implementation defines, read
+    with `extension<T>()`. This replaces Eino's `WrapImplSpecificOptFn` and
+    `GetImplSpecificOptions`. `OpenRouterRequestOptions.toOptions()` and
+    `applyTo()` add themselves to it, and `OpenRouterChatModel` also accepts
+    `ChatModelOptions(extensions: [OpenRouterRequestOptions(...)])`.
+  - **Callback payloads** with `from(Object?)` (Eino's `ConvCallbackInput` and
+    `ConvCallbackOutput`): `ModelCallbackInput`/`Output`/`Config`,
+    `ToolCallbackInput`/`Output`, `PromptCallbackInput`/`Output`,
+    `EmbeddingCallbackInput`/`Output`/`Config`,
+    `RetrieverCallbackInput`/`Output`, `IndexerCallbackInput`/`Output`,
+    `LoaderCallbackInput`/`Output`, `TransformerCallbackInput`/`Output`.
+  - `TypedComponent` and `CallbackAwareComponent` (Eino `Typer` and
+    `Checker`) with `componentTypeNameOf` and `isCallbacksEnabled`.
+    `ComponentType` gains `indexer`, `loader`, `documentTransformer`, `graph`,
+    `workflow`, `lambda` and `toolsNode`, and `einoName` on every value.
+- **`ThreepioException`**: the base of the exceptions threepio throws for
+  failures a caller is expected to handle, with `message`, `cause` and
+  `ThreepioException.findCause<T>(error)`. The exception types that existed
+  (`OpenRouterException` and every other `ChatModelException`,
+  `CancelledException`, `AgentException` and its subclasses, the loader,
+  parser, vector store, graph and checkpoint exceptions, …) implement it and
+  keep their names, fields and `toString()`. `ThreepioFormatException` is a
+  `FormatException` that is also a `ThreepioException`; templates, message
+  parsers and function tools throw it for input they cannot read. Stream
+  signals (`StreamEOFException`, …) and `InterruptSignal` are deliberately not
+  threepio exceptions, and mistakes in the calling code stay `ArgumentError`
+  and `StateError`.
 - `ToolRegistry.ready` and `ToolRegistry.findTool(name)`.
 - `dispose()` on `OpenAIChatModel`, `OpenRouterChatModel`, `GeminiChatModel`
   and `OpenAIEmbedder`. A client passed as `httpClient` is never closed by it.
@@ -127,12 +207,15 @@ together with the run context every later API takes.
 - **The runtime's `RunContext` is now `AgentRunScope`** (the class
   `ChatModelAgent.run` takes as `context:`). `RunContext` is the new core
   context.
-- **`MessageConcatenator.concat` follows Eino's `ConcatMessages`** (it calls
-  `concatMessages`):
+- **`MessageConcatenator.concat` joins chunks the way Eino's `ConcatMessages`
+  does**, and stays as tolerant as it was. `concatMessages` is the strict
+  port: where the fragments of one tool call carry different ids, types or
+  names, or two values under one key of `extra` cannot be joined, it throws an
+  `ArgumentError`. `MessageConcatenator.concat` keeps the first non-empty id,
+  type and name, as it always did, and the last of two values that cannot be
+  joined. What changed for both:
   - Tool calls come out with the ones that have no `index` first and the
-    others by ascending index. Fragments of one call whose ids, types or names
-    contradict each other throw an `ArgumentError`; the first non-empty value
-    used to win silently.
+    others by ascending index.
   - Usage: the highest token counts and cost of all chunks and the last
     non-empty finish reason are kept, and log probabilities are appended. The
     `responseMeta` of the last chunk that had one used to be taken whole.
@@ -142,6 +225,26 @@ together with the run context every later API takes.
     neighbouring text input parts, are joined.
   - A list with a single message is processed as well instead of being
     returned as it is.
+- **`DocumentTransformer.transform` has an optional named parameter**,
+  `{TransformerOptions? options}`, which carries the run context and the
+  options of the call. The class moved to
+  `components/document/transformer.dart`; `ingestion_pipeline.dart` still
+  exports it.
+- `InvokableTool.run` and `StreamableTool.streamRun` are no longer abstract:
+  a tool overrides either them or `invokableRun` / `streamableRun`. The
+  default of the older pair fails with `UnimplementedError`.
+- `ToolExecutor` and the runtime `ChatModelAgent` call a tool through
+  `invokableRun` / `streamableRun`, so that tools written against the new
+  entry points run in them. For existing tools nothing changes.
+  `ContextualTool.invokableRun` hands the cancel token of its context to the
+  tool.
+- `OpenRouterChatModel` and the back-off of `RetryingChatModel` also stop when
+  the cancel token of `ChatModelOptions.runContext` is cancelled, not only the
+  one in `ChatModelOptions.cancelToken`.
+- `ChatTemplate` and `DocumentTransformer` have a `const` constructor.
+- The messages of `FormatException`s thrown by `MessageJsonParser` for a
+  `fromJson` that itself throws a `FormatException` now start with `failed to
+  unmarshal content:`; the original exception is the `cause`.
 - `mergeNamedStreamReaders` with a single source reports the end of that
   source with a `SourceEOFException`, like it does for several sources.
 - `StreamReader.asStream()` closes the reader when the stream ends or its
@@ -193,8 +296,16 @@ together with the run context every later API takes.
 - A `switch` over `ChatMessagePartType` without a `default` needs cases for
   `reasoning` and `toolSearchResult`.
 - If you relied on `MessageConcatenator.concat` keeping the last value of a
-  string in `extra`, or on it accepting tool-call fragments with different
-  ids for one index, see "Changed" above.
+  string in `extra`, see "Changed" above.
+- A class that extends or implements `DocumentTransformer` has to add the
+  parameter to its `transform`:
+  `Future<List<Document>> transform(List<Document> documents, {TransformerOptions? options})`.
+- A class that `implements TextSplitter` (instead of extending it) has to add
+  `transform` and `withOptions`. A class that `implements` one of the
+  exception types of this package, or `ChatModelException`, has to add
+  `Object? get cause` (and `String get message` where the type had none).
+- A `switch` over `ComponentType` without a `default` needs cases for the
+  seven new values.
 - `ToolRegistry.register` used to add the tool some time after it returned.
   Code that waited for that (for example with `Future.delayed`) keeps working.
   Code that looked a tool up by name in the same synchronous block still

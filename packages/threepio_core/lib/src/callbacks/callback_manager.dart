@@ -1,13 +1,16 @@
 import 'dart:async';
 
+import '../errors.dart';
 import 'callback_handler.dart';
 import 'run_info.dart';
 
 /// Exception thrown when callback execution fails
-class CallbackException implements Exception {
+class CallbackException implements ThreepioException {
   CallbackException(this.message, {this.cause});
 
+  @override
   final String message;
+  @override
   final Object? cause;
 
   @override

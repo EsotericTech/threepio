@@ -2,6 +2,7 @@
 library;
 
 export 'document_parser.dart';
+export 'document_parser_adapter.dart';
 export 'html_parser.dart';
 export 'markdown_parser.dart';
 export 'parser_registry.dart';

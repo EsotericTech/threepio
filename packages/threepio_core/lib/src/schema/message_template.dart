@@ -9,6 +9,7 @@ import 'package:jinja/jinja.dart' as jinja;
 import 'package:meta/meta.dart';
 
 import '../core/run_context.dart';
+import '../errors.dart';
 import 'message.dart';
 
 /// The template syntax of a prompt.
@@ -44,7 +45,8 @@ abstract interface class MessagesTemplate {
   /// The messages this template gives for [vars], read as [type].
   ///
   /// Throws [FormatException] when the template is malformed or [vars] lacks
-  /// what it needs.
+  /// what it needs. The templates of this library throw a
+  /// [ThreepioFormatException], which is one.
   Future<List<Message>> format(
     RunContext ctx,
     Map<String, Object?> vars,
@@ -85,7 +87,9 @@ final class MessagesPlaceholder implements MessagesTemplate {
   ) async {
     if (!vars.containsKey(key)) {
       if (optional) return [];
-      throw FormatException('message placeholder format: $key not found');
+      throw ThreepioFormatException(
+        'message placeholder format: $key not found',
+      );
     }
 
     final value = vars[key];
@@ -93,7 +97,7 @@ final class MessagesPlaceholder implements MessagesTemplate {
     if (value is List<Object?> && value.every((item) => item is Message)) {
       return value.cast<Message>();
     }
-    throw FormatException(
+    throw ThreepioFormatException(
       'only messages can be used to format message placeholder, '
       'key: $key, actual type: ${value.runtimeType}',
     );
@@ -193,7 +197,7 @@ String _formatJinja(String content, Map<String, Object?> vars) {
     return _jinjaEnvironment.fromString(content).render(vars);
   } on jinja.TemplateError catch (error, stackTrace) {
     Error.throwWithStackTrace(
-      FormatException('jinja2: $error', content),
+      ThreepioFormatException('jinja2: $error', source: content, cause: error),
       stackTrace,
     );
     // The template is input, and the interpreter reports what is wrong with
@@ -202,7 +206,7 @@ String _formatJinja(String content, Map<String, Object?> vars) {
     // ignore: avoid_catching_errors
   } on Error catch (error, stackTrace) {
     Error.throwWithStackTrace(
-      FormatException('jinja2: $error', content),
+      ThreepioFormatException('jinja2: $error', source: content, cause: error),
       stackTrace,
     );
   }
@@ -223,7 +227,8 @@ final class _FStringFormatter {
   /// How many automatically numbered fields there were so far.
   int _position = 0;
 
-  Never _fail(String message) => throw FormatException(message, _template);
+  Never _fail(String message) =>
+      throw ThreepioFormatException(message, source: _template);
 
   String format() {
     final out = StringBuffer();

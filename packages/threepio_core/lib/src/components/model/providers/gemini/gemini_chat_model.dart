@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
+import '../../../../errors.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
@@ -652,7 +653,7 @@ class GeminiChatModel extends ToolCallingChatModel {
 }
 
 /// Gemini API exception
-class GeminiException implements Exception {
+class GeminiException implements ThreepioException {
   GeminiException(
     this.message, {
     this.statusCode,
@@ -679,10 +680,14 @@ class GeminiException implements Exception {
     );
   }
 
+  @override
   final String message;
   final int? statusCode;
   final int? code;
   final String? status;
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() {

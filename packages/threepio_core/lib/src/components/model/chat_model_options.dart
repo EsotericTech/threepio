@@ -1,7 +1,14 @@
+import '../../core/run_context.dart';
+import '../../internal/option_extensions.dart';
 import '../../schema/tool_info.dart';
 import 'cancel_token.dart';
 
 /// Common options for chat models
+///
+/// Port of eino `model.Options`. Go passes a list of `model.Option` functions
+/// (`WithTemperature`, `WithTools`, …); here one immutable object carries the
+/// same settings, and [merge] takes the place of applying options one after
+/// the other.
 class ChatModelOptions {
   const ChatModelOptions({
     this.temperature,
@@ -16,6 +23,11 @@ class ChatModelOptions {
     this.context,
     this.metadata,
     this.cancelToken,
+    this.deferredTools,
+    this.toolSearchTool,
+    this.allowedToolNames,
+    this.runContext,
+    this.extensions = const [],
   });
 
   /// Temperature for controlling randomness (typically 0.0-2.0)
@@ -34,10 +46,34 @@ class ChatModelOptions {
   final List<String>? stop;
 
   /// Tools available for the model to call
+  ///
+  /// An empty list is a setting of its own: it overrides the tools bound to
+  /// the model and leaves it with none.
   final List<ToolInfo>? tools;
 
   /// Controls which tool is called by the model
   final ToolChoice? toolChoice;
+
+  /// The tools [toolChoice] applies to, by name (Eino:
+  /// `model.WithToolChoice(choice, allowedToolNames...)`).
+  ///
+  /// With [ToolChoice.allowed] the model may call one of these or none; with
+  /// [ToolChoice.forced] it must call one of these. `null` or empty means
+  /// every tool in [tools]. The names belong to the tool choice they come
+  /// with: see [merge].
+  ///
+  /// A provider that cannot restrict the choice to a subset ignores this.
+  final List<String>? allowedToolNames;
+
+  /// Tools the model does not see up front but can find through
+  /// [toolSearchTool] (Eino: `model.WithDeferredTools`).
+  ///
+  /// Only providers with server-side tool search use them.
+  final List<ToolInfo>? deferredTools;
+
+  /// The provider's own tool-search tool, through which the model looks up
+  /// [deferredTools] (Eino: `model.WithToolSearchTool`).
+  final ToolInfo? toolSearchTool;
 
   /// Implementation-specific options
   final Map<String, dynamic>? extra;
@@ -59,7 +95,38 @@ class ChatModelOptions {
   final Map<String, dynamic>? metadata;
 
   /// Cancels an in-flight request (streams stop, pending calls abort).
+  ///
+  /// Prefer [runContext], whose token does the same. When both are given the
+  /// call stops as soon as either token is cancelled.
   final CancelToken? cancelToken;
+
+  /// The context of the run this call belongs to: its cancellation and its
+  /// values.
+  ///
+  /// `generate` and `stream` keep the signatures they had before
+  /// [RunContext] existed, so the context travels here. A graph sets it for
+  /// its model nodes.
+  final RunContext? runContext;
+
+  /// Options that only one implementation understands, each an instance of a
+  /// class that implementation defines.
+  ///
+  /// The counterpart of eino's `model.WrapImplSpecificOptFn`. A provider
+  /// reads its own type with [extension] and ignores the rest, so options
+  /// for several providers can travel together:
+  ///
+  /// ```dart
+  /// ChatModelOptions(
+  ///   temperature: 0.2,
+  ///   extensions: [OpenRouterRequestOptions(reasoningEffort: ReasoningEffort.low)],
+  /// );
+  /// ```
+  final List<Object> extensions;
+
+  /// The first of the [extensions] that is a [T], or `null`.
+  ///
+  /// The counterpart of eino's `model.GetImplSpecificOptions`.
+  T? extension<T extends Object>() => findExtension<T>(extensions);
 
   /// Copy with method for creating modified copies
   ChatModelOptions copyWith({
@@ -75,6 +142,11 @@ class ChatModelOptions {
     Map<String, dynamic>? context,
     Map<String, dynamic>? metadata,
     CancelToken? cancelToken,
+    List<ToolInfo>? deferredTools,
+    ToolInfo? toolSearchTool,
+    List<String>? allowedToolNames,
+    RunContext? runContext,
+    List<Object>? extensions,
   }) {
     return ChatModelOptions(
       temperature: temperature ?? this.temperature,
@@ -89,10 +161,24 @@ class ChatModelOptions {
       context: context ?? this.context,
       metadata: metadata ?? this.metadata,
       cancelToken: cancelToken ?? this.cancelToken,
+      deferredTools: deferredTools ?? this.deferredTools,
+      toolSearchTool: toolSearchTool ?? this.toolSearchTool,
+      allowedToolNames: allowedToolNames ?? this.allowedToolNames,
+      runContext: runContext ?? this.runContext,
+      extensions: extensions ?? this.extensions,
     );
   }
 
   /// Merge this options with another, with other taking precedence
+  ///
+  /// Field by field, what [other] sets wins. Two things are not merged as
+  /// single fields:
+  ///
+  /// * [allowedToolNames] go with their [toolChoice], as in Eino's
+  ///   `WithToolChoice`: when [other] sets a tool choice, its names replace
+  ///   these, also when it has none.
+  /// * [extensions] are joined, those of [other] first, so that [extension]
+  ///   finds them before the ones of this object.
   ChatModelOptions merge(ChatModelOptions? other) {
     if (other == null) return this;
 
@@ -109,6 +195,13 @@ class ChatModelOptions {
       context: other.context ?? context,
       metadata: other.metadata ?? metadata,
       cancelToken: other.cancelToken ?? cancelToken,
+      deferredTools: other.deferredTools ?? deferredTools,
+      toolSearchTool: other.toolSearchTool ?? toolSearchTool,
+      allowedToolNames: other.toolChoice != null
+          ? other.allowedToolNames
+          : other.allowedToolNames ?? allowedToolNames,
+      runContext: other.runContext ?? runContext,
+      extensions: mergeExtensions(extensions, other.extensions),
     );
   }
 

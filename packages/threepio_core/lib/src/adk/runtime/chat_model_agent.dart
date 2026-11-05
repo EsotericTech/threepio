@@ -4,6 +4,8 @@ import '../../components/model/base_chat_model.dart';
 import '../../components/model/cancel_token.dart';
 import '../../components/model/chat_model_options.dart';
 import '../../components/tool/invokable_tool.dart';
+import '../../core/interrupt_signal.dart';
+import '../../core/run_context.dart';
 import '../../schema/message.dart';
 import '../../schema/tool_info.dart';
 import '../../streaming/stream_reader.dart';
@@ -431,7 +433,11 @@ class ChatModelAgent {
       Future<ToolOutput> invoke(ToolCallContext c, String args) async {
         if (tool is ContextualTool) return tool.runWithContext(c, args);
         if (tool is InvokableTool) {
-          return ToolOutput(content: await tool.run(args));
+          // `invokableRun` reaches every tool: one that only overrides the
+          // older `run` is called through its default implementation.
+          final toolContext =
+              RunContext.background(cancelToken: c.cancelToken);
+          return ToolOutput(content: await tool.invokableRun(toolContext, args));
         }
         return ToolOutput.error('Tool $name cannot be invoked');
       }
@@ -454,6 +460,10 @@ class ChatModelAgent {
           'Cancelled by the user before it finished.',
         );
       } catch (error) {
+        // An interrupt is not a failed call. Nothing in this runtime can
+        // resume one, so it ends the run instead of being shown to the model
+        // as a tool error.
+        if (isInterrupt(error)) rethrow;
         output = ToolOutput.error('$name failed: $error');
       }
     }

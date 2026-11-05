@@ -1,7 +1,10 @@
+import '../../errors.dart';
+
 /// Error classification shared by providers so generic decorators
 /// ([RetryingChatModel], [FailoverChatModel]) can act without knowing the
 /// provider.
-abstract class ChatModelException implements Exception {
+abstract class ChatModelException implements ThreepioException {
+  @override
   String get message;
 
   /// Worth retrying with backoff (rate limit, upstream failure, timeout).

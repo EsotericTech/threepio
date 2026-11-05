@@ -185,6 +185,7 @@ abstract final class StreamConcat {
   static Object? _concatValues(
     List<Object?> values, {
     required bool appendLists,
+    required bool lastWinsOnConflict,
   }) {
     final present = [
       for (final value in values)
@@ -197,6 +198,7 @@ abstract final class StreamConcat {
       return concatMaps(
         present.cast<Map<String, Object?>>(),
         appendLists: appendLists,
+        lastWinsOnConflict: lastWinsOnConflict,
       );
     }
     if (appendLists && present.every((value) => value is List<Object?>)) {
@@ -250,10 +252,16 @@ abstract final class StreamConcat {
 /// Lists have no concat function in Eino, so two non-empty lists under one
 /// key throw [StateError], unless [appendLists] is set: then they are appended
 /// to each other. Message extras are merged that way.
+///
+/// Values under one key that cannot be joined (a string and a number, two
+/// objects of a type without a concat function) throw [StateError] as well.
+/// With [lastWinsOnConflict] the last of them is kept instead and nothing is
+/// thrown; the lenient message concat uses that.
 @internal
 Map<String, Object?> concatMaps(
   List<Map<String, Object?>> maps, {
   required bool appendLists,
+  bool lastWinsOnConflict = false,
 }) {
   final collected = <String, List<Object?>>{};
   for (final map in maps) {
@@ -262,10 +270,25 @@ Map<String, Object?> concatMaps(
     }
   }
 
+  Object? join(List<Object?> values) {
+    if (values.length == 1) return values.single;
+    try {
+      return StreamConcat._concatValues(
+        values,
+        appendLists: appendLists,
+        lastWinsOnConflict: lastWinsOnConflict,
+      );
+      // A conflict between chunks is reported as a StateError; the lenient
+      // caller asked for a winner instead.
+      // ignore: avoid_catching_errors
+    } on StateError {
+      if (!lastWinsOnConflict) rethrow;
+      return values.lastWhere((value) => value != null, orElse: () => null);
+    }
+  }
+
   return {
     for (final MapEntry(:key, value: values) in collected.entries)
-      key: values.length == 1
-          ? values.single
-          : StreamConcat._concatValues(values, appendLists: appendLists),
+      key: join(values),
   };
 }

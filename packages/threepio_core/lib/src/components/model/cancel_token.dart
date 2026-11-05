@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../../errors.dart';
+
 /// Cooperative cancellation for model calls and agent runs.
 ///
 /// Call [cancel] once; every listener sees [isCancelled] flip and
@@ -89,10 +91,17 @@ final class _AnyCancelToken extends CancelToken {
 }
 
 /// Thrown when work is abandoned because its [CancelToken] was cancelled.
-class CancelledException implements Exception {
+class CancelledException implements ThreepioException {
   const CancelledException([this.reason]);
 
   final String? reason;
+
+  /// The reason given for the cancellation, or a general remark when there is none.
+  @override
+  String get message => reason ?? 'The operation was cancelled';
+
+  @override
+  Object? get cause => null;
 
   @override
   String toString() =>

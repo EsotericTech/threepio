@@ -6,6 +6,7 @@ library;
 import 'dart:convert';
 
 import '../core/run_context.dart';
+import '../errors.dart';
 import 'message.dart';
 
 /// Parses a [Message] into a `T`.
@@ -14,7 +15,8 @@ import 'message.dart';
 // ignore: one_member_abstracts
 abstract interface class MessageParser<T> {
   /// The value [message] stands for. Throws [FormatException] when the
-  /// message cannot be read as a `T`.
+  /// message cannot be read as a `T`. [MessageJsonParser] throws a
+  /// [ThreepioFormatException], which is one.
   Future<T> parse(RunContext ctx, Message message);
 }
 
@@ -61,7 +63,7 @@ final class MessageJsonParser<T> implements MessageParser<T> {
       MessageJsonParser<T>(
         fromJson: (json) => json is Map<String, dynamic>
             ? fromJson(json)
-            : throw FormatException(
+            : throw ThreepioFormatException(
                 'expected a JSON object, got ${json.runtimeType}',
               ),
         parseFrom: parseFrom,
@@ -88,7 +90,7 @@ final class MessageJsonParser<T> implements MessageParser<T> {
       case MessageParseFrom.toolCall:
         final toolCalls = message.toolCalls;
         if (toolCalls == null || toolCalls.isEmpty) {
-          throw const FormatException('no tool call found');
+          throw const ThreepioFormatException('no tool call found');
         }
         source = toolCalls.first.function.arguments;
     }
@@ -97,23 +99,28 @@ final class MessageJsonParser<T> implements MessageParser<T> {
     try {
       decoded = jsonDecode(source);
     } on FormatException catch (error) {
-      throw FormatException(
+      throw ThreepioFormatException(
         'failed to unmarshal content: ${error.message}',
-        source,
-        error.offset,
+        source: source,
+        offset: error.offset,
+        cause: error,
       );
     }
 
     final data = _extract(decoded, source);
     try {
       return fromJson(data);
-    } on FormatException {
+    } on ThreepioFormatException {
       rethrow;
     } catch (error, stackTrace) {
       // A fromJson that meets JSON of the wrong shape fails with a cast
       // error; to the caller that is unparsable input like any other.
       Error.throwWithStackTrace(
-        FormatException('failed to unmarshal content: $error', source),
+        ThreepioFormatException(
+          'failed to unmarshal content: $error',
+          source: source,
+          cause: error,
+        ),
         stackTrace,
       );
     }
@@ -125,9 +132,9 @@ final class MessageJsonParser<T> implements MessageParser<T> {
     var node = decoded;
     for (final key in parseKeyPath.split('.')) {
       if (node is! Map<String, dynamic> || !node.containsKey(key)) {
-        throw FormatException(
+        throw ThreepioFormatException(
           'failed to get parse key path "$parseKeyPath": no "$key"',
-          source,
+          source: source,
         );
       }
       node = node[key];
