@@ -396,7 +396,11 @@ class StateGraph<S extends GraphState> {
     final config = checkpointConfig;
     final effectiveThreadId = threadId ?? config?.threadIdProvider?.call();
 
-    while (currentNode != END && iterations < maxIterations) {
+    // Whether the run got to END. Running out of iterations only is an error
+    // while it has not: a graph that ends on its last allowed step succeeded.
+    var reachedEnd = currentNode == END;
+
+    while (!reachedEnd && iterations < maxIterations) {
       iterations++;
 
       // Check for interrupt BEFORE node
@@ -500,6 +504,7 @@ class StateGraph<S extends GraphState> {
       final nextNodes = await _getNextNodes(currentNode, currentState);
 
       if (nextNodes.isEmpty || nextNodes.first == END) {
+        reachedEnd = true;
         break;
       }
 
@@ -515,9 +520,10 @@ class StateGraph<S extends GraphState> {
       } else {
         currentNode = nextNodes.first;
       }
+      reachedEnd = currentNode == END;
     }
 
-    if (iterations >= maxIterations) {
+    if (!reachedEnd) {
       // Create checkpoint before throwing
       if (config != null && config.checkpointOnError && checkpointStore != null) {
         final maxIterCheckpoint = await _createCheckpoint(

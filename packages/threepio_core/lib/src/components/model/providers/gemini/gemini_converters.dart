@@ -112,6 +112,12 @@ class GeminiConverters {
       case ChatMessagePartType.fileUrl:
         final url = part.file?.common.url ?? '';
         return _mediaToGemini(url, 'application');
+
+      case ChatMessagePartType.reasoning:
+      case ChatMessagePartType.toolSearchResult:
+        throw UnsupportedError(
+          'Gemini does not accept ${part.type.name} parts as input',
+        );
     }
   }
 

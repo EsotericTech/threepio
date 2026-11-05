@@ -13,32 +13,29 @@ _DocumentSource _$DocumentSourceFromJson(Map<String, dynamic> json) =>
     );
 
 Map<String, dynamic> _$DocumentSourceToJson(_DocumentSource instance) =>
-    <String, dynamic>{
-      'uri': instance.uri,
-      'metadata': instance.metadata,
-    };
+    <String, dynamic>{'uri': instance.uri, 'metadata': instance.metadata};
 
 _Document _$DocumentFromJson(Map<String, dynamic> json) => _Document(
-      id: json['id'] as String?,
-      content: json['content'] as String,
-      metadata: json['metadata'] as Map<String, dynamic>? ?? const {},
-      source: json['source'] == null
-          ? null
-          : DocumentSource.fromJson(json['source'] as Map<String, dynamic>),
-      embedding: (json['embedding'] as List<dynamic>?)
-          ?.map((e) => (e as num).toDouble())
-          .toList(),
-      score: (json['score'] as num?)?.toDouble(),
-    );
+  id: json['id'] as String?,
+  content: json['content'] as String,
+  metadata: json['metadata'] as Map<String, dynamic>? ?? const {},
+  source: json['source'] == null
+      ? null
+      : DocumentSource.fromJson(json['source'] as Map<String, dynamic>),
+  embedding: (json['embedding'] as List<dynamic>?)
+      ?.map((e) => (e as num).toDouble())
+      .toList(),
+  score: (json['score'] as num?)?.toDouble(),
+);
 
 Map<String, dynamic> _$DocumentToJson(_Document instance) => <String, dynamic>{
-      'id': instance.id,
-      'content': instance.content,
-      'metadata': instance.metadata,
-      'source': instance.source?.toJson(),
-      'embedding': instance.embedding,
-      'score': instance.score,
-    };
+  'id': instance.id,
+  'content': instance.content,
+  'metadata': instance.metadata,
+  'source': instance.source?.toJson(),
+  'embedding': instance.embedding,
+  'score': instance.score,
+};
 
 _DocumentChunk _$DocumentChunkFromJson(Map<String, dynamic> json) =>
     _DocumentChunk(

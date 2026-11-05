@@ -11,6 +11,11 @@ import '../../schema/message.dart';
 import '../runtime/tool_call_context.dart';
 import 'agent_action.dart';
 
+// The usage of a run used to be a class of this library; it is the schema
+// type now, still reachable through this library for code that imported it
+// from here.
+export '../../schema/message.dart' show TokenUsage;
+
 const _uuid = Uuid();
 
 /// Base class for all agent events.
@@ -167,7 +172,7 @@ class AgentRunEndEvent extends AgentEvent {
       durationMs: json['duration_ms'] as int,
       toolCallCount: json['tool_call_count'] as int?,
       tokenUsage: json['token_usage'] != null
-          ? TokenUsage.fromJson(json['token_usage'] as Map<String, dynamic>)
+          ? _tokenUsageFromJson(json['token_usage'] as Map<String, dynamic>)
           : null,
     );
   }
@@ -449,39 +454,18 @@ class AgentStateUpdateEvent extends AgentEvent {
   }
 }
 
-/// Token usage statistics for an agent run.
-class TokenUsage {
-  /// Creates token usage statistics.
-  const TokenUsage({
-    this.promptTokens,
-    this.completionTokens,
-    this.totalTokens,
-  });
-
-  /// Number of tokens in the prompt.
-  final int? promptTokens;
-
-  /// Number of tokens in the completion.
-  final int? completionTokens;
-
-  /// Total tokens used.
-  final int? totalTokens;
-
-  /// Convert to JSON.
-  Map<String, dynamic> toJson() => {
-        if (promptTokens != null) 'prompt_tokens': promptTokens,
-        if (completionTokens != null) 'completion_tokens': completionTokens,
-        if (totalTokens != null) 'total_tokens': totalTokens,
-      };
-
-  /// Create from JSON.
-  factory TokenUsage.fromJson(Map<String, dynamic> json) {
-    return TokenUsage(
-      promptTokens: json['prompt_tokens'] as int?,
-      completionTokens: json['completion_tokens'] as int?,
-      totalTokens: json['total_tokens'] as int?,
-    );
-  }
+/// Reads the usage of a run-end event.
+///
+/// Before 0.9 the event had a `TokenUsage` class of its own, written with
+/// snake_case keys and nothing but the three totals. Events stored in that
+/// form are still read.
+TokenUsage _tokenUsageFromJson(Map<String, dynamic> json) {
+  if (json.containsKey('promptTokens')) return TokenUsage.fromJson(json);
+  return TokenUsage(
+    promptTokens: json['prompt_tokens'] as int? ?? 0,
+    completionTokens: json['completion_tokens'] as int? ?? 0,
+    totalTokens: json['total_tokens'] as int? ?? 0,
+  );
 }
 
 /// A reasoning (thinking) delta streamed by the model.

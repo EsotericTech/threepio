@@ -34,15 +34,11 @@ export 'src/adk/adk_exports.dart';
 export 'src/memory/memory_exports.dart';
 // Structured output parsing exports
 export 'src/output_parser/output_parser_exports.dart';
-export 'src/schema/document.dart';
-// Schema exports
-export 'src/schema/message.dart';
-export 'src/schema/tool_info.dart';
+// Schema exports (messages, tools, documents, templates, concat, registry)
+// and the core run context
+export 'schema.dart';
 // Streaming exports
-export 'src/streaming/stream_item.dart';
-export 'src/streaming/stream_reader.dart';
-export 'src/streaming/stream_utils.dart';
-export 'src/streaming/stream_writer.dart';
+export 'streaming.dart';
 
 // Provider exports
 export 'src/components/model/providers/gemini/gemini_chat_model.dart';

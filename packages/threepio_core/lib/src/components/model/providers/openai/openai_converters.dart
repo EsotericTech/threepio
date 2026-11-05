@@ -205,7 +205,12 @@ class OpenAIConverters {
         return {
           'type': 'file',
           'file': {
-            'filename': (common?.extra?['filename'] as String?) ?? 'document',
+            'filename': part.file?.name ??
+                (part.extra?['filename'] as String?) ??
+                // Where the name was kept before MessageInputFile.name.
+                // ignore: deprecated_member_use_from_same_package
+                (common?.extra?['filename'] as String?) ??
+                'document',
             'file_data': common?.url ??
                 'data:${common?.mimeType ?? 'application/octet-stream'};base64,${common?.base64Data ?? ''}',
           },
@@ -214,6 +219,11 @@ class OpenAIConverters {
       case ChatMessagePartType.videoUrl:
         throw UnimplementedError(
             'OpenAI does not support ${part.type} in standard API');
+      case ChatMessagePartType.reasoning:
+      case ChatMessagePartType.toolSearchResult:
+        throw UnsupportedError(
+          'OpenAI does not accept ${part.type.name} parts as input',
+        );
     }
   }
 

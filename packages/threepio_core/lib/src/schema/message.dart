@@ -1,5 +1,10 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import '../core/run_context.dart';
+import 'message_concat.dart';
+import 'message_template.dart';
+import 'tool_info.dart';
+
 part 'message.freezed.dart';
 part 'message.g.dart';
 
@@ -82,6 +87,14 @@ enum ChatMessagePartType {
   /// File URL
   @JsonValue('file_url')
   fileUrl,
+
+  /// Reasoning produced by the model (output parts only)
+  @JsonValue('reasoning')
+  reasoning,
+
+  /// Result of a tool search: the definitions of the tools that were found
+  @JsonValue('tool_search_result')
+  toolSearchResult,
 }
 
 /// Image detail level
@@ -100,6 +113,9 @@ enum ImageURLDetail {
 }
 
 /// Common structure for multi-modal message parts
+///
+/// Port of eino `schema.MessagePartCommon`. Give exactly one of [url],
+/// [base64Data] and [fileId].
 @freezed
 abstract class MessagePartCommon with _$MessagePartCommon {
   const factory MessagePartCommon({
@@ -109,10 +125,16 @@ abstract class MessagePartCommon with _$MessagePartCommon {
     /// Base64 encoded data
     String? base64Data,
 
+    /// Reference to a file hosted by the model provider: a file id or a
+    /// provider-specific file URI. Whether it is accepted depends on the
+    /// model and the API.
+    String? fileId,
+
     /// MIME type (e.g., "image/png", "audio/wav")
     String? mimeType,
 
     /// Extra information
+    @Deprecated('Use MessageInputPart.extra / MessageOutputPart.extra')
     Map<String, dynamic>? extra,
   }) = _MessagePartCommon;
 
@@ -165,6 +187,9 @@ abstract class MessageInputFile with _$MessageInputFile {
   const factory MessageInputFile({
     /// Common fields
     required MessagePartCommon common,
+
+    /// File name
+    String? name,
   }) = _MessageInputFile;
 
   factory MessageInputFile.fromJson(Map<String, dynamic> json) =>
@@ -192,6 +217,12 @@ abstract class MessageInputPart with _$MessageInputPart {
 
     /// File input (when type is fileUrl)
     MessageInputFile? file,
+
+    /// Tools found by a tool search (when type is toolSearchResult)
+    ToolSearchResult? toolSearchResult,
+
+    /// Extra information
+    Map<String, dynamic>? extra,
   }) = _MessageInputPart;
 
   factory MessageInputPart.fromJson(Map<String, dynamic> json) =>
@@ -212,6 +243,102 @@ abstract class MessageInputPart with _$MessageInputPart {
           detail: detail,
         ),
       );
+
+  /// Create an audio part. Give exactly one of [url], [base64Data] and
+  /// [fileId].
+  factory MessageInputPart.audio({
+    String? url,
+    String? base64Data,
+    String? fileId,
+    String? mimeType,
+  }) =>
+      MessageInputPart(
+        type: ChatMessagePartType.audioUrl,
+        audio: MessageInputAudio(
+          common: MessagePartCommon(
+            url: url,
+            base64Data: base64Data,
+            fileId: fileId,
+            mimeType: mimeType,
+          ),
+        ),
+      );
+
+  /// Create a video part. Give exactly one of [url], [base64Data] and
+  /// [fileId].
+  factory MessageInputPart.video({
+    String? url,
+    String? base64Data,
+    String? fileId,
+    String? mimeType,
+  }) =>
+      MessageInputPart(
+        type: ChatMessagePartType.videoUrl,
+        video: MessageInputVideo(
+          common: MessagePartCommon(
+            url: url,
+            base64Data: base64Data,
+            fileId: fileId,
+            mimeType: mimeType,
+          ),
+        ),
+      );
+
+  /// Create a file part. Give exactly one of [url], [base64Data] and
+  /// [fileId]; [name] is the file name shown to the model.
+  factory MessageInputPart.file({
+    String? url,
+    String? base64Data,
+    String? fileId,
+    String? mimeType,
+    String? name,
+  }) =>
+      MessageInputPart(
+        type: ChatMessagePartType.fileUrl,
+        file: MessageInputFile(
+          common: MessagePartCommon(
+            url: url,
+            base64Data: base64Data,
+            fileId: fileId,
+            mimeType: mimeType,
+          ),
+          name: name,
+        ),
+      );
+}
+
+/// Reasoning produced by a reasoning model, as one part of its output
+///
+/// Port of eino `schema.MessageOutputReasoning`.
+@freezed
+abstract class MessageOutputReasoning with _$MessageOutputReasoning {
+  const factory MessageOutputReasoning({
+    /// The thought summary, or the raw reasoning text
+    @Default('') String text,
+
+    /// Encrypted reasoning tokens. Some models require them when the
+    /// reasoning is passed back in a later request.
+    @Default('') String signature,
+  }) = _MessageOutputReasoning;
+
+  factory MessageOutputReasoning.fromJson(Map<String, dynamic> json) =>
+      _$MessageOutputReasoningFromJson(json);
+}
+
+/// Where a streamed output part belongs in the final response
+///
+/// Port of eino `schema.MessageStreamingMeta`. When a model streams several
+/// parts in one response, chunks with the same [index] are fragments of the
+/// same part; [concatMessages] joins them.
+@freezed
+abstract class MessageStreamingMeta with _$MessageStreamingMeta {
+  const factory MessageStreamingMeta({
+    /// Position of the part in the final response
+    @Default(0) int index,
+  }) = _MessageStreamingMeta;
+
+  factory MessageStreamingMeta.fromJson(Map<String, dynamic> json) =>
+      _$MessageStreamingMetaFromJson(json);
 }
 
 /// Output part of a message (model-generated)
@@ -232,6 +359,17 @@ abstract class MessageOutputPart with _$MessageOutputPart {
 
     /// Video output
     MessagePartCommon? video,
+
+    /// Reasoning output (when type is reasoning)
+    MessageOutputReasoning? reasoning,
+
+    /// Extra information
+    Map<String, dynamic>? extra,
+
+    /// Position of this part while it is being streamed. Runtime information
+    /// that is not written to JSON, as in Eino.
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    MessageStreamingMeta? streamingMeta,
   }) = _MessageOutputPart;
 
   factory MessageOutputPart.fromJson(Map<String, dynamic> json) =>
@@ -281,6 +419,9 @@ abstract class TokenUsage with _$TokenUsage {
             : PromptTokenDetails(
                 cachedTokens: (promptTokenDetails?.cachedTokens ?? 0) +
                     (other.promptTokenDetails?.cachedTokens ?? 0),
+                cacheWriteTokens:
+                    (promptTokenDetails?.cacheWriteTokens ?? 0) +
+                        (other.promptTokenDetails?.cacheWriteTokens ?? 0),
               ),
         completionTokenDetails: completionTokenDetails == null &&
                 other.completionTokenDetails == null
@@ -322,8 +463,11 @@ abstract class CompletionTokenDetails with _$CompletionTokenDetails {
 @freezed
 abstract class PromptTokenDetails with _$PromptTokenDetails {
   const factory PromptTokenDetails({
-    /// Cached tokens in the prompt
+    /// Prompt tokens read from the cache
     @Default(0) int cachedTokens,
+
+    /// Prompt tokens written to the cache
+    @Default(0) int cacheWriteTokens,
   }) = _PromptTokenDetails;
 
   factory PromptTokenDetails.fromJson(Map<String, dynamic> json) =>
@@ -400,8 +544,11 @@ abstract class ResponseMeta with _$ResponseMeta {
 }
 
 /// Main message class
+///
+/// Port of eino `schema.Message`. A message is also a [MessagesTemplate] of
+/// itself: [format] fills the placeholders in its content.
 @freezed
-abstract class Message with _$Message {
+abstract class Message with _$Message implements MessagesTemplate {
   const factory Message({
     /// Role of the message sender
     required RoleType role,
@@ -478,6 +625,32 @@ abstract class Message with _$Message {
         toolName: toolName,
       );
 
+  /// This message with the placeholders in its text filled from [vars].
+  ///
+  /// Port of eino `Message.Format`. [content] is rendered, and so are the
+  /// text parts and the media sources (`url`, `base64Data`, `fileId`) of
+  /// [userInputMultiContent]. The result is a list with that one message.
+  ///
+  /// ```dart
+  /// final template = Message.user('hello, {name}');
+  /// final messages = await template.format(
+  ///   RunContext.background(),
+  ///   {'name': 'eino'},
+  ///   FormatType.fString,
+  /// ); // messages.single.content == 'hello, eino'
+  /// ```
+  ///
+  /// Throws [FormatException] when the text is not a valid template or names
+  /// a variable that [vars] does not have, and [UnsupportedError] for
+  /// [FormatType.goTemplate].
+  @override
+  Future<List<Message>> format(
+    RunContext ctx,
+    Map<String, Object?> vars,
+    FormatType type,
+  ) async =>
+      [formatMessage(this, vars, type)];
+
   /// Get a string representation of the message
   String toDisplayString() {
     final buffer = StringBuffer();
@@ -517,153 +690,11 @@ abstract class Message with _$Message {
 }
 
 /// Helper to concatenate message chunks from a stream
+///
+/// The class form of [concatMessages], kept for existing callers.
 class MessageConcatenator {
   /// Concatenate multiple messages into a single message
-  static Message concat(List<Message> messages) {
-    if (messages.isEmpty) {
-      throw ArgumentError('Cannot concatenate empty message list');
-    }
-
-    if (messages.length == 1) {
-      return messages.first;
-    }
-
-    final contents = <String>[];
-    final reasoningContents = <String>[];
-    final toolCalls = <ToolCall>[];
-    final extras = <Map<String, dynamic>>[];
-
-    RoleType? role;
-    String? name;
-    String? toolCallId;
-    String? toolName;
-    ResponseMeta? responseMeta;
-
-    for (final msg in messages) {
-      // Validate role consistency
-      if (role == null) {
-        role = msg.role;
-      } else if (role != msg.role) {
-        throw ArgumentError(
-          'Cannot concat messages with different roles: $role and ${msg.role}',
-        );
-      }
-
-      // Validate name consistency
-      if (msg.name != null) {
-        if (name == null) {
-          name = msg.name;
-        } else if (name != msg.name) {
-          throw ArgumentError(
-            'Cannot concat messages with different names: $name and ${msg.name}',
-          );
-        }
-      }
-
-      // Validate tool call ID consistency
-      if (msg.toolCallId != null) {
-        if (toolCallId == null) {
-          toolCallId = msg.toolCallId;
-        } else if (toolCallId != msg.toolCallId) {
-          throw ArgumentError(
-            'Cannot concat messages with different toolCallIds',
-          );
-        }
-      }
-
-      // Validate tool name consistency
-      if (msg.toolName != null) {
-        if (toolName == null) {
-          toolName = msg.toolName;
-        } else if (toolName != msg.toolName) {
-          throw ArgumentError(
-            'Cannot concat messages with different toolNames',
-          );
-        }
-      }
-
-      // Collect content
-      if (msg.content.isNotEmpty) {
-        contents.add(msg.content);
-      }
-
-      // Collect reasoning content
-      if (msg.reasoningContent != null && msg.reasoningContent!.isNotEmpty) {
-        reasoningContents.add(msg.reasoningContent!);
-      }
-
-      // Collect tool calls: streamed deltas share an `index` and arrive as
-      // fragments (id/name first, then argument pieces) — merge by index.
-      if (msg.toolCalls != null) {
-        for (final tc in msg.toolCalls!) {
-          final index = tc.index;
-          if (index == null) {
-            toolCalls.add(tc);
-            continue;
-          }
-          final existingAt = toolCalls.indexWhere((e) => e.index == index);
-          if (existingAt < 0) {
-            toolCalls.add(tc);
-          } else {
-            final existing = toolCalls[existingAt];
-            toolCalls[existingAt] = ToolCall(
-              id: existing.id.isNotEmpty ? existing.id : tc.id,
-              type: existing.type,
-              function: FunctionCall(
-                name: existing.function.name.isNotEmpty
-                    ? existing.function.name
-                    : tc.function.name,
-                arguments: existing.function.arguments + tc.function.arguments,
-              ),
-              index: index,
-              extra: tc.extra ?? existing.extra,
-            );
-          }
-        }
-      }
-
-      // Collect extras
-      if (msg.extra != null) {
-        extras.add(msg.extra!);
-      }
-
-      // Update response meta (keep last non-null)
-      if (msg.responseMeta != null) {
-        responseMeta = msg.responseMeta;
-      }
-    }
-
-    return Message(
-      role: role ?? messages.first.role,
-      content: contents.join(),
-      name: name,
-      toolCallId: toolCallId,
-      toolName: toolName,
-      toolCalls: toolCalls.isEmpty ? null : toolCalls,
-      reasoningContent:
-          reasoningContents.isEmpty ? null : reasoningContents.join(),
-      responseMeta: responseMeta,
-      extra: extras.isEmpty ? null : _mergeExtras(extras),
-    );
-  }
-
-  static Map<String, dynamic>? _mergeExtras(List<Map<String, dynamic>> extras) {
-    if (extras.isEmpty) return null;
-    if (extras.length == 1) return extras.first;
-
-    // List-valued entries (e.g. streamed `reasoning_details`) are appended;
-    // everything else is last-writer-wins.
-    final merged = <String, dynamic>{};
-    for (final extra in extras) {
-      for (final entry in extra.entries) {
-        final current = merged[entry.key];
-        if (current is List && entry.value is List) {
-          merged[entry.key] = [...current, ...entry.value as List];
-        } else {
-          merged[entry.key] = entry.value;
-        }
-      }
-    }
-    return merged;
-  }
+  ///
+  /// The same as [concatMessages].
+  static Message concat(List<Message> messages) => concatMessages(messages);
 }

@@ -126,7 +126,7 @@ class Runner {
 
     final cancelToken = CancelToken();
     final pending = <String, Completer<bool>>{};
-    final context = RunContext(
+    final context = AgentRunScope(
       sessionId: sessionId,
       cancelToken: cancelToken,
       metadata: metadata,

@@ -1,11 +1,26 @@
+/// Pull-based streams: [StreamReader], [StreamWriter] and the functions that
+/// create and combine them.
+///
+/// Port of eino `schema/stream.go`. One library, split into parts by reader
+/// kind, because the kinds share a private pull protocol.
+library;
+
 import 'dart:async';
 import 'dart:collection';
 
-import 'package:meta/meta.dart';
-
-import 'stream_item.dart';
+part 'readers/array_reader.dart';
+part 'readers/concat_reader.dart';
+part 'readers/convert_reader.dart';
+part 'readers/copy_reader.dart';
+part 'readers/foreign_reader.dart';
+part 'readers/merge_reader.dart';
+part 'readers/queue_reader.dart';
+part 'readers/reader_base.dart';
+part 'readers/stream_functions.dart';
 
 /// Custom exception indicating end of stream
+///
+/// The Dart counterpart of Go's `io.EOF` as returned by `StreamReader.Recv`.
 class StreamEOFException implements Exception {
   const StreamEOFException();
 
@@ -14,6 +29,8 @@ class StreamEOFException implements Exception {
 }
 
 /// Exception thrown when receiving after stream is closed
+///
+/// Port of eino `schema.ErrRecvAfterClosed`.
 class StreamClosedException implements Exception {
   const StreamClosedException();
 
@@ -22,6 +39,9 @@ class StreamClosedException implements Exception {
 }
 
 /// Exception indicating no value should be emitted (for filtering)
+///
+/// Port of eino `schema.ErrNoValue`: throw it from the function given to
+/// [StreamReader.convert] to drop the element.
 class NoValueException implements Exception {
   const NoValueException();
 
@@ -30,6 +50,11 @@ class NoValueException implements Exception {
 }
 
 /// Exception indicating EOF from a specific named source stream
+///
+/// Port of eino `schema.SourceEOF`; [sourceName] is what Go reads with
+/// `schema.GetSourceName`. A reader made by [mergeNamedStreamReaders] throws
+/// one from [StreamReader.recv] for every source that ends, and goes on with
+/// the others.
 class SourceEOFException implements Exception {
   SourceEOFException(this.sourceName);
 
@@ -41,194 +66,91 @@ class SourceEOFException implements Exception {
 
 /// Reader for consuming items from a stream.
 ///
-/// A reader has a single consumer: call [recv] until it throws
-/// [StreamEOFException], then [close]. Items that arrive before the consumer
-/// asks for them are buffered, so nothing is lost between creating a reader and
-/// the first [recv].
+/// Port of eino `schema.StreamReader`. A reader is pulled: nothing is taken
+/// from its source until [recv] asks for the next item. It has a single
+/// consumer, which calls [recv] until it throws [StreamEOFException] and then
+/// [close]:
 ///
-/// [copy], [transform] and the merge and concat helpers hand the reader over to
-/// the readers they return. From then on the original reader is unusable
-/// ([recv] throws [StreamClosedException]) and closing the derived readers
-/// releases the underlying source.
-class StreamReader<T> {
-  StreamReader._({Future<void> Function()? onClose}) : _onClose = onClose;
+/// ```dart
+/// try {
+///   while (true) {
+///     process(await reader.recv());
+///   }
+/// } on StreamEOFException {
+///   // done
+/// } finally {
+///   await reader.close();
+/// }
+/// ```
+///
+/// [nextOrNull] and [asStream] give the same loop a more familiar shape.
+///
+/// Readers come from [pipe], [StreamReader.fromIterable],
+/// [StreamReader.fromStream], [convert], [copy], [mergeStreamReaders],
+/// [mergeNamedStreamReaders] and [concatStreamReaders].
+///
+/// [copy], [convert] and the merge and concat functions hand the reader over
+/// to the readers they return. From then on the original is unusable ([recv]
+/// throws [StreamClosedException], [close] does nothing, a second hand-over
+/// throws [StateError]) and closing the derived readers releases the source.
+///
+/// This class cannot be extended. The readers of this library are the only
+/// implementations the combining functions can pull from directly; any other
+/// implementation is read through its public members.
+abstract class StreamReader<T> {
+  StreamReader._();
 
   /// Create from a Dart Stream.
   ///
-  /// The stream is listened to immediately; [close] cancels the subscription.
-  factory StreamReader.fromStream(Stream<T> stream) {
-    final reader = StreamReader<T>._();
-    final subscription = stream.listen(
-      (data) => reader.feed(StreamItem.data(data)),
-      onError: (Object error, StackTrace stackTrace) =>
-          reader.feed(StreamItem.error(error, stackTrace)),
-      onDone: reader.feedDone,
-      cancelOnError: false,
-    );
-    reader._onClose = subscription.cancel;
-    return reader;
-  }
+  /// The stream is listened to immediately and its events are buffered until
+  /// they are received. While more than a few dozen events are waiting, the
+  /// subscription is paused. [close] cancels the subscription.
+  factory StreamReader.fromStream(Stream<T> stream) =>
+      _QueueReader.fromStream<T>(stream);
 
   /// Create from an iterable (array).
   ///
-  /// All items are available at once and the end of the stream is reported by
-  /// the [recv] call that follows the last item.
-  factory StreamReader.fromIterable(Iterable<T> items) {
-    final reader = StreamReader<T>._();
-    for (final item in items) {
-      reader.feed(StreamItem.data(item));
-    }
-    reader.feedDone();
-    return reader;
-  }
-
-  /// Creates an empty reader that is filled through [feed] and [feedDone].
-  ///
-  /// [onClose] runs once, when the reader is closed or released.
-  @internal
-  factory StreamReader.buffered({Future<void> Function()? onClose}) {
-    return StreamReader<T>._(onClose: onClose);
-  }
-
-  Future<void> Function()? _onClose;
-
-  /// Items that arrived and were not yet received.
-  final Queue<StreamItem<T>> _queue = Queue<StreamItem<T>>();
-
-  /// [recv] calls waiting for an item, oldest first.
-  final Queue<Completer<StreamItem<T>>> _waiters =
-      Queue<Completer<StreamItem<T>>>();
-
-  /// Where items go once this reader was handed over by [drainTo].
-  ({void Function(StreamItem<T> item) onItem, void Function() onDone})? _drain;
-
-  /// The producer signalled the end of the stream.
-  bool _sourceDone = false;
-
-  /// [recv] is no longer allowed: closed, or handed over by [drainTo].
-  bool _isClosed = false;
-
-  /// The source was let go; late items are dropped.
-  bool _isReleased = false;
-
-  final _doneCompleter = Completer<void>();
-
-  /// Whether the source of this reader was released, either by [close] or by
-  /// closing the readers derived from it. Items fed afterwards are dropped.
-  @internal
-  bool get isReleased => _isReleased;
-
-  /// Adds an item to this reader's buffer, or completes a waiting [recv].
-  ///
-  /// Does nothing once the reader was released or the stream has ended, so a
-  /// producer never fails because its consumer went away.
-  @internal
-  void feed(StreamItem<T> item) {
-    if (_isReleased || _sourceDone) return;
-
-    final drain = _drain;
-    if (drain != null) {
-      drain.onItem(item);
-    } else if (_waiters.isNotEmpty) {
-      _waiters.removeFirst().complete(item);
-    } else {
-      _queue.add(item);
-    }
-  }
-
-  /// Marks the end of the stream: once the buffer is empty, [recv] throws
-  /// [StreamEOFException].
-  @internal
-  void feedDone() {
-    if (_isReleased || _sourceDone) return;
-    _sourceDone = true;
-
-    final drain = _drain;
-    if (drain != null) {
-      drain.onDone();
-    } else {
-      _failWaiters(const StreamEOFException());
-    }
-  }
-
-  /// Hands this reader over to a derived reader.
-  ///
-  /// Buffered items are passed to [onItem] immediately, later ones as they
-  /// arrive, and [onDone] is called when the stream ends. This reader becomes
-  /// unusable; the new owner calls [release] when it is closed.
-  @internal
-  void drainTo({
-    required void Function(StreamItem<T> item) onItem,
-    required void Function() onDone,
-  }) {
-    if (_drain != null) {
-      throw StateError(
-        'This StreamReader was already handed over to another reader; '
-        'use copy() to consume a stream more than once.',
-      );
-    }
-
-    final wasEnded = _sourceDone || _isReleased;
-    _isClosed = true;
-    _failWaiters(const StreamClosedException());
-    _drain = (onItem: onItem, onDone: onDone);
-
-    while (_queue.isNotEmpty) {
-      onItem(_queue.removeFirst());
-    }
-    if (wasEnded) onDone();
-  }
-
-  /// Lets go of the source of this reader, for example by cancelling the
-  /// subscription behind [StreamReader.fromStream]. Safe to call repeatedly.
-  @internal
-  Future<void> release() async {
-    if (_isReleased) return;
-    _isReleased = true;
-    _queue.clear();
-
-    try {
-      await _onClose?.call();
-    } finally {
-      _doneCompleter.complete();
-    }
-  }
-
-  void _failWaiters(Object error) {
-    while (_waiters.isNotEmpty) {
-      _waiters.removeFirst().completeError(error);
-    }
-  }
+  /// Port of eino `schema.StreamReaderFromArray`. The items are copied; all of
+  /// them are available at once and the end of the stream is reported by the
+  /// [recv] call that follows the last item.
+  factory StreamReader.fromIterable(Iterable<T> items) =>
+      _ArrayReader<T>(List<T>.of(items, growable: false));
 
   /// Receive the next item from the stream
   ///
-  /// Returns the next chunk of data.
-  /// Throws [StreamEOFException] when the stream ends.
-  /// Throws [StreamClosedException] if called after close, or if the reader
-  /// is closed while the call is waiting for an item.
-  /// Rethrows any error from the stream.
-  Future<T> recv() async {
-    if (_isClosed) {
-      throw const StreamClosedException();
-    }
+  /// Port of eino `StreamReader.Recv`.
+  ///
+  /// Throws [StreamEOFException] when the stream has ended, and keeps doing so
+  /// on every later call. Throws [StreamClosedException] if called after
+  /// [close], or if the reader is closed while the call is waiting for an
+  /// item. An error sent into the stream is rethrown; the stream goes on after
+  /// it.
+  ///
+  /// Calls made while another one is still waiting are served in the order
+  /// they were made.
+  Future<T> recv();
 
-    final StreamItem<T> item;
-    if (_queue.isNotEmpty) {
-      item = _queue.removeFirst();
-    } else if (_sourceDone) {
-      throw const StreamEOFException();
-    } else {
-      final waiter = Completer<StreamItem<T>>();
-      _waiters.add(waiter);
-      item = await waiter.future;
+  /// The next item, or `null` once the stream has ended.
+  ///
+  /// The shape of the `Next()` loop of Go's `AsyncIterator`:
+  ///
+  /// ```dart
+  /// for (var event = await events.nextOrNull();
+  ///     event != null;
+  ///     event = await events.nextOrNull()) {
+  ///   handle(event);
+  /// }
+  /// ```
+  ///
+  /// Everything else [recv] throws is thrown here as well. For a reader of a
+  /// nullable type a `null` item cannot be told from the end of the stream;
+  /// use [recv] there.
+  Future<T?> nextOrNull() async {
+    try {
+      return await recv();
+    } on StreamEOFException {
+      return null;
     }
-
-    final error = item.error;
-    if (error != null) {
-      Error.throwWithStackTrace(error, item.stackTrace ?? StackTrace.current);
-    }
-
-    return item.chunk as T;
   }
 
   /// Receive all remaining items as a list
@@ -256,112 +178,132 @@ class StreamReader<T> {
 
   /// Convert this reader to a Dart Stream
   ///
-  /// The [SourceEOFException] markers of a named merge are skipped.
-  Stream<T> asStream() async* {
-    try {
-      while (true) {
-        try {
-          yield await recv();
-        } on SourceEOFException {
-          // One source of a named merge ended; the others go on.
-        }
-      }
-    } on StreamEOFException {
-      // Expected end of stream
+  /// The stream is pulled from this reader at the pace of its listener. It
+  /// ends when the reader does, and it [close]s the reader when it ends or
+  /// when the listener cancels, for example by leaving an `await for` loop
+  /// early. The [SourceEOFException] markers of a named merge are skipped.
+  ///
+  /// An error of the reader is passed on and ends the stream.
+  Stream<T> asStream() {
+    late final StreamController<T> controller;
+    var pumping = false;
+
+    // The listener cancelled, or the reader ended or failed.
+    var finished = false;
+
+    Future<void> finish() async {
+      finished = true;
+      await close();
+      unawaited(controller.close());
     }
+
+    Future<void> pump() async {
+      if (pumping || finished) return;
+      pumping = true;
+      try {
+        while (!finished && controller.hasListener && !controller.isPaused) {
+          try {
+            final item = await recv();
+            if (finished) return;
+            controller.add(item);
+          } on SourceEOFException {
+            // One source of a named merge ended; the others go on.
+          } on StreamEOFException {
+            if (!finished) await finish();
+          } catch (error, stackTrace) {
+            // After a cancel this is the StreamClosedException of our own
+            // close, which nobody listens for any more.
+            if (finished) return;
+            controller.addError(error, stackTrace);
+            await finish();
+          }
+        }
+      } finally {
+        pumping = false;
+      }
+    }
+
+    // Synchronous, so that a listener that pauses on an event (as `await for`
+    // does) is seen as paused before the next item would be pulled.
+    controller = StreamController<T>(
+      sync: true,
+      onListen: () => unawaited(pump()),
+      onResume: () => unawaited(pump()),
+      onCancel: () {
+        finished = true;
+        return close();
+      },
+    );
+    return controller.stream;
   }
 
   /// Close the stream reader
   ///
-  /// Should be called when done reading to free resources. A [recv] call that
-  /// is waiting for an item completes with [StreamClosedException].
+  /// Port of eino `StreamReader.Close`. Call it when done reading, also after
+  /// [StreamEOFException], to release the source: the writer of a pipe learns
+  /// that nobody listens any more, the subscription behind
+  /// [StreamReader.fromStream] is cancelled, the sources of a derived reader
+  /// are closed. A [recv] call that is waiting for an item completes with
+  /// [StreamClosedException]. Closing twice is harmless.
   ///
-  /// Closing a reader that was handed over by [copy], [transform] or a merge
-  /// or concat helper does nothing: the derived readers own the source.
-  Future<void> close() async {
-    if (_isClosed) {
-      return;
-    }
+  /// Closing a reader that was handed over by [copy], [convert] or a merge or
+  /// concat function does nothing: the derived readers own the source.
+  Future<void> close();
 
-    _isClosed = true;
-    _failWaiters(const StreamClosedException());
-    await release();
-  }
-
-  /// Wait for the stream to be closed
-  Future<void> get done => _doneCompleter.future;
+  /// Completes when the source of this reader was released, either by [close]
+  /// or by closing the readers derived from it.
+  Future<void> get done;
 
   /// Copy this stream reader into multiple independent readers
   ///
-  /// The original reader becomes unusable after this operation.
-  /// Each returned reader can independently consume the stream and sees every
-  /// item, whenever it starts reading. The source is released when the last
-  /// copy is closed.
-  List<StreamReader<T>> copy(int n) {
-    if (n < 1) {
-      return [];
-    }
-
-    if (n == 1) {
-      return [this];
-    }
-
-    var openCopies = n;
-    Future<void> onCopyClosed() async {
-      openCopies--;
-      if (openCopies == 0) await release();
-    }
-
-    final copies = List.generate(
-      n,
-      (_) => StreamReader<T>._(onClose: onCopyClosed),
-    );
-
-    drainTo(
-      onItem: (item) {
-        for (final copy in copies) {
-          copy.feed(item);
-        }
-      },
-      onDone: () {
-        for (final copy in copies) {
-          copy.feedDone();
-        }
-      },
-    );
-
-    return copies;
-  }
-
-  /// Transform elements using a converter function
+  /// Port of eino `StreamReader.Copy`. Each returned reader sees every item,
+  /// at its own pace and whenever it starts reading. The source is pulled when
+  /// the first copy needs an item the others have not asked for yet, and an
+  /// item is kept only until the slowest open copy has received it. The source
+  /// is released when the last copy is closed.
   ///
-  /// Throw [NoValueException] from the converter to skip an element. Any
-  /// other exception is delivered to the consumer of the returned reader.
+  /// The original reader becomes unusable after this operation, except that
+  /// `copy(1)` returns the reader itself. `copy(0)` returns an empty list.
+  List<StreamReader<T>> copy(int n);
+
+  /// Lets the garbage collector release the source of this reader if the
+  /// reader is dropped without [close] having been called.
+  ///
+  /// Port of eino `StreamReader.SetAutomaticClose`. It is a safety net for
+  /// readers given to code that may forget to close them; when that happens is
+  /// up to the garbage collector, so closing explicitly stays the rule.
+  void setAutomaticClose();
+
+  /// A reader of the items of this one, each passed through [fn].
+  ///
+  /// Port of eino `schema.StreamReaderWithConvert`. The conversion is lazy: an
+  /// item is taken from this reader and converted when the returned reader is
+  /// asked for one. [fn] may be asynchronous.
+  ///
+  /// * Throw [NoValueException] from [fn] to drop the item. Any other error
+  ///   thrown by [fn] is delivered by [recv] in place of the item, and the
+  ///   stream goes on.
+  /// * [errWrapper] sees every error that comes out of this reader (not those
+  ///   thrown by [fn]). What it returns is delivered instead; when it returns
+  ///   `null` the error is skipped and the next item is read. Port of
+  ///   `schema.WithErrWrapper`.
+  /// * [onEof] runs once, when this reader has ended. A value it returns is
+  ///   delivered as one more item and an error it throws is delivered as an
+  ///   error; after either, the stream ends. Returning `null` (or throwing
+  ///   [StreamEOFException]) just ends the stream. Port of `schema.WithOnEOF`.
   ///
   /// The original reader becomes unusable after this operation; closing the
   /// returned reader releases it.
-  StreamReader<R> transform<R>(R Function(T) converter) {
-    final transformed = StreamReader<R>._(onClose: release);
+  StreamReader<D> convert<D>(
+    FutureOr<D> Function(T item) fn, {
+    Object? Function(Object error)? errWrapper,
+    FutureOr<D?> Function()? onEof,
+  });
 
-    drainTo(
-      onItem: (item) {
-        final error = item.error;
-        if (error != null) {
-          transformed.feed(StreamItem<R>.error(error, item.stackTrace));
-          return;
-        }
-
-        try {
-          transformed.feed(StreamItem.data(converter(item.chunk as T)));
-        } on NoValueException {
-          // Skip this item
-        } catch (e, st) {
-          transformed.feed(StreamItem<R>.error(e, st));
-        }
-      },
-      onDone: transformed.feedDone,
-    );
-
-    return transformed;
-  }
+  /// Transform elements using a converter function
+  ///
+  /// The same as [convert] without its options, kept under its earlier name.
+  /// Throw [NoValueException] from the converter to skip an element.
+  StreamReader<R> transform<R>(R Function(T) converter) =>
+      convert<R>(converter);
 }

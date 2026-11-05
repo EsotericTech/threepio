@@ -101,7 +101,7 @@ void main() {
       var asked = 0;
       final events = await collect(await agent.run(
         [Message.user('go')],
-        context: RunContext(requestApproval: (call, reason) async {
+        context: AgentRunScope(requestApproval: (call, reason) async {
           asked++;
           expect(reason, contains('delete'));
           return call.id == 'c2';
@@ -129,7 +129,7 @@ void main() {
         [text('never'), finish('stop')],
       ]);
       final agent = ChatModelAgent(ChatModelAgentConfig(name: 'k', model: model, tools: [hang, quick]));
-      final reader = await agent.run([Message.user('go')], context: RunContext(cancelToken: token));
+      final reader = await agent.run([Message.user('go')], context: AgentRunScope(cancelToken: token));
       Future<void>.delayed(const Duration(milliseconds: 50), () => token.cancel('user'));
       final events = await collect(reader);
 
@@ -150,7 +150,7 @@ void main() {
         [text('a'), text('b'), text('c'), finish('stop')],
       ], delayPerChunk: const Duration(milliseconds: 30));
       final agent = ChatModelAgent(ChatModelAgentConfig(name: 'k', model: model));
-      final reader = await agent.run([Message.user('go')], context: RunContext(cancelToken: token));
+      final reader = await agent.run([Message.user('go')], context: AgentRunScope(cancelToken: token));
       Future<void>.delayed(const Duration(milliseconds: 45), () => token.cancel());
       final events = await collect(reader);
       expect(events.whereType<AgentCancelledEvent>().length, 1);

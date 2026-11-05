@@ -24,6 +24,9 @@ dependencies:
   logging: ^1.2.0
   uuid: ^4.2.0
 
+  # Templates (Jinja2 for `FormatType.jinja2`)
+  jinja: ^0.6.0
+
   # HTTP Client
   http: ^1.1.0
 

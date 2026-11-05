@@ -39,9 +39,13 @@ class ApprovalPolicy {
 /// Answers an approval request; `true` lets the tool run.
 typedef ApprovalRequest = Future<bool> Function(ToolCall call, String? reason);
 
-/// Per-run context: ids, cancellation and the approval channel.
-class RunContext {
-  RunContext({
+/// Per-run scope of the Kortney runtime: ids, cancellation and the approval
+/// channel.
+///
+/// Called `RunContext` before 0.9. That name now belongs to the core context
+/// every Eino-shaped API takes as its first parameter.
+class AgentRunScope {
+  AgentRunScope({
     String? runId,
     this.sessionId,
     CancelToken? cancelToken,
@@ -127,9 +131,9 @@ class ChatModelAgent {
   /// Starts a run; events arrive on the returned reader.
   Future<StreamReader<AgentEvent>> run(
     List<Message> messages, {
-    RunContext? context,
+    AgentRunScope? context,
   }) async {
-    final ctx = context ?? RunContext();
+    final ctx = context ?? AgentRunScope();
     final (reader, writer) = pipe<AgentEvent>();
     unawaited(
       _runLoop(messages, writer, ctx).then(
@@ -153,7 +157,7 @@ class ChatModelAgent {
   Future<void> _runLoop(
     List<Message> input,
     StreamWriter<AgentEvent> writer,
-    RunContext ctx,
+    AgentRunScope ctx,
   ) async {
     final runId = ctx.runId;
     final cancel = ctx.cancelToken;
@@ -360,7 +364,7 @@ class ChatModelAgent {
     List<ToolCall> calls,
     Map<String, BaseTool> toolsByName,
     StreamWriter<AgentEvent> writer,
-    RunContext ctx,
+    AgentRunScope ctx,
   ) async {
     final cancel = ctx.cancelToken;
     final results = List<Message?>.filled(calls.length, null);
@@ -403,7 +407,7 @@ class ChatModelAgent {
     ToolCall call,
     Map<String, BaseTool> toolsByName,
     StreamWriter<AgentEvent> writer,
-    RunContext ctx,
+    AgentRunScope ctx,
   ) async {
     final runId = ctx.runId;
     final name = call.function.name;
@@ -492,7 +496,7 @@ class ChatModelAgent {
     ToolCall call,
     String reason,
     StreamWriter<AgentEvent> writer,
-    RunContext ctx,
+    AgentRunScope ctx,
   ) async {
     writer.send(
       AgentApprovalRequestEvent(

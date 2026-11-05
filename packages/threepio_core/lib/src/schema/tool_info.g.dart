@@ -36,18 +36,18 @@ Map<String, dynamic> _$JSONSchemaPropertyToJson(_JSONSchemaProperty instance) =>
     };
 
 _JSONSchema _$JSONSchemaFromJson(Map<String, dynamic> json) => _JSONSchema(
-      type: json['type'] as String? ?? 'object',
-      properties: (json['properties'] as Map<String, dynamic>?)?.map(
-            (k, e) => MapEntry(
-                k, JSONSchemaProperty.fromJson(e as Map<String, dynamic>)),
-          ) ??
-          const {},
-      required: (json['required'] as List<dynamic>?)
-              ?.map((e) => e as String)
-              .toList() ??
-          const [],
-      additionalProperties: json['additionalProperties'] as bool? ?? false,
-    );
+  type: json['type'] as String? ?? 'object',
+  properties:
+      (json['properties'] as Map<String, dynamic>?)?.map(
+        (k, e) =>
+            MapEntry(k, JSONSchemaProperty.fromJson(e as Map<String, dynamic>)),
+      ) ??
+      const {},
+  required:
+      (json['required'] as List<dynamic>?)?.map((e) => e as String).toList() ??
+      const [],
+  additionalProperties: json['additionalProperties'] as bool? ?? false,
+);
 
 Map<String, dynamic> _$JSONSchemaToJson(_JSONSchema instance) =>
     <String, dynamic>{
@@ -76,11 +76,25 @@ Map<String, dynamic> _$FunctionInfoToJson(_FunctionInfo instance) =>
     };
 
 _ToolInfo _$ToolInfoFromJson(Map<String, dynamic> json) => _ToolInfo(
-      type: json['type'] as String? ?? 'function',
-      function: FunctionInfo.fromJson(json['function'] as Map<String, dynamic>),
-    );
+  type: json['type'] as String? ?? 'function',
+  function: FunctionInfo.fromJson(json['function'] as Map<String, dynamic>),
+  extra: json['extra'] as Map<String, dynamic>?,
+);
 
 Map<String, dynamic> _$ToolInfoToJson(_ToolInfo instance) => <String, dynamic>{
-      'type': instance.type,
-      'function': instance.function.toJson(),
-    };
+  'type': instance.type,
+  'function': instance.function.toJson(),
+  'extra': instance.extra,
+};
+
+_ToolSearchResult _$ToolSearchResultFromJson(Map<String, dynamic> json) =>
+    _ToolSearchResult(
+      tools:
+          (json['tools'] as List<dynamic>?)
+              ?.map((e) => ToolInfo.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+    );
+
+Map<String, dynamic> _$ToolSearchResultToJson(_ToolSearchResult instance) =>
+    <String, dynamic>{'tools': instance.tools.map((e) => e.toJson()).toList()};

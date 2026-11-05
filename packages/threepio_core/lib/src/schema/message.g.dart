@@ -13,31 +13,29 @@ _FunctionCall _$FunctionCallFromJson(Map<String, dynamic> json) =>
     );
 
 Map<String, dynamic> _$FunctionCallToJson(_FunctionCall instance) =>
-    <String, dynamic>{
-      'name': instance.name,
-      'arguments': instance.arguments,
-    };
+    <String, dynamic>{'name': instance.name, 'arguments': instance.arguments};
 
 _ToolCall _$ToolCallFromJson(Map<String, dynamic> json) => _ToolCall(
-      index: (json['index'] as num?)?.toInt(),
-      id: json['id'] as String,
-      type: json['type'] as String? ?? 'function',
-      function: FunctionCall.fromJson(json['function'] as Map<String, dynamic>),
-      extra: json['extra'] as Map<String, dynamic>?,
-    );
+  index: (json['index'] as num?)?.toInt(),
+  id: json['id'] as String,
+  type: json['type'] as String? ?? 'function',
+  function: FunctionCall.fromJson(json['function'] as Map<String, dynamic>),
+  extra: json['extra'] as Map<String, dynamic>?,
+);
 
 Map<String, dynamic> _$ToolCallToJson(_ToolCall instance) => <String, dynamic>{
-      'index': instance.index,
-      'id': instance.id,
-      'type': instance.type,
-      'function': instance.function.toJson(),
-      'extra': instance.extra,
-    };
+  'index': instance.index,
+  'id': instance.id,
+  'type': instance.type,
+  'function': instance.function.toJson(),
+  'extra': instance.extra,
+};
 
 _MessagePartCommon _$MessagePartCommonFromJson(Map<String, dynamic> json) =>
     _MessagePartCommon(
       url: json['url'] as String?,
       base64Data: json['base64Data'] as String?,
+      fileId: json['fileId'] as String?,
       mimeType: json['mimeType'] as String?,
       extra: json['extra'] as Map<String, dynamic>?,
     );
@@ -46,14 +44,16 @@ Map<String, dynamic> _$MessagePartCommonToJson(_MessagePartCommon instance) =>
     <String, dynamic>{
       'url': instance.url,
       'base64Data': instance.base64Data,
+      'fileId': instance.fileId,
       'mimeType': instance.mimeType,
       'extra': instance.extra,
     };
 
 _MessageInputImage _$MessageInputImageFromJson(Map<String, dynamic> json) =>
     _MessageInputImage(
-      common:
-          MessagePartCommon.fromJson(json['common'] as Map<String, dynamic>),
+      common: MessagePartCommon.fromJson(
+        json['common'] as Map<String, dynamic>,
+      ),
       detail: $enumDecodeNullable(_$ImageURLDetailEnumMap, json['detail']),
     );
 
@@ -71,35 +71,36 @@ const _$ImageURLDetailEnumMap = {
 
 _MessageInputAudio _$MessageInputAudioFromJson(Map<String, dynamic> json) =>
     _MessageInputAudio(
-      common:
-          MessagePartCommon.fromJson(json['common'] as Map<String, dynamic>),
+      common: MessagePartCommon.fromJson(
+        json['common'] as Map<String, dynamic>,
+      ),
     );
 
 Map<String, dynamic> _$MessageInputAudioToJson(_MessageInputAudio instance) =>
-    <String, dynamic>{
-      'common': instance.common.toJson(),
-    };
+    <String, dynamic>{'common': instance.common.toJson()};
 
 _MessageInputVideo _$MessageInputVideoFromJson(Map<String, dynamic> json) =>
     _MessageInputVideo(
-      common:
-          MessagePartCommon.fromJson(json['common'] as Map<String, dynamic>),
+      common: MessagePartCommon.fromJson(
+        json['common'] as Map<String, dynamic>,
+      ),
     );
 
 Map<String, dynamic> _$MessageInputVideoToJson(_MessageInputVideo instance) =>
-    <String, dynamic>{
-      'common': instance.common.toJson(),
-    };
+    <String, dynamic>{'common': instance.common.toJson()};
 
 _MessageInputFile _$MessageInputFileFromJson(Map<String, dynamic> json) =>
     _MessageInputFile(
-      common:
-          MessagePartCommon.fromJson(json['common'] as Map<String, dynamic>),
+      common: MessagePartCommon.fromJson(
+        json['common'] as Map<String, dynamic>,
+      ),
+      name: json['name'] as String?,
     );
 
 Map<String, dynamic> _$MessageInputFileToJson(_MessageInputFile instance) =>
     <String, dynamic>{
       'common': instance.common.toJson(),
+      'name': instance.name,
     };
 
 _MessageInputPart _$MessageInputPartFromJson(Map<String, dynamic> json) =>
@@ -118,6 +119,12 @@ _MessageInputPart _$MessageInputPartFromJson(Map<String, dynamic> json) =>
       file: json['file'] == null
           ? null
           : MessageInputFile.fromJson(json['file'] as Map<String, dynamic>),
+      toolSearchResult: json['toolSearchResult'] == null
+          ? null
+          : ToolSearchResult.fromJson(
+              json['toolSearchResult'] as Map<String, dynamic>,
+            ),
+      extra: json['extra'] as Map<String, dynamic>?,
     );
 
 Map<String, dynamic> _$MessageInputPartToJson(_MessageInputPart instance) =>
@@ -128,6 +135,8 @@ Map<String, dynamic> _$MessageInputPartToJson(_MessageInputPart instance) =>
       'audio': instance.audio?.toJson(),
       'video': instance.video?.toJson(),
       'file': instance.file?.toJson(),
+      'toolSearchResult': instance.toolSearchResult?.toJson(),
+      'extra': instance.extra,
     };
 
 const _$ChatMessagePartTypeEnumMap = {
@@ -136,7 +145,28 @@ const _$ChatMessagePartTypeEnumMap = {
   ChatMessagePartType.audioUrl: 'audio_url',
   ChatMessagePartType.videoUrl: 'video_url',
   ChatMessagePartType.fileUrl: 'file_url',
+  ChatMessagePartType.reasoning: 'reasoning',
+  ChatMessagePartType.toolSearchResult: 'tool_search_result',
 };
+
+_MessageOutputReasoning _$MessageOutputReasoningFromJson(
+  Map<String, dynamic> json,
+) => _MessageOutputReasoning(
+  text: json['text'] as String? ?? '',
+  signature: json['signature'] as String? ?? '',
+);
+
+Map<String, dynamic> _$MessageOutputReasoningToJson(
+  _MessageOutputReasoning instance,
+) => <String, dynamic>{'text': instance.text, 'signature': instance.signature};
+
+_MessageStreamingMeta _$MessageStreamingMetaFromJson(
+  Map<String, dynamic> json,
+) => _MessageStreamingMeta(index: (json['index'] as num?)?.toInt() ?? 0);
+
+Map<String, dynamic> _$MessageStreamingMetaToJson(
+  _MessageStreamingMeta instance,
+) => <String, dynamic>{'index': instance.index};
 
 _MessageOutputPart _$MessageOutputPartFromJson(Map<String, dynamic> json) =>
     _MessageOutputPart(
@@ -151,6 +181,12 @@ _MessageOutputPart _$MessageOutputPartFromJson(Map<String, dynamic> json) =>
       video: json['video'] == null
           ? null
           : MessagePartCommon.fromJson(json['video'] as Map<String, dynamic>),
+      reasoning: json['reasoning'] == null
+          ? null
+          : MessageOutputReasoning.fromJson(
+              json['reasoning'] as Map<String, dynamic>,
+            ),
+      extra: json['extra'] as Map<String, dynamic>?,
     );
 
 Map<String, dynamic> _$MessageOutputPartToJson(_MessageOutputPart instance) =>
@@ -160,22 +196,26 @@ Map<String, dynamic> _$MessageOutputPartToJson(_MessageOutputPart instance) =>
       'image': instance.image?.toJson(),
       'audio': instance.audio?.toJson(),
       'video': instance.video?.toJson(),
+      'reasoning': instance.reasoning?.toJson(),
+      'extra': instance.extra,
     };
 
 _TokenUsage _$TokenUsageFromJson(Map<String, dynamic> json) => _TokenUsage(
-      promptTokens: (json['promptTokens'] as num).toInt(),
-      completionTokens: (json['completionTokens'] as num).toInt(),
-      totalTokens: (json['totalTokens'] as num).toInt(),
-      promptTokenDetails: json['promptTokenDetails'] == null
-          ? null
-          : PromptTokenDetails.fromJson(
-              json['promptTokenDetails'] as Map<String, dynamic>),
-      completionTokenDetails: json['completionTokenDetails'] == null
-          ? null
-          : CompletionTokenDetails.fromJson(
-              json['completionTokenDetails'] as Map<String, dynamic>),
-      cost: (json['cost'] as num?)?.toDouble(),
-    );
+  promptTokens: (json['promptTokens'] as num).toInt(),
+  completionTokens: (json['completionTokens'] as num).toInt(),
+  totalTokens: (json['totalTokens'] as num).toInt(),
+  promptTokenDetails: json['promptTokenDetails'] == null
+      ? null
+      : PromptTokenDetails.fromJson(
+          json['promptTokenDetails'] as Map<String, dynamic>,
+        ),
+  completionTokenDetails: json['completionTokenDetails'] == null
+      ? null
+      : CompletionTokenDetails.fromJson(
+          json['completionTokenDetails'] as Map<String, dynamic>,
+        ),
+  cost: (json['cost'] as num?)?.toDouble(),
+);
 
 Map<String, dynamic> _$TokenUsageToJson(_TokenUsage instance) =>
     <String, dynamic>{
@@ -188,57 +228,60 @@ Map<String, dynamic> _$TokenUsageToJson(_TokenUsage instance) =>
     };
 
 _CompletionTokenDetails _$CompletionTokenDetailsFromJson(
-        Map<String, dynamic> json) =>
-    _CompletionTokenDetails(
-      reasoningTokens: (json['reasoningTokens'] as num?)?.toInt() ?? 0,
-      imageTokens: (json['imageTokens'] as num?)?.toInt() ?? 0,
-      audioTokens: (json['audioTokens'] as num?)?.toInt() ?? 0,
-    );
+  Map<String, dynamic> json,
+) => _CompletionTokenDetails(
+  reasoningTokens: (json['reasoningTokens'] as num?)?.toInt() ?? 0,
+  imageTokens: (json['imageTokens'] as num?)?.toInt() ?? 0,
+  audioTokens: (json['audioTokens'] as num?)?.toInt() ?? 0,
+);
 
 Map<String, dynamic> _$CompletionTokenDetailsToJson(
-        _CompletionTokenDetails instance) =>
-    <String, dynamic>{
-      'reasoningTokens': instance.reasoningTokens,
-      'imageTokens': instance.imageTokens,
-      'audioTokens': instance.audioTokens,
-    };
+  _CompletionTokenDetails instance,
+) => <String, dynamic>{
+  'reasoningTokens': instance.reasoningTokens,
+  'imageTokens': instance.imageTokens,
+  'audioTokens': instance.audioTokens,
+};
 
 _PromptTokenDetails _$PromptTokenDetailsFromJson(Map<String, dynamic> json) =>
     _PromptTokenDetails(
       cachedTokens: (json['cachedTokens'] as num?)?.toInt() ?? 0,
+      cacheWriteTokens: (json['cacheWriteTokens'] as num?)?.toInt() ?? 0,
     );
 
 Map<String, dynamic> _$PromptTokenDetailsToJson(_PromptTokenDetails instance) =>
     <String, dynamic>{
       'cachedTokens': instance.cachedTokens,
+      'cacheWriteTokens': instance.cacheWriteTokens,
     };
 
 _LogProb _$LogProbFromJson(Map<String, dynamic> json) => _LogProb(
-      token: json['token'] as String,
-      logProb: (json['logProb'] as num).toDouble(),
-      bytes: (json['bytes'] as List<dynamic>?)
-          ?.map((e) => (e as num).toInt())
-          .toList(),
-      topLogProbs: (json['topLogProbs'] as List<dynamic>?)
-              ?.map((e) => TopLogProb.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          const [],
-    );
+  token: json['token'] as String,
+  logProb: (json['logProb'] as num).toDouble(),
+  bytes: (json['bytes'] as List<dynamic>?)
+      ?.map((e) => (e as num).toInt())
+      .toList(),
+  topLogProbs:
+      (json['topLogProbs'] as List<dynamic>?)
+          ?.map((e) => TopLogProb.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const [],
+);
 
 Map<String, dynamic> _$LogProbToJson(_LogProb instance) => <String, dynamic>{
-      'token': instance.token,
-      'logProb': instance.logProb,
-      'bytes': instance.bytes,
-      'topLogProbs': instance.topLogProbs.map((e) => e.toJson()).toList(),
-    };
+  'token': instance.token,
+  'logProb': instance.logProb,
+  'bytes': instance.bytes,
+  'topLogProbs': instance.topLogProbs.map((e) => e.toJson()).toList(),
+};
 
 _TopLogProb _$TopLogProbFromJson(Map<String, dynamic> json) => _TopLogProb(
-      token: json['token'] as String,
-      logProb: (json['logProb'] as num).toDouble(),
-      bytes: (json['bytes'] as List<dynamic>?)
-          ?.map((e) => (e as num).toInt())
-          .toList(),
-    );
+  token: json['token'] as String,
+  logProb: (json['logProb'] as num).toDouble(),
+  bytes: (json['bytes'] as List<dynamic>?)
+      ?.map((e) => (e as num).toInt())
+      .toList(),
+);
 
 Map<String, dynamic> _$TopLogProbToJson(_TopLogProb instance) =>
     <String, dynamic>{
@@ -248,15 +291,16 @@ Map<String, dynamic> _$TopLogProbToJson(_TopLogProb instance) =>
     };
 
 _LogProbs _$LogProbsFromJson(Map<String, dynamic> json) => _LogProbs(
-      content: (json['content'] as List<dynamic>?)
-              ?.map((e) => LogProb.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          const [],
-    );
+  content:
+      (json['content'] as List<dynamic>?)
+          ?.map((e) => LogProb.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const [],
+);
 
 Map<String, dynamic> _$LogProbsToJson(_LogProbs instance) => <String, dynamic>{
-      'content': instance.content.map((e) => e.toJson()).toList(),
-    };
+  'content': instance.content.map((e) => e.toJson()).toList(),
+};
 
 _ResponseMeta _$ResponseMetaFromJson(Map<String, dynamic> json) =>
     _ResponseMeta(
@@ -277,43 +321,44 @@ Map<String, dynamic> _$ResponseMetaToJson(_ResponseMeta instance) =>
     };
 
 _Message _$MessageFromJson(Map<String, dynamic> json) => _Message(
-      role: $enumDecode(_$RoleTypeEnumMap, json['role']),
-      content: json['content'] as String? ?? '',
-      userInputMultiContent: (json['userInputMultiContent'] as List<dynamic>?)
-          ?.map((e) => MessageInputPart.fromJson(e as Map<String, dynamic>))
-          .toList(),
-      assistantGenMultiContent: (json['assistantGenMultiContent']
-              as List<dynamic>?)
-          ?.map((e) => MessageOutputPart.fromJson(e as Map<String, dynamic>))
-          .toList(),
-      name: json['name'] as String?,
-      toolCalls: (json['toolCalls'] as List<dynamic>?)
-          ?.map((e) => ToolCall.fromJson(e as Map<String, dynamic>))
-          .toList(),
-      toolCallId: json['toolCallId'] as String?,
-      toolName: json['toolName'] as String?,
-      responseMeta: json['responseMeta'] == null
-          ? null
-          : ResponseMeta.fromJson(json['responseMeta'] as Map<String, dynamic>),
-      reasoningContent: json['reasoningContent'] as String?,
-      extra: json['extra'] as Map<String, dynamic>?,
-    );
+  role: $enumDecode(_$RoleTypeEnumMap, json['role']),
+  content: json['content'] as String? ?? '',
+  userInputMultiContent: (json['userInputMultiContent'] as List<dynamic>?)
+      ?.map((e) => MessageInputPart.fromJson(e as Map<String, dynamic>))
+      .toList(),
+  assistantGenMultiContent: (json['assistantGenMultiContent'] as List<dynamic>?)
+      ?.map((e) => MessageOutputPart.fromJson(e as Map<String, dynamic>))
+      .toList(),
+  name: json['name'] as String?,
+  toolCalls: (json['toolCalls'] as List<dynamic>?)
+      ?.map((e) => ToolCall.fromJson(e as Map<String, dynamic>))
+      .toList(),
+  toolCallId: json['toolCallId'] as String?,
+  toolName: json['toolName'] as String?,
+  responseMeta: json['responseMeta'] == null
+      ? null
+      : ResponseMeta.fromJson(json['responseMeta'] as Map<String, dynamic>),
+  reasoningContent: json['reasoningContent'] as String?,
+  extra: json['extra'] as Map<String, dynamic>?,
+);
 
 Map<String, dynamic> _$MessageToJson(_Message instance) => <String, dynamic>{
-      'role': _$RoleTypeEnumMap[instance.role]!,
-      'content': instance.content,
-      'userInputMultiContent':
-          instance.userInputMultiContent?.map((e) => e.toJson()).toList(),
-      'assistantGenMultiContent':
-          instance.assistantGenMultiContent?.map((e) => e.toJson()).toList(),
-      'name': instance.name,
-      'toolCalls': instance.toolCalls?.map((e) => e.toJson()).toList(),
-      'toolCallId': instance.toolCallId,
-      'toolName': instance.toolName,
-      'responseMeta': instance.responseMeta?.toJson(),
-      'reasoningContent': instance.reasoningContent,
-      'extra': instance.extra,
-    };
+  'role': _$RoleTypeEnumMap[instance.role]!,
+  'content': instance.content,
+  'userInputMultiContent': instance.userInputMultiContent
+      ?.map((e) => e.toJson())
+      .toList(),
+  'assistantGenMultiContent': instance.assistantGenMultiContent
+      ?.map((e) => e.toJson())
+      .toList(),
+  'name': instance.name,
+  'toolCalls': instance.toolCalls?.map((e) => e.toJson()).toList(),
+  'toolCallId': instance.toolCallId,
+  'toolName': instance.toolName,
+  'responseMeta': instance.responseMeta?.toJson(),
+  'reasoningContent': instance.reasoningContent,
+  'extra': instance.extra,
+};
 
 const _$RoleTypeEnumMap = {
   RoleType.assistant: 'assistant',

@@ -300,6 +300,77 @@ void main() {
       );
     });
 
+    test('a graph that reaches END on its last allowed step succeeds',
+        () async {
+      final graph = StateGraph<TestState>(maxIterations: 2)
+        ..addNode('a', (state) => state.copyWith(value: state.value + 1))
+        ..addNode('b', (state) => state.copyWith(value: state.value + 1))
+        ..addEdge('a', 'b')
+        ..addEdge('b', END)
+        ..setEntryPoint('a');
+
+      final result = await graph.invoke(TestState(value: 0, message: 'test'));
+
+      expect(result.state.value, 2);
+      expect(result.path, ['a', 'b']);
+      expect(result.metadata['iterations'], 2);
+    });
+
+    test('a node without outgoing edge may be the last allowed step',
+        () async {
+      final graph = StateGraph<TestState>(maxIterations: 1)
+        ..addNode('only', (state) => state.copyWith(value: state.value + 1))
+        ..setEntryPoint('only');
+
+      final result = await graph.invoke(TestState(value: 0, message: 'test'));
+
+      expect(result.state.value, 1);
+      expect(result.path, ['only']);
+    });
+
+    test('the limit trips when one more step would be needed', () async {
+      final graph = StateGraph<TestState>(maxIterations: 1)
+        ..addNode('a', (state) => state.copyWith(value: state.value + 1))
+        ..addNode('b', (state) => state.copyWith(value: state.value + 1))
+        ..addEdge('a', 'b')
+        ..addEdge('b', END)
+        ..setEntryPoint('a');
+
+      await expectLater(
+        graph.invoke(TestState(value: 0, message: 'test')),
+        throwsA(
+          isA<MaxIterationsExceededException>()
+              .having((e) => e.maxIterations, 'maxIterations', 1)
+              .having((e) => e.currentNode, 'currentNode', 'b'),
+        ),
+      );
+    });
+
+    test('a loop may use up exactly its iterations', () async {
+      StateGraph<TestState> countTo10({required int maxIterations}) =>
+          StateGraph<TestState>(maxIterations: maxIterations)
+            ..addNode(
+              'count',
+              (state) => state.copyWith(value: state.value + 1),
+            )
+            ..addConditionalEdge(
+              'count',
+              (state) => state.value < 10 ? 'count' : END,
+            )
+            ..setEntryPoint('count');
+
+      final result = await countTo10(maxIterations: 10)
+          .invoke(TestState(value: 0, message: 'test'));
+      expect(result.state.value, 10);
+      expect(result.metadata['iterations'], 10);
+
+      await expectLater(
+        countTo10(maxIterations: 9)
+            .invoke(TestState(value: 0, message: 'test')),
+        throwsA(isA<MaxIterationsExceededException>()),
+      );
+    });
+
     test('loop with accumulation', () async {
       final graph = StateGraph<MapState>()
         ..addNode('accumulate', (state) {
