@@ -10,6 +10,7 @@ import 'package:meta/meta.dart';
 
 import '../core/run_context.dart';
 import '../internal/async_mutex.dart';
+import '../schema/type_registry.dart';
 import '../streaming/stream_reader.dart';
 import 'composable_runnable.dart';
 import 'stream_conversion.dart';
@@ -64,17 +65,31 @@ typedef StreamStatePostHandler<O, S> = FutureOr<StreamReader<O>> Function(
 /// both ways to reach it take turns, so nodes that run side by side can share
 /// it.
 final class LocalState {
-  LocalState._(this._type, this._create);
+  LocalState._(this._type, this._create, this._canBeCheckpointed);
 
   /// The state of type [S] that [create] makes for every run.
   ///
   /// A static method and not a constructor because it captures [S]: handlers
   /// and [processState] find the state by that type.
+  ///
+  /// A graph that is compiled with a checkpoint store writes its state into
+  /// checkpoints. [S] must then be JSON (`Map<String, Object?>` and the like)
+  /// or registered with `TypeRegistry.registerName`.
   static LocalState of<S extends Object>(S Function(RunContext ctx) create) =>
-      LocalState._(TypeRef<S>(), create);
+      LocalState._(
+        TypeRef<S>(),
+        create,
+        () => TypeRegistry.canEncode<S>() || TypeRegistry.hasSubtypeOf<S>(),
+      );
 
   final TypeRef<Object> _type;
   final Object Function(RunContext ctx) _create;
+  final bool Function() _canBeCheckpointed;
+
+  /// Whether a state of this type can be written to a checkpoint: the type
+  /// is JSON or registered, or a registered type implements it.
+  @internal
+  bool get canBeCheckpointed => _canBeCheckpointed();
 
   /// The type of the state.
   @internal

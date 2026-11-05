@@ -1,7 +1,6 @@
 /// The node that runs the tools a model asked for.
 ///
-/// Port of eino `compose/tool_node.go`, without the parts that pause and
-/// resume tool calls: those arrive with interrupt and resume.
+/// Port of eino `compose/tool_node.go`.
 library;
 
 import 'dart:async';
@@ -21,10 +20,17 @@ import '../errors.dart';
 import '../schema/message.dart';
 import '../schema/tool_info.dart';
 import '../schema/tool_result.dart';
+import '../schema/type_registry.dart';
 import '../streaming/stream_reader.dart';
+import 'address.dart';
 import 'call_options.dart';
+import 'checkpoint.dart';
+import 'checkpoint_serializer.dart';
 import 'composable_runnable.dart';
+import 'errors.dart';
 import 'graph_node.dart';
+import 'interrupt.dart';
+import 'resume.dart';
 import 'runnable.dart';
 import 'stream_conversion.dart';
 import 'tool_middleware.dart';
@@ -141,6 +147,14 @@ String? toolCallIdOf(RunContext ctx) => ctx.value(_toolCallIdKey);
 /// and the others are empty tool messages for their calls; joined (as a graph
 /// does when a node behind needs the value) they are the same as the result
 /// of [invoke].
+///
+/// A tool pauses the run by throwing an interrupt (`interrupt`,
+/// `statefulInterrupt`). The node then interrupts as a whole: it reports the
+/// calls that finished and the calls that interrupted
+/// ([ToolsInterruptAndRerunExtra]) and saves the results it has. When the run
+/// is resumed, only the calls that had not finished run again; a tool finds
+/// what it saved with `getInterruptState` and what it is resumed with with
+/// `getResumeContext`.
 ///
 /// The tools are asked for their `info()` on the first call. [ToolsNode.create]
 /// does that at once and reports a misconfiguration when the node is created.
@@ -274,23 +288,18 @@ final class ToolsNode
     ToolsNodeOptions? options,
   }) async {
     final tuple = await _tupleFor(options);
-    final tasks = await _genToolCallTasks(ctx, tuple, input);
+    final resumed = _resumedFrom(ctx, input);
+    final message = resumed.input;
+    final tasks =
+        await _genToolCallTasks(ctx, tuple, message, resumed, isStream: false);
     await _run(ctx, tasks, options?.toolOptions, isStream: false);
 
-    Object? interrupted;
-    StackTrace? interruptedAt;
+    final interrupts = _InterruptCollector(ctx, message);
     final output = <Message>[];
     for (final task in tasks) {
       final error = task.error;
       if (error != null) {
-        if (isInterrupt(error)) {
-          // Interrupted calls are collected into one interrupt of the node,
-          // with the results of the calls that finished, by the checkpoint
-          // engine. Until then the first interrupt passes as it is.
-          interrupted ??= error;
-          interruptedAt ??= task.stackTrace;
-          continue;
-        }
+        if (interrupts.take(task)) continue;
         Error.throwWithStackTrace(
           ToolsNodeException(
             'failed to invoke tool[name:${task.name} id:${task.callId}]: '
@@ -302,22 +311,25 @@ final class ToolsNode
           task.stackTrace ?? StackTrace.current,
         );
       }
-      if (interrupted != null) continue;
-
       final enhanced = task.enhancedOutput;
-      output.add(
-        enhanced != null
-            ? _toolMessage(task, '')
-                .copyWith(userInputMultiContent: enhanced.toMessageInputParts())
-            : _toolMessage(task, task.output!),
-      );
+      if (task.executed) {
+        if (enhanced != null) {
+          interrupts.executedEnhancedTools[task.callId] = enhanced;
+        } else {
+          interrupts.executedTools[task.callId] = task.output!;
+        }
+      }
+      if (interrupts.isEmpty) {
+        output.add(
+          enhanced != null
+              ? _toolMessage(task, '').copyWith(
+                  userInputMultiContent: enhanced.toMessageInputParts(),
+                )
+              : _toolMessage(task, task.output!),
+        );
+      }
     }
-    if (interrupted != null) {
-      Error.throwWithStackTrace(
-        interrupted,
-        interruptedAt ?? StackTrace.current,
-      );
-    }
+    interrupts.throwIfAny();
     return output;
   }
 
@@ -332,19 +344,17 @@ final class ToolsNode
     ToolsNodeOptions? options,
   }) async {
     final tuple = await _tupleFor(options);
-    final tasks = await _genToolCallTasks(ctx, tuple, input);
+    final resumed = _resumedFrom(ctx, input);
+    final message = resumed.input;
+    final tasks =
+        await _genToolCallTasks(ctx, tuple, message, resumed, isStream: true);
     await _run(ctx, tasks, options?.toolOptions, isStream: true);
 
-    Object? interrupted;
-    StackTrace? interruptedAt;
+    final interrupts = _InterruptCollector(ctx, message);
     for (final task in tasks) {
       final error = task.error;
       if (error == null) continue;
-      if (isInterrupt(error)) {
-        interrupted ??= error;
-        interruptedAt ??= task.stackTrace;
-        continue;
-      }
+      if (interrupts.take(task)) continue;
       await _closeOutputs(tasks);
       Error.throwWithStackTrace(
         ToolsNodeException(
@@ -356,12 +366,42 @@ final class ToolsNode
         task.stackTrace ?? StackTrace.current,
       );
     }
-    if (interrupted != null) {
+
+    if (interrupts.foreign != null) {
       await _closeOutputs(tasks);
-      Error.throwWithStackTrace(
-        interrupted,
-        interruptedAt ?? StackTrace.current,
-      );
+      interrupts.throwIfAny();
+    }
+    if (!interrupts.isEmpty) {
+      // The calls that did start are read to their end, so that their
+      // results are kept and they do not run again.
+      for (final task in tasks) {
+        if (!task.executed) continue;
+        try {
+          final enhanced = task.enhancedStream;
+          if (enhanced != null) {
+            interrupts.executedEnhancedTools[task.callId] =
+                await concatStreamReader(enhanced);
+          } else {
+            interrupts.executedTools[task.callId] =
+                await concatStreamReader(task.stream!);
+          }
+          // ignore: avoid_catches_without_on_clauses
+        } catch (error, stackTrace) {
+          if (isInterrupt(error)) rethrow;
+          await _closeOutputs(tasks);
+          Error.throwWithStackTrace(
+            ToolsNodeException(
+              'failed to concat tool[name:${task.name} id:${task.callId}]\'s '
+              'stream output: ${_text(error)}',
+              toolName: task.name,
+              callId: task.callId,
+              cause: error,
+            ),
+            stackTrace,
+          );
+        }
+      }
+      interrupts.throwIfAny();
     }
 
     // Every chunk has one message per call. The message of the call the
@@ -370,29 +410,85 @@ final class ToolsNode
     List<Message> chunk(int index, Message message) =>
         [...blanks]..[index] = message;
 
+    // A stream that is cut off because the run is being cancelled leaves its
+    // call unfinished. The tracker notes which calls finished and with what,
+    // and turns the others into an interrupt at the end of the node's stream.
+    // (A tool that streams nothing at all has the empty result. Eino v0.9.22
+    // fails the stream of the node there, as a side effect of joining the
+    // chunks for the tracker; no test of Eino pins that.)
+    final tracker = _ToolStreamTracker(message);
     final streams = <String, StreamReader<List<Message>>>{};
     for (final (index, task) in tasks.indexed) {
+      final callId = task.callId;
+      var canceled = false;
+      Object? onError(Object error) {
+        if (ThreepioException.findCause<StreamCanceledException>(error) ==
+            null) {
+          return error;
+        }
+        canceled = true;
+        tracker.rerunTools.add(callId);
+        return null;
+      }
+
+      final StreamReader<List<Message>> stream;
       final enhanced = task.enhancedStream;
-      final stream = enhanced != null
-          ? enhanced.convert<List<Message>>(
-              (result) => chunk(
-                index,
-                blanks[index].copyWith(
-                  userInputMultiContent: result.toMessageInputParts(),
-                ),
+      if (enhanced != null) {
+        final chunks = <ToolResult>[];
+        stream = enhanced.convert<List<Message>>(
+          (result) {
+            chunks.add(result);
+            return chunk(
+              index,
+              blanks[index].copyWith(
+                userInputMultiContent: result.toMessageInputParts(),
               ),
-            )
-          : task.stream!.convert<List<Message>>(
-              (text) => chunk(index, _toolMessage(task, text)),
             );
+          },
+          errWrapper: onError,
+          onEof: () {
+            if (!canceled) {
+              tracker.executedEnhancedTools[callId] = chunks.isEmpty
+                  ? const ToolResult([])
+                  : concatItems<ToolResult>(chunks);
+            }
+            return null;
+          },
+        );
+      } else {
+        final chunks = <String>[];
+        stream = task.stream!.convert<List<Message>>(
+          (text) {
+            chunks.add(text);
+            return chunk(index, _toolMessage(task, text));
+          },
+          errWrapper: onError,
+          onEof: () {
+            if (!canceled) tracker.executedTools[callId] = chunks.join();
+            return null;
+          },
+        );
+      }
       // Two calls can carry the same id; the name of a source must be unique.
-      streams['$index:${task.callId}'] = stream;
+      streams['$index:$callId'] = stream;
     }
     return mergeNamedStreamReaders(streams).convert<List<Message>>(
       (messages) => messages,
       // The end of one tool's stream is not an event of the node's stream.
       errWrapper: (error) => error is SourceEOFException ? null : error,
+      onEof: () {
+        final interrupt = tracker.interrupt(ctx);
+        if (interrupt != null) throw interrupt;
+        return null;
+      },
     );
+  }
+
+  /// What the node kept when it interrupted on the run that is being
+  /// resumed: the message it was given and the results it had.
+  static _ToolsRerunState _resumedFrom(RunContext ctx, Message input) {
+    final previous = getInterruptState<_ToolsRerunState>(ctx);
+    return previous.state ?? _ToolsRerunState(input: input);
   }
 
   static Message _toolMessage(_ToolCallTask task, String content) =>
@@ -414,7 +510,9 @@ final class ToolsNode
     RunContext ctx,
     _ToolsTuple tuple,
     Message input,
-  ) async {
+    _ToolsRerunState resumed, {
+    required bool isStream,
+  }) async {
     if (input.role != RoleType.assistant) {
       throw ToolsNodeException(
         'expected message role is Assistant, got ${input.role.name}',
@@ -428,6 +526,29 @@ final class ToolsNode
     final tasks = <_ToolCallTask>[];
     for (final toolCall in toolCalls) {
       final name = toolCall.function.name;
+
+      // A call that finished before the node interrupted is not run again:
+      // its result is used.
+      final enhancedResult = resumed.executedEnhancedTools[toolCall.id];
+      final result = resumed.executedTools[toolCall.id];
+      if (enhancedResult != null || result != null) {
+        final task = _ToolCallTask.executed(toolCall);
+        if (enhancedResult != null) {
+          if (isStream) {
+            task.enhancedStream =
+                StreamReader<ToolResult>.fromIterable([enhancedResult]);
+          } else {
+            task.enhancedOutput = enhancedResult;
+          }
+        } else if (isStream) {
+          task.stream = StreamReader<String>.fromIterable([result!]);
+        } else {
+          task.output = result;
+        }
+        tasks.add(task);
+        continue;
+      }
+
       final index = tuple.indexes[name];
       if (index == null) {
         final handler = _config.unknownToolsHandler;
@@ -487,16 +608,303 @@ final class ToolsNode
     ToolOptions? toolOptions, {
     required bool isStream,
   }) async {
+    final pending = [
+      for (final task in tasks)
+        if (!task.executed) task,
+    ];
     if (_config.executeSequentially) {
-      for (final task in tasks) {
+      for (final task in pending) {
         await task.run(ctx, toolOptions, isStream: isStream);
       }
     } else {
       await Future.wait([
-        for (final task in tasks)
+        for (final task in pending)
           task.run(ctx, toolOptions, isStream: isStream),
       ]);
     }
+  }
+}
+
+/// What a tools node reports when it interrupts: which tool calls finished,
+/// with what, and which run again when the run is resumed.
+///
+/// Port of eino `compose.ToolsInterruptAndRerunExtra`. It is the info of the
+/// interrupt point of the tools node itself and arrives as
+/// `GraphInterruptInfo.rerunNodesExtra[<key of the tools node>]`. The
+/// interrupt points to resume are those of the tools that interrupted, below
+/// the node.
+@immutable
+final class ToolsInterruptAndRerunExtra {
+  /// The report of an interrupted tools node.
+  ToolsInterruptAndRerunExtra({
+    required List<ToolCall> toolCalls,
+    Map<String, String> executedTools = const {},
+    Map<String, ToolResult> executedEnhancedTools = const {},
+    List<String> rerunTools = const [],
+    Map<String, Object?> rerunExtraMap = const {},
+  })  : toolCalls = List.unmodifiable(toolCalls),
+        executedTools = Map.unmodifiable(executedTools),
+        executedEnhancedTools = Map.unmodifiable(executedEnhancedTools),
+        rerunTools = List.unmodifiable(rerunTools),
+        rerunExtraMap = Map.unmodifiable(rerunExtraMap);
+
+  /// A report from its JSON form.
+  factory ToolsInterruptAndRerunExtra.fromJson(Map<String, Object?> json) =>
+      ToolsInterruptAndRerunExtra(
+        toolCalls: [
+          for (final call in json['tool_calls']! as List<Object?>)
+            ToolCall.fromJson(call! as Map<String, dynamic>),
+        ],
+        executedTools:
+            (json['executed_tools']! as Map<String, Object?>).cast(),
+        executedEnhancedTools: {
+          for (final MapEntry(:key, :value)
+              in (json['executed_enhanced_tools']! as Map<String, Object?>)
+                  .entries)
+            key: ToolResult.fromJson(value! as Map<String, dynamic>),
+        },
+        rerunTools: (json['rerun_tools']! as List<Object?>).cast(),
+        rerunExtraMap: {
+          for (final MapEntry(:key, :value)
+              in (json['rerun_extra_map']! as Map<String, Object?>).entries)
+            key: TypeRegistry.decode(value),
+        },
+      );
+
+  /// All tool calls of the message the node was given.
+  final List<ToolCall> toolCalls;
+
+  /// By tool call id, the result of each call that finished.
+  final Map<String, String> executedTools;
+
+  /// By tool call id, the result of each call of an enhanced tool that
+  /// finished.
+  final Map<String, ToolResult> executedEnhancedTools;
+
+  /// The ids of the tool calls that run again.
+  final List<String> rerunTools;
+
+  /// By tool call id, the info a tool gave with its interrupt.
+  final Map<String, Object?> rerunExtraMap;
+
+  /// The JSON form of the report. An info in [rerunExtraMap] that is neither
+  /// JSON nor of a registered type is written as its `toString()`.
+  Map<String, Object?> toJson() => {
+        'tool_calls': [for (final call in toolCalls) call.toJson()],
+        'executed_tools': executedTools,
+        'executed_enhanced_tools': {
+          for (final MapEntry(:key, :value) in executedEnhancedTools.entries)
+            key: value.toJson(),
+        },
+        'rerun_tools': rerunTools,
+        'rerun_extra_map': {
+          for (final MapEntry(:key, :value) in rerunExtraMap.entries)
+            key: encodeOrDescribe(
+              value,
+              'ToolsInterruptAndRerunExtra.rerunExtraMap',
+            ),
+        },
+      };
+
+  @override
+  String toString() => 'ToolsInterruptAndRerunExtra(rerunTools: $rerunTools, '
+      'executedTools: ${executedTools.keys.toList()}, '
+      'executedEnhancedTools: ${executedEnhancedTools.keys.toList()})';
+}
+
+/// What an interrupted tools node keeps for its resumed run.
+///
+/// Port of eino `toolsInterruptAndRerunState`.
+final class _ToolsRerunState {
+  _ToolsRerunState({
+    required this.input,
+    Map<String, String>? executedTools,
+    Map<String, ToolResult>? executedEnhancedTools,
+    List<String>? rerunTools,
+  })  : executedTools = executedTools ?? {},
+        executedEnhancedTools = executedEnhancedTools ?? {},
+        rerunTools = rerunTools ?? [];
+
+  factory _ToolsRerunState.fromJson(Map<String, Object?> json) =>
+      _ToolsRerunState(
+        input: Message.fromJson(json['input']! as Map<String, dynamic>),
+        executedTools:
+            (json['executed_tools']! as Map<String, Object?>).cast(),
+        executedEnhancedTools: {
+          for (final MapEntry(:key, :value)
+              in (json['executed_enhanced_tools']! as Map<String, Object?>)
+                  .entries)
+            key: ToolResult.fromJson(value! as Map<String, dynamic>),
+        },
+        rerunTools: (json['rerun_tools']! as List<Object?>).cast(),
+      );
+
+  final Message input;
+  final Map<String, String> executedTools;
+  final Map<String, ToolResult> executedEnhancedTools;
+  final List<String> rerunTools;
+
+  Map<String, Object?> toJson() => {
+        'input': input.toJson(),
+        'executed_tools': executedTools,
+        'executed_enhanced_tools': {
+          for (final MapEntry(:key, :value) in executedEnhancedTools.entries)
+            key: value.toJson(),
+        },
+        'rerun_tools': rerunTools,
+      };
+}
+
+/// Registers the types a tools node writes into checkpoints, under the names
+/// Eino uses.
+@internal
+void registerToolsNodeTypes() {
+  TypeRegistry.registerName<ToolsInterruptAndRerunExtra>(
+    '_eino_compose_tools_interrupt_and_rerun_extra',
+    fromJson: ToolsInterruptAndRerunExtra.fromJson,
+    toJson: (extra) => extra.toJson(),
+  );
+  TypeRegistry.registerName<_ToolsRerunState>(
+    '_eino_compose_tools_interrupt_and_rerun_state',
+    fromJson: _ToolsRerunState.fromJson,
+    toJson: (state) => state.toJson(),
+  );
+}
+
+/// Collects the tool calls of one run that interrupted and makes the
+/// interrupt of the node out of them.
+final class _InterruptCollector {
+  _InterruptCollector(this.ctx, this.input);
+
+  final RunContext ctx;
+  final Message input;
+  final Map<String, String> executedTools = {};
+  final Map<String, ToolResult> executedEnhancedTools = {};
+  final List<String> rerunTools = [];
+  final Map<String, Object?> rerunExtraMap = {};
+  final List<AddressedInterruptSignal> signals = [];
+
+  /// An interrupt the engine did not make (an [InterruptSignal] of another
+  /// kind, or the interrupt of a graph a tool ran and did not wrap with
+  /// `compositeInterrupt`): it has no address, so the node cannot list it. It
+  /// leaves the node as it is.
+  Object? foreign;
+  StackTrace? _foreignAt;
+
+  /// Whether no tool call interrupted.
+  bool get isEmpty => signals.isEmpty && foreign == null;
+
+  /// Takes the error of [task] when it is an interrupt. Returns whether it
+  /// was one.
+  bool take(_ToolCallTask task) {
+    var signal =
+        ThreepioException.findCause<AddressedInterruptSignal>(task.error);
+    if (signal == null) {
+      if (!isInterrupt(task.error)) return false;
+      foreign ??= task.error;
+      _foreignAt ??= task.stackTrace;
+      return true;
+    }
+    rerunTools.add(task.callId);
+    if (signal.info != null) rerunExtraMap[task.callId] = signal.info;
+    if (signal.address.isEmpty) {
+      // Raised with a context that knows no address (eino
+      // `WrapInterruptAndRerunIfNeeded`): it belongs to this tool call.
+      signal = signal.readdressed(
+        ctx.currentAddress.append(
+          AddressSegment(type: AddressSegmentType.tool, id: task.callId),
+        ),
+      );
+    }
+    signals.add(signal);
+    return true;
+  }
+
+  /// Throws the interrupt of the node when a tool call interrupted.
+  void throwIfAny() {
+    final passedOn = foreign;
+    if (passedOn != null) {
+      Error.throwWithStackTrace(passedOn, _foreignAt ?? StackTrace.current);
+    }
+    if (signals.isNotEmpty) throw signal();
+  }
+
+  /// The interrupt of the node: its report, its saved state and the
+  /// interrupts of its tools.
+  InterruptSignal signal() {
+    ensureComposeTypesRegistered();
+    return compositeInterrupt(
+      ctx,
+      ToolsInterruptAndRerunExtra(
+        toolCalls: input.toolCalls ?? const [],
+        executedTools: executedTools,
+        executedEnhancedTools: executedEnhancedTools,
+        rerunTools: rerunTools,
+        rerunExtraMap: rerunExtraMap,
+      ),
+      _ToolsRerunState(
+        input: input,
+        executedTools: executedTools,
+        executedEnhancedTools: executedEnhancedTools,
+        rerunTools: rerunTools,
+      ),
+      signals,
+    );
+  }
+}
+
+/// Follows the streamed results of one run: which tool calls delivered all of
+/// their result and which were cut off.
+///
+/// Port of eino `toolStreamCheckpointTracker`.
+final class _ToolStreamTracker {
+  _ToolStreamTracker(this.input);
+
+  final Message input;
+  final Map<String, String> executedTools = {};
+  final Map<String, ToolResult> executedEnhancedTools = {};
+  final Set<String> rerunTools = {};
+
+  /// The interrupt of the node when a tool call was cut off, `null` when all
+  /// finished.
+  Exception? interrupt(RunContext ctx) {
+    if (rerunTools.isEmpty) return null;
+    ensureComposeTypesRegistered();
+    final toolCalls = input.toolCalls ?? const <ToolCall>[];
+    final rerun = [
+      for (final call in toolCalls)
+        if (rerunTools.contains(call.id)) call.id,
+    ];
+    final signal = statefulInterrupt(
+      ctx,
+      ToolsInterruptAndRerunExtra(
+        toolCalls: toolCalls,
+        executedTools: executedTools,
+        executedEnhancedTools: executedEnhancedTools,
+        rerunTools: rerun,
+      ),
+      _ToolsRerunState(
+        input: input,
+        executedTools: Map.of(executedTools),
+        executedEnhancedTools: Map.of(executedEnhancedTools),
+        rerunTools: rerun,
+      ),
+    ) as AddressedInterruptSignal;
+
+    // The graph learns of this interrupt from a stream, after the node has
+    // returned. It needs to know which node to run again and with what.
+    var nodeKey = '';
+    for (final segment in ctx.currentAddress.segments.reversed) {
+      if (segment.type == AddressSegmentType.node) {
+        nodeKey = segment.id;
+        break;
+      }
+    }
+    return ToolStreamCheckpointSignal(
+      nodeKey: nodeKey,
+      input: input,
+      signal: signal,
+    );
   }
 }
 
@@ -860,6 +1268,15 @@ final class _ToolCallTask {
     required this.endpoints,
   });
 
+  /// The task of a call that finished on the run that was interrupted.
+  factory _ToolCallTask.executed(ToolCall call) => _ToolCallTask(
+        name: call.function.name,
+        arguments: call.function.arguments,
+        callId: call.id,
+        meta: const ExecutorMeta(component: ComponentType.tool),
+        endpoints: const _Endpoints(),
+      )..executed = true;
+
   /// Port of eino `newUnknownToolTask`.
   factory _ToolCallTask.unknown(ToolCall call, UnknownToolsHandler handler) {
     Future<ToolCallOutput> endpoint(RunContext ctx, ToolCallInput input) async =>
@@ -885,6 +1302,8 @@ final class _ToolCallTask {
   final ExecutorMeta meta;
   final _Endpoints endpoints;
 
+  /// Whether the call has a result (or a stream of it).
+  bool executed = false;
   String? output;
   StreamReader<String>? stream;
   ToolResult? enhancedOutput;
@@ -898,15 +1317,18 @@ final class _ToolCallTask {
     ToolOptions? toolOptions, {
     required bool isStream,
   }) async {
-    // The address of the tool call is added to the context here.
-    final ctx = reuseHandlers(
-      context,
-      RunInfo(
-        name: name,
-        type: meta.componentImplType,
-        componentType: meta.component,
-      ),
-    ).withValue(_toolCallIdKey, callId);
+    final ctx = appendToolAddressSegment(
+      reuseHandlers(
+        context,
+        RunInfo(
+          name: name,
+          type: meta.componentImplType,
+          componentType: meta.component,
+        ),
+      ).withValue(_toolCallIdKey, callId),
+      name,
+      callId,
+    );
     final input = ToolCallInput(
       name: name,
       arguments: arguments,
@@ -926,6 +1348,7 @@ final class _ToolCallTask {
       } else {
         output = (await endpoints.invokable!(ctx, input)).result;
       }
+      executed = true;
       // What a tool throws is the outcome of its call.
       // ignore: avoid_catches_without_on_clauses
     } catch (thrown, trace) {

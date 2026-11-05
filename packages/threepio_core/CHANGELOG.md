@@ -16,8 +16,8 @@ together with the run context every later API takes, and so is the Eino
 embedders, retrievers, indexers, loaders, parsers and transformers, their call
 options and callback payloads, and the tools made from functions), the
 Eino `callbacks` package with tracing to Langfuse over OpenTelemetry, and the
-core of the Eino `compose` package: runnables, lambdas, graphs, chains and the
-tools node.
+Eino `compose` package: runnables, lambdas, graphs, chains, workflows and the
+tools node, with interrupt, checkpoint and resume.
 
 ### Fixed
 
@@ -309,13 +309,72 @@ tools node.
     `toMermaid()` on a graph, a chain and a `GraphInfo`.
   - `CheckpointStore`, `CheckpointDeleter`, `CheckpointSerializer` and
     `InMemoryCheckpointStore`: the contracts for the checkpoints of
-    interrupted runs. Nothing writes checkpoints yet: compiling a graph with
-    a checkpoint store or with interrupt nodes throws `UnimplementedError`.
+    interrupted runs.
+  - **Interrupt and resume.** A node or a tool pauses the run with
+    `throw interrupt(ctx, info)`, `statefulInterrupt(ctx, info, state)` or,
+    for a component that runs interruptible parts of its own,
+    `compositeInterrupt(ctx, info, state, subErrors)`. A graph can also be
+    compiled to stop in front of or behind nodes
+    (`GraphCompileOptions.interruptBeforeNodes`, `interruptAfterNodes`), and a
+    caller can interrupt a running graph from outside:
+    `ctx.withGraphInterrupt()` gives the context to run with and a
+    `GraphInterrupter` (`interrupt({timeout})`). An interrupted run throws
+    `GraphInterruptedException`; its `GraphInterruptInfo` has the state of
+    the graph, the nodes it stopped at, the nodes that run again, the infos
+    of nested graphs and one `InterruptCtx` per interrupt point (`id`,
+    `Address`, `info`, the chain of `parent`s). `extractInterruptInfo(error)`
+    finds it in any error. The run goes on when the graph is called again on
+    `ctx.resume(ids)`, `ctx.resumeWithData(id, data)` or
+    `ctx.batchResumeWithData({...})`; a component finds what it saved with
+    `getInterruptState<T>(ctx)` and what it is resumed with with
+    `getResumeContext<T>(ctx)`. `ctx.currentAddress` and
+    `ctx.appendAddressSegment(type, id)` (`Address`, `AddressSegment`,
+    `AddressSegmentType`) say where in a run a component is.
+  - **Checkpoints.** With `GraphCompileOptions.checkpointStore` and
+    `CallOption.checkpointId` an interrupted run is written to the store and
+    resumed from it; `CallOption.writeToCheckpointId`, `forceNewRun` and
+    `stateModifier` (also for the states of nested graphs) steer that. Nested
+    graphs keep their checkpoints inside the checkpoint of the graph around
+    them. `JsonCheckpointSerializer` (the default serializer) writes JSON and
+    names every other value through `TypeRegistry`; `FileCheckpointStore` in
+    the new `package:threepio_core/io.dart` keeps checkpoints as files (one
+    per id, written atomically, named so that no two ids share a file);
+    `migrateCheckpointState` rewrites the states inside a stored checkpoint.
+    `CheckpointEncodeException` names a value that cannot be written.
+  - **Tools node.** A tool that interrupts interrupts its tools node: the
+    calls that finished keep their results, only the others run again when
+    the run is resumed. `ToolsInterruptAndRerunExtra` reports both. A tool
+    stream that ends with `StreamCanceledException` leaves its call
+    unfinished in the same way.
+  - `Workflow<I, O>`: a graph whose nodes declare what they depend on and
+    which fields of which outputs make up their input. Every `add…Node`
+    returns a `WorkflowNode` (`addInput`, `addInputWithOptions` with
+    `noDirectDependency`, `addDependency`, `setStaticValue`); `end()` is the
+    node of the output and `addBranch` returns a `WorkflowBranch`.
+    `FieldMapping.fromField`, `.toField`, `.mapFields`, `.fromFieldPath`,
+    `.toFieldPath`, `.mapFieldPaths`, with a `customExtractor`. Fields are keys
+    of a `Map<String, Object?>` or fields of a class that implements the new
+    `FieldAddressable` (`getField`, `withField`;
+    `FieldAddressable.registerBlank<T>` for a class that mappings write to).
+    `Message` and `Document` implement it. `GraphNodeInfo.mappings` lists the
+    mappings of a node. `FieldMappingException` is what a mapping that cannot
+    be applied throws.
+  - `BatchNode<I, O>`: runs a graph, chain or workflow once per item of a
+    list, in order or several at a time, each item at an address of its own.
+    Items that interrupt are resumed one by one; the results of the others
+    are kept, also across a second interrupt (the node of the eino examples
+    loses them there). Port of the batch node of the eino examples.
+  - `GraphCompileCallbacks.setGlobal`: replaces the global compile callbacks,
+    as Eino's `InitGraphCompileCallbacks` does. `appendGlobal` still adds.
+  - `TypeRegistry` matches a state type that is an interface a registered
+    class implements.
   - Errors: `GraphBuildException` (with `GraphCompiledException`,
     `ChainCompiledException`, `DagLoopException`), `GraphRunException` and
     `NodeExecutionException` (the path to the failed node and its cause),
     `ExceedMaxStepsException`, `ComposeTypeException`,
     `StreamReadException`, `ToolsNodeException`.
+- `package:threepio_core/io.dart`: what needs `dart:io`. For now the
+  `FileCheckpointStore` of the compose graphs.
 - `package:threepio_core/legacy_graph.dart` (the state graph that predates
   the port, with all its checkpoint classes, and the runnable over Dart
   streams) and `package:threepio_core/legacy_chains.dart` (`BaseChain`,
@@ -333,6 +392,23 @@ tools node.
 
 ### Changed
 
+- **Compose**: compiling a graph with a checkpoint store or with interrupt
+  nodes works (it threw `UnimplementedError`). A graph that is compiled with a
+  checkpoint store refuses, at `compile`, a local state type that is neither
+  JSON nor registered with `TypeRegistry.registerName`.
+- **Compose**: an `InterruptSignal` made by `interrupt`, `statefulInterrupt`
+  or `compositeInterrupt` no longer passes through a graph: the graph (and a
+  tools node, for its tools) collects it, writes a checkpoint and throws a
+  `GraphInterruptedException`. An `InterruptSignal` of another class still
+  passes through unchanged.
+- **Compose**: a context that runs a compiled graph has an address
+  (`runnable:<graph name>`), its nodes `node:<key>` below it, tool calls
+  `tool:<name>:<call id>` below their tools node.
+- `tool/consumer_gate.sh` measures its own baseline in every run: it analyzes
+  the application as it is, then with this checkout, and fails only on errors
+  that this checkout introduces. Errors the application has of its own are
+  printed and no longer fail the gate. The recorded baseline files are kept
+  for reference.
 - **SDK**: `environment: sdk: ^3.9.0` (was `>=3.0.0 <4.0.0`). The package's own
   code generators already required Dart 3.9.
 - **Dependencies**: removed the unused `rxdart`, `equatable` and `async`;
@@ -526,6 +602,65 @@ tools node.
   addition to the check between steps. `JsonFixMiddleware` repairs with a
   small reader of its own, and a tools node that applies an argument alias
   writes the arguments anew.
+- **Interrupt, resume and checkpoints compared with Eino.**
+  - *Types in checkpoints.* Go writes checkpoints with `gob` and finds types
+    by reflection. Here a checkpoint is JSON, and every value in it that is
+    not JSON has to be registered with `TypeRegistry.registerName` before a
+    run is interrupted or resumed: the state of a graph, what a component
+    passes to `statefulInterrupt`, the inputs and outputs of nodes that can
+    be in flight when the run stops. Messages, documents and the other schema
+    types are registered. A value that cannot be written fails the run with a
+    `CheckpointEncodeException` that names it, instead of leaving a
+    checkpoint that could not be resumed. Lists and maps lose their element
+    types in JSON; the engine gives the inputs and outputs of nodes, and the
+    states `getInterruptState` returns, the types the nodes declare, as wide
+    as the declared type allows (`List<num>` for a list of integers, a
+    `List<String>` that can grow for an empty list). An empty list for an
+    element type the engine does not know (not registered, no blank) takes no
+    elements.
+  - *The input of a node that runs again.* In Go a node that interrupted
+    from inside runs again with the zero value of its input type, and keeps
+    its input only under `WithGraphInterrupt`. Dart has no zero value for
+    most types. A node whose input type has an empty value (`String`, `num`,
+    `bool`, a nullable type, a `List`, a `Map`) gets that value, as in Go; a
+    node whose input type has none (a non-nullable class such as `Message`)
+    gets the input it had, which is kept in the checkpoint. Under
+    `ctx.withGraphInterrupt()` every node gets its input back, as in Go. Use
+    `getInterruptState` to tell a first run from a resumed one, not the
+    input.
+  - *Field mappings.* Go maps struct fields by reflection and checks field
+    names and types when a workflow is compiled. Here a class takes part
+    through `FieldAddressable`, and an unknown field or a value that does not
+    fit a field is found when the workflow runs (`FieldMappingException`).
+    Still found at `compile`: a successor or predecessor that cannot hold
+    fields, a map whose keys are not strings, two mappings to one field, a
+    field that is mapped twice as a whole. A class that mappings write to, or
+    that has to be created on the way to a field (Go creates the struct of a
+    nil pointer from the field's type), registers its empty value
+    (`FieldAddressable.registerBlank`); `Message` (a user message without
+    content) and `Document` have one. The text form of a mapping joins the
+    names of a path with a dot where Go prints its separator (U+001F).
+  - `InterruptAndRerun`, `NewInterruptAndRerunErr`,
+    `WrapInterruptAndRerunIfNeeded`, `RegisterSerializableType` and
+    `Workflow.AddEnd` are deprecated in Eino and not ported: use `interrupt`,
+    `TypeRegistry.registerName` and `Workflow.end()`.
+  - `CallOption.forceNewRun()` takes effect wherever it is in the option
+    list (in Go only as the last option).
+  - `GraphInterruptedException` is an `InterruptSignal`, so that code which
+    catches errors lets it through. A graph that gets one from a node which
+    did not wrap it with `compositeInterrupt` passes it on unchanged and
+    writes no checkpoint of its own, as in Eino.
+  - A custom `CheckpointSerializer` gets the checkpoint as an object that
+    only `JsonCheckpointSerializer.toJson` can take apart, and has to return
+    what `JsonCheckpointSerializer.fromJson` gives: it wraps the JSON form
+    (compression, encryption) rather than replacing it.
+  - A tool whose stream ends without a chunk has the empty result; Eino
+    v0.9.22 fails the stream of the tools node there.
+  - The time `GraphInterrupter.interrupt(timeout:)` gives runs from the call,
+    as in Eino. It is measured in real time; a test on fake time that
+    interrupts before the run has started gets the timeout from the start of
+    the run.
+  - Interrupt ids are UUIDs; node and task order is the order of insertion.
 - A class that `implements` `OpenAIChatModel`, `OpenRouterChatModel` or
   `GeminiChatModel` (instead of extending it) has to add `componentTypeName`
   and `isCallbacksEnabled`.

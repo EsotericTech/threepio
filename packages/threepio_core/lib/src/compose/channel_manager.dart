@@ -8,6 +8,7 @@ import 'package:meta/meta.dart';
 
 import '../core/interrupt_signal.dart';
 import '../errors.dart';
+import '../schema/type_registry.dart';
 import '../streaming/stream_reader.dart';
 import 'errors.dart';
 import 'graph.dart';
@@ -17,9 +18,18 @@ import 'type_ref.dart';
 /// Collects what the predecessors of one node give and says when the node can
 /// run.
 ///
-/// Port of eino `channel`. Loading and converting the values of a checkpoint
-/// belong to the checkpoint engine.
+/// Port of eino `channel`.
 abstract interface class Channel {
+  /// What has arrived and waits for the node to run, by source node. A
+  /// checkpoint reads and replaces these values (eino `convertValues`).
+  Map<String, Object?> get values;
+
+  /// Takes over what [saved], a channel read back from a checkpoint, holds.
+  ///
+  /// Port of eino `channel.load`. Throws [GraphRunException] when [saved] is
+  /// a channel of another kind.
+  void load(Channel saved);
+
   /// Takes the outputs of predecessors, by their node keys.
   void reportValues(Map<String, Object?> values);
 
@@ -42,6 +52,26 @@ abstract interface class Channel {
   // A channel is configured after it is built, like in Eino.
   // ignore: avoid_setters_without_getters
   set mergeConfig(FanInMergeConfig config);
+}
+
+/// The values that wait in a channel, in their checkpoint form.
+Map<String, Object?> encodeChannelValues(Map<String, Object?> values) => {
+      for (final MapEntry(:key, :value) in values.entries)
+        key: _encodeValue(key, value),
+    };
+
+Object? _encodeValue(String from, Object? value) {
+  try {
+    return TypeRegistry.encode(value);
+    // The registry reports a value it cannot encode as an ArgumentError; said
+    // again here with where the value came from.
+    // ignore: avoid_catching_errors
+  } on ArgumentError catch (error) {
+    throw CheckpointEncodeException(
+      'the output of node[$from] cannot be written to a checkpoint: '
+      '${error.message}',
+    );
+  }
 }
 
 /// Builds the channel of a node from its predecessors.
@@ -191,6 +221,24 @@ final class ChannelManager {
             if (predecessors.contains(from)) from,
         ],
       );
+    }
+  }
+
+  /// Makes the channels take over what the channels of a checkpoint hold.
+  ///
+  /// Port of eino `channelManager.loadChannels`.
+  void loadChannels(Map<String, Channel> saved) {
+    for (final MapEntry(:key, value: channel) in channels.entries) {
+      final savedChannel = saved[key];
+      if (savedChannel == null) continue;
+      try {
+        channel.load(savedChannel);
+      } on GraphRunException catch (error) {
+        throw GraphRunException(
+          'load channel[$key] fail: ${error.message}',
+          cause: error,
+        );
+      }
     }
   }
 

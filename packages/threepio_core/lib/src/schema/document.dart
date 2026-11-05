@@ -1,5 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import '../core/field_addressable.dart';
+
 part 'document.freezed.dart';
 part 'document.g.dart';
 
@@ -20,7 +22,7 @@ abstract class DocumentSource with _$DocumentSource {
 
 /// Document for RAG (Retrieval-Augmented Generation)
 @freezed
-abstract class Document with _$Document {
+abstract class Document with _$Document implements FieldAddressable {
   const factory Document({
     /// Unique identifier for the document
     String? id,
@@ -45,6 +47,41 @@ abstract class Document with _$Document {
 
   factory Document.fromJson(Map<String, dynamic> json) =>
       _$DocumentFromJson(json);
+
+  /// The field [name] of the document, for the field mappings of a workflow.
+  ///
+  /// The names are those of the constructor parameters: `id`, `content`,
+  /// `metadata`, `source`, `embedding`, `score`.
+  @override
+  Object? getField(String name) => switch (name) {
+        'id' => id,
+        'content' => content,
+        'metadata' => metadata,
+        'source' => source,
+        'embedding' => embedding,
+        'score' => score,
+        _ =>
+          throw ArgumentError.value(name, 'name', 'Document has no such field'),
+      };
+
+  /// A copy of the document with [value] as its field [name]; see [getField]
+  /// for the names.
+  @override
+  Document withField(String name, Object? value) => switch (name) {
+        'id' => copyWith(id: value as String?),
+        'content' => copyWith(content: value! as String),
+        'metadata' =>
+          copyWith(metadata: (value! as Map<Object?, Object?>).cast()),
+        'source' => copyWith(source: value as DocumentSource?),
+        'embedding' => copyWith(
+            embedding: (value as List<Object?>?)
+                ?.map((item) => (item! as num).toDouble())
+                .toList(),
+          ),
+        'score' => copyWith(score: (value as num?)?.toDouble()),
+        _ =>
+          throw ArgumentError.value(name, 'name', 'Document has no such field'),
+      };
 
   /// Create a simple document with just content
   factory Document.simple(String content) => Document(

@@ -52,16 +52,39 @@ abstract interface class GraphCompileCallback {
 ///
 /// Port of eino `compose.InitGraphCompileCallbacks`. This is process-wide
 /// state; tests that use it call [clearGlobal] when they are done.
+///
+/// [setGlobal] is the port itself: like the Go function it replaces whatever
+/// was registered before. [appendGlobal] adds to the list instead, for code
+/// that does not own all of it (a library that wants to hear about compiled
+/// graphs without removing the callbacks of the application).
 abstract final class GraphCompileCallbacks {
   static final List<GraphCompileCallback> _global = [];
 
-  /// The callbacks registered with [appendGlobal].
+  /// The callbacks registered with [setGlobal] and [appendGlobal].
   static List<GraphCompileCallback> get global => List.unmodifiable(_global);
 
-  /// Makes every graph that is compiled from now on report to [callbacks], in
-  /// front of the callbacks of its own compile options.
+  /// Makes every graph that is compiled from now on report to [callbacks],
+  /// and to no global callback registered before, in front of the callbacks
+  /// of its own compile options.
+  ///
+  /// Port of eino `compose.InitGraphCompileCallbacks`, which replaces the
+  /// list as well. An empty list removes every global callback.
+  static void setGlobal(Iterable<GraphCompileCallback> callbacks) {
+    // Copied first: [callbacks] may be a view of the list that is replaced.
+    final next = List<GraphCompileCallback>.of(callbacks);
+    _global
+      ..clear()
+      ..addAll(next);
+  }
+
+  /// Makes every graph that is compiled from now on report to [callbacks] as
+  /// well, behind the global callbacks registered before and in front of the
+  /// callbacks of its own compile options.
+  ///
+  /// Not in Eino, where the only way to register is to replace
+  /// ([setGlobal]).
   static void appendGlobal(Iterable<GraphCompileCallback> callbacks) =>
-      _global.addAll(callbacks);
+      _global.addAll(List<GraphCompileCallback>.of(callbacks));
 
   /// Forgets the global callbacks.
   static void clearGlobal() => _global.clear();

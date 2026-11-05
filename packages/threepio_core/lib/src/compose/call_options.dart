@@ -15,14 +15,18 @@ import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
 import '../components/tool/tool_options.dart';
 import '../core/run_context.dart';
+import 'interrupt.dart';
 import 'node_path.dart';
 import 'type_ref.dart';
 import 'tools_node_options.dart';
 
 /// Changes the state a run is resumed with.
 ///
-/// Port of eino `compose.StateModifier`. [path] leads to the graph whose
-/// [state] it is; it is empty for the graph that was called.
+/// Port of eino `compose.StateModifier`. It is called once for the graph that
+/// is resumed and once for every nested graph that goes on from the
+/// checkpoint, each time with the state that was saved for that graph, before
+/// the graph continues. [path] leads to the graph whose [state] it is; it is
+/// empty for the graph that was called. The state is changed in place.
 typedef StateModifier = FutureOr<void> Function(
   RunContext ctx,
   NodePath path,
@@ -118,12 +122,23 @@ sealed class CallOption {
   factory CallOption.stateModifier(StateModifier modifier) =
       _StateModifierOption;
 
+  /// Lets a nested graph hand its checkpoint to the graph around it as soon
+  /// as it has one. Port of the internal option eino adds with
+  /// `withSubGraphCheckpointPublisher`; it reaches the nested graph and no
+  /// graph inside that.
+  @internal
+  factory CallOption.subGraphCheckpointPublisher(
+    void Function(SubGraphInterrupt interrupt) publish,
+  ) = _SubGraphPublisherOption;
+
   /// Options for lambda nodes that take options of the type [TOption] (see
   /// `Lambda.invokableWithOption`). Port of eino `compose.WithLambdaOption`.
   ///
   /// The options reach the lambdas that were declared with exactly this
-  /// option type, as in Eino: a lambda declared with a supertype of [TOption]
-  /// does not get them.
+  /// option type: a lambda declared with a supertype of [TOption] does not
+  /// get them. This is a deliberate difference from Eino, which looks at the
+  /// dynamic type of each option value; with Dart's subtyping that would hand
+  /// a lambda declared with `Object` the options of every other lambda.
   static CallOption lambda<TOption>(List<TOption> options) =>
       _ComponentOption<TOption>(options);
 
@@ -185,6 +200,17 @@ sealed class CallOption {
   /// The state modifier this carries.
   @internal
   StateModifier? get stateModifier => null;
+
+  /// The function a nested graph hands its checkpoint to.
+  @internal
+  void Function(SubGraphInterrupt interrupt)? get subGraphCheckpointPublisher =>
+      null;
+
+  /// Whether this option only means something to the graph it is given to:
+  /// the checkpoint options. Eino drops them from an option it passes on into
+  /// a nested graph (`Option.deepCopy`).
+  @internal
+  bool get isRunOnly => false;
 }
 
 final class _ComponentOption<T> extends CallOption {
@@ -256,6 +282,9 @@ final class _CheckpointIdOption extends CallOption {
       _CheckpointIdOption(checkpointId, paths);
 
   @override
+  bool get isRunOnly => true;
+
+  @override
   String toString() => 'CallOption.checkpointId($checkpointId)';
 }
 
@@ -272,6 +301,9 @@ final class _WriteToCheckpointIdOption extends CallOption {
       _WriteToCheckpointIdOption(writeToCheckpointId, paths);
 
   @override
+  bool get isRunOnly => true;
+
+  @override
   String toString() => 'CallOption.writeToCheckpointId($writeToCheckpointId)';
 }
 
@@ -283,6 +315,9 @@ final class _ForceNewRunOption extends CallOption {
 
   @override
   CallOption withPaths(Iterable<NodePath> paths) => _ForceNewRunOption(paths);
+
+  @override
+  bool get isRunOnly => true;
 
   @override
   String toString() => 'CallOption.forceNewRun()';
@@ -303,5 +338,24 @@ final class _StateModifierOption extends CallOption {
       _StateModifierOption(stateModifier, paths);
 
   @override
+  bool get isRunOnly => true;
+
+  @override
   String toString() => 'CallOption.stateModifier()';
+}
+
+final class _SubGraphPublisherOption extends CallOption {
+  _SubGraphPublisherOption(this.subGraphCheckpointPublisher) : super._(const []);
+
+  @override
+  final void Function(SubGraphInterrupt interrupt) subGraphCheckpointPublisher;
+
+  @override
+  bool get isRunOnly => true;
+
+  @override
+  CallOption withPaths(Iterable<NodePath> paths) => this;
+
+  @override
+  String toString() => 'CallOption.subGraphCheckpointPublisher()';
 }

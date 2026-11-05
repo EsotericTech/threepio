@@ -49,7 +49,14 @@ typedef TransformFn<I, O, TOption> = Future<StreamReader<O>> Function(
 /// merge are skipped. One chunk is returned as it is; several are joined with
 /// the function [StreamConcat] has for them. Throws [StreamReadException] when
 /// the stream is empty or fails.
-Future<T> concatStreamReader<T>(StreamReader<T> stream) async {
+///
+/// With [ignoreError] (eino `concatStreamReaderWithErrorFilter`), an error in
+/// the stream for which it returns `true` ends the reading as the end of the
+/// stream would.
+Future<T> concatStreamReader<T>(
+  StreamReader<T> stream, {
+  bool Function(Object error)? ignoreError,
+}) async {
   final items = <T>[];
   try {
     while (true) {
@@ -62,6 +69,7 @@ Future<T> concatStreamReader<T>(StreamReader<T> stream) async {
         // Whatever the stream fails with is reported as a read failure.
         // ignore: avoid_catches_without_on_clauses
       } catch (error, stackTrace) {
+        if (ignoreError != null && ignoreError(error)) break;
         Error.throwWithStackTrace(
           StreamReadException(
             'failed to read from stream. error: ${_text(error)}',

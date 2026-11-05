@@ -7,8 +7,10 @@ library;
 
 import 'package:meta/meta.dart';
 
+import '../schema/type_registry.dart';
 import '../streaming/stream_reader.dart';
 import 'channel_manager.dart';
+import 'errors.dart';
 import 'graph_options.dart';
 import 'type_ref.dart';
 import 'values_merge.dart';
@@ -28,11 +30,36 @@ final class PregelChannel implements Channel {
   /// The channel of a node that takes [inputType].
   PregelChannel({this.inputType});
 
+  /// A channel read back from a checkpoint: it only carries what was saved,
+  /// for the channel of the running graph to take over ([load]).
+  factory PregelChannel.fromJson(Map<String, Object?> json) => PregelChannel()
+    ..values = {
+      for (final MapEntry(:key, :value)
+          in (json['values']! as Map<String, Object?>).entries)
+        key: TypeRegistry.decode(value),
+    };
+
   /// The type the node of this channel takes, when it is known.
   final TypeRef<Object?>? inputType;
 
   /// The values that arrived since the node last ran, by source.
+  @override
   Map<String, Object?> values = {};
+
+  @override
+  void load(Channel saved) {
+    if (saved is! PregelChannel) {
+      throw GraphRunException(
+        'load pregel channel fail, got ${saved.runtimeType}, want '
+        'PregelChannel',
+      );
+    }
+    values = saved.values;
+  }
+
+  /// What a checkpoint keeps of the channel. The values that wait must be
+  /// JSON or of a registered type.
+  Map<String, Object?> toJson() => {'values': encodeChannelValues(values)};
 
   FanInMergeConfig _mergeConfig = const FanInMergeConfig();
 

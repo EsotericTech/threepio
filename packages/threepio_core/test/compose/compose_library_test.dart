@@ -122,7 +122,7 @@ void main() {
     });
   });
 
-  group('checkpointing is not there yet', () {
+  group('checkpointing', () {
     final ctx = RunContext.background();
 
     Graph<String, String> graph() => Graph<String, String>()
@@ -130,30 +130,51 @@ void main() {
       ..addEdge(Graph.start, 'a')
       ..addEdge('a', Graph.end);
 
-    test('compile refuses a checkpoint store', () {
-      expect(
-        graph().compile(
-          ctx,
-          options: GraphCompileOptions(checkpointStore: InMemoryCheckpointStore()),
-        ),
-        throwsUnimplementedError,
+    test('compile takes a checkpoint store', () async {
+      final runnable = await graph().compile(
+        ctx,
+        options: GraphCompileOptions(checkpointStore: InMemoryCheckpointStore()),
       );
+      expect(await runnable.invoke(ctx, 'x'), 'x');
     });
 
-    test('compile refuses interrupt nodes', () {
-      expect(
-        graph().compile(
-          ctx,
-          options: const GraphCompileOptions(interruptBeforeNodes: ['a']),
-        ),
-        throwsUnimplementedError,
+    test('compile takes interrupt nodes, and a run stops at them', () async {
+      final before = await graph().compile(
+        ctx,
+        options: const GraphCompileOptions(interruptBeforeNodes: ['a']),
       );
-      expect(
-        graph().compile(
-          ctx,
-          options: const GraphCompileOptions(interruptAfterNodes: ['a']),
+      await expectLater(
+        before.invoke(ctx, 'x'),
+        throwsA(
+          isA<GraphInterruptedException>()
+              .having((e) => e.info.beforeNodes, 'beforeNodes', ['a']),
         ),
-        throwsUnimplementedError,
+      );
+
+      // As in Eino, a run that reaches the end is not interrupted behind its
+      // last node: there has to be a node left to run.
+      final last = await graph().compile(
+        ctx,
+        options: const GraphCompileOptions(interruptAfterNodes: ['a']),
+      );
+      expect(await last.invoke(ctx, 'x'), 'x');
+
+      final twoNodes = Graph<String, String>()
+        ..addLambdaNode('a', Lambda<String, String>.invokable((ctx, s) => s))
+        ..addLambdaNode('b', Lambda<String, String>.invokable((ctx, s) => s))
+        ..addEdge(Graph.start, 'a')
+        ..addEdge('a', 'b')
+        ..addEdge('b', Graph.end);
+      final after = await twoNodes.compile(
+        ctx,
+        options: const GraphCompileOptions(interruptAfterNodes: ['a']),
+      );
+      await expectLater(
+        after.invoke(ctx, 'x'),
+        throwsA(
+          isA<GraphInterruptedException>()
+              .having((e) => e.info.afterNodes, 'afterNodes', ['a']),
+        ),
       );
     });
 

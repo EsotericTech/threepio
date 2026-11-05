@@ -1,5 +1,6 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import '../core/field_addressable.dart';
 import '../core/run_context.dart';
 import 'message_concat.dart';
 import 'message_template.dart';
@@ -548,7 +549,8 @@ abstract class ResponseMeta with _$ResponseMeta {
 /// Port of eino `schema.Message`. A message is also a [MessagesTemplate] of
 /// itself: [format] fills the placeholders in its content.
 @freezed
-abstract class Message with _$Message implements MessagesTemplate {
+abstract class Message with _$Message
+    implements MessagesTemplate, FieldAddressable {
   const factory Message({
     /// Role of the message sender
     required RoleType role,
@@ -588,6 +590,53 @@ abstract class Message with _$Message implements MessagesTemplate {
 
   factory Message.fromJson(Map<String, dynamic> json) =>
       _$MessageFromJson(json);
+
+  /// The field [name] of the message, for the field mappings of a workflow.
+  ///
+  /// The names are those of the constructor parameters: `role`, `content`,
+  /// `userInputMultiContent`, `assistantGenMultiContent`, `name`,
+  /// `toolCalls`, `toolCallId`, `toolName`, `responseMeta`,
+  /// `reasoningContent`, `extra`.
+  @override
+  Object? getField(String name) => switch (name) {
+        'role' => role,
+        'content' => content,
+        'userInputMultiContent' => userInputMultiContent,
+        'assistantGenMultiContent' => assistantGenMultiContent,
+        'name' => this.name,
+        'toolCalls' => toolCalls,
+        'toolCallId' => toolCallId,
+        'toolName' => toolName,
+        'responseMeta' => responseMeta,
+        'reasoningContent' => reasoningContent,
+        'extra' => extra,
+        _ => throw ArgumentError.value(name, 'name', 'Message has no such field'),
+      };
+
+  /// A copy of the message with [value] as its field [name]; see [getField]
+  /// for the names.
+  @override
+  Message withField(String name, Object? value) => switch (name) {
+        'role' => copyWith(role: value! as RoleType),
+        'content' => copyWith(content: value! as String),
+        'userInputMultiContent' => copyWith(
+            userInputMultiContent:
+                (value as List<Object?>?)?.cast<MessageInputPart>(),
+          ),
+        'assistantGenMultiContent' => copyWith(
+            assistantGenMultiContent:
+                (value as List<Object?>?)?.cast<MessageOutputPart>(),
+          ),
+        'name' => copyWith(name: value as String?),
+        'toolCalls' =>
+          copyWith(toolCalls: (value as List<Object?>?)?.cast<ToolCall>()),
+        'toolCallId' => copyWith(toolCallId: value as String?),
+        'toolName' => copyWith(toolName: value as String?),
+        'responseMeta' => copyWith(responseMeta: value as ResponseMeta?),
+        'reasoningContent' => copyWith(reasoningContent: value as String?),
+        'extra' => copyWith(extra: (value as Map<Object?, Object?>?)?.cast()),
+        _ => throw ArgumentError.value(name, 'name', 'Message has no such field'),
+      };
 
   /// Create a user message
   factory Message.user(String content) => Message(

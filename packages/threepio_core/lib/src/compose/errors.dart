@@ -93,14 +93,49 @@ class ComposeTypeException extends ThreepioException {
 /// Reading a stream inside a graph failed, or the stream had nothing in it.
 class StreamReadException extends ThreepioException {
   /// A failure to read described by [message].
-  const StreamReadException(super.message, {super.cause});
+  const StreamReadException(super.message, {super.cause})
+      : isEmptyStream = false;
 
   /// The error for a stream that ended without a single chunk.
   const StreamReadException.empty()
-      : super('concat stream reader fail: stream reader is empty, concat fail');
+      : isEmptyStream = true,
+        super('concat stream reader fail: stream reader is empty, concat fail');
+
+  /// Whether this is the error of a stream that had no chunk, as opposed to
+  /// one that failed.
+  final bool isEmptyStream;
 
   @override
   String toString() => 'StreamReadException: $message';
+}
+
+/// A value of a checkpoint could not be turned into bytes, because its type
+/// is neither JSON nor registered with `TypeRegistry`.
+///
+/// It names the value: the state of the graph, the input or the output of a
+/// node. The run that was interrupted fails with it instead of leaving a
+/// checkpoint that could not be resumed.
+class CheckpointEncodeException extends ThreepioException {
+  /// The failure described by [message].
+  const CheckpointEncodeException(super.message);
+
+  @override
+  String toString() => 'CheckpointEncodeException: $message';
+}
+
+/// A stream was ended on purpose, because the run it belongs to is being
+/// cancelled.
+///
+/// Port of eino `core.ErrStreamCanceled`. The layer that cancels a run (the
+/// agent runtime) ends the streams of tools and models with it. A tools node
+/// treats a tool whose stream ended this way as not finished: it interrupts,
+/// and the tool runs again when the run is resumed.
+class StreamCanceledException extends ThreepioException {
+  /// The marker of a cancelled stream.
+  const StreamCanceledException([super.message = 'stream canceled']);
+
+  @override
+  String toString() => 'StreamCanceledException: $message';
 }
 
 /// A graph run failed.

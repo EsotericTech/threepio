@@ -10,6 +10,7 @@
 library;
 
 export 'src/components/model/cancel_token.dart';
+export 'src/core/field_addressable.dart';
 export 'src/core/run_context.dart';
 export 'src/errors.dart';
 export 'src/schema/concat.dart' hide concatMaps;

@@ -7,8 +7,10 @@ library;
 
 import 'package:meta/meta.dart';
 
+import '../schema/type_registry.dart';
 import '../streaming/stream_reader.dart';
 import 'channel_manager.dart';
+import 'errors.dart';
 import 'graph_options.dart';
 import 'type_ref.dart';
 import 'values_merge.dart';
@@ -58,6 +60,26 @@ final class DagChannel implements Channel {
     this.inputType,
   });
 
+  /// A channel read back from a checkpoint: it only carries what was saved,
+  /// for the channel of the running graph to take over ([load]).
+  factory DagChannel.fromJson(Map<String, Object?> json) => DagChannel(
+        controlPredecessors: {
+          for (final MapEntry(:key, :value)
+              in (json['control_predecessors']! as Map<String, Object?>).entries)
+            key: DependencyState.values.byName(value! as String),
+        },
+        dataPredecessors:
+            (json['data_predecessors']! as Map<String, Object?>).cast<String, bool>(),
+        zeroValue: () => null,
+        emptyStream: () => StreamReader<Object?>.fromIterable(const [null]),
+      )
+        ..values = {
+          for (final MapEntry(:key, :value)
+              in (json['values']! as Map<String, Object?>).entries)
+            key: TypeRegistry.decode(value),
+        }
+        ..skipped = json['skipped'] as bool? ?? false;
+
   /// The type the node of this channel takes, when it is known.
   final TypeRef<Object?>? inputType;
 
@@ -71,6 +93,7 @@ final class DagChannel implements Channel {
   Map<String, DependencyState> controlPredecessors;
 
   /// The values that arrived, by source.
+  @override
   Map<String, Object?> values = {};
 
   /// For each predecessor the node gets data from, whether it has arrived (or
@@ -84,6 +107,31 @@ final class DagChannel implements Channel {
 
   @override
   set mergeConfig(FanInMergeConfig config) => _mergeConfig = config;
+
+  @override
+  void load(Channel saved) {
+    if (saved is! DagChannel) {
+      throw GraphRunException(
+        'load dag channel fail, got ${saved.runtimeType}, want DagChannel',
+      );
+    }
+    controlPredecessors = saved.controlPredecessors;
+    dataPredecessors = saved.dataPredecessors;
+    skipped = saved.skipped;
+    values = saved.values;
+  }
+
+  /// What a checkpoint keeps of the channel. The values that wait must be
+  /// JSON or of a registered type.
+  Map<String, Object?> toJson() => {
+        'control_predecessors': {
+          for (final MapEntry(:key, :value) in controlPredecessors.entries)
+            key: value.name,
+        },
+        'values': encodeChannelValues(values),
+        'data_predecessors': dataPredecessors,
+        'skipped': skipped,
+      };
 
   @override
   void reportValues(Map<String, Object?> values) {

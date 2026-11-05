@@ -7,6 +7,7 @@ library;
 import 'package:meta/meta.dart';
 
 import '../callbacks/run_info.dart';
+import 'field_mapping.dart';
 import 'graph_branch.dart';
 import 'graph_options.dart';
 import 'local_state.dart';
@@ -28,6 +29,7 @@ final class GraphNodeInfo {
     this.outputKey = '',
     this.graphInfo,
     this.isPassthrough = false,
+    this.mappings = const [],
   });
 
   /// The kind of component the node runs.
@@ -61,6 +63,10 @@ final class GraphNodeInfo {
 
   /// Whether the node is a passthrough node.
   final bool isPassthrough;
+
+  /// The field mappings that lead to the node, in a workflow. Port of the
+  /// field `Mappings` of eino `compose.GraphNodeInfo`.
+  final List<FieldMapping> mappings;
 }
 
 /// The structure of a graph: its nodes, edges and branches.

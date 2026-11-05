@@ -18,11 +18,15 @@ import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
 import '../core/run_context.dart';
 import '../streaming/stream_reader.dart';
+import 'address.dart';
 import 'call_options.dart';
 import 'channel_manager.dart';
+import 'checkpoint.dart';
+import 'checkpoint_serializer.dart';
 import 'composable_runnable.dart';
 import 'dag.dart';
 import 'errors.dart';
+import 'field_mapping.dart';
 import 'graph_branch.dart';
 import 'graph_node.dart';
 import 'graph_options.dart';
@@ -31,6 +35,7 @@ import 'introspect.dart';
 import 'lambda.dart';
 import 'local_state.dart';
 import 'pregel.dart';
+import 'resume.dart';
 import 'runnable.dart';
 import 'stream_conversion.dart';
 import 'task_manager.dart';
@@ -75,8 +80,9 @@ abstract interface class GraphEngine {
 }
 
 final class _PendingEdge {
-  const _PendingEdge(this.endNode);
+  const _PendingEdge(this.endNode, [this.mappings = const []]);
   final String endNode;
+  final List<FieldMapping> mappings;
 }
 
 /// The untyped graph underneath [Graph], `Chain` and `Workflow`.
@@ -130,6 +136,10 @@ final class GraphCore implements GraphEngine {
 
   /// The conversions in front of branches.
   final Map<String, List<List<HandlerPair>>> handlerPreBranch = {};
+
+  /// The field mappings that lead to each node, in the order they were
+  /// added. A node that has some gets its input assembled from fields.
+  final Map<String, List<FieldMapping>> fieldMappingRecords = {};
 
   /// The first error of building this graph. It is thrown again by every
   /// later change and by [compile].
@@ -226,13 +236,16 @@ final class GraphCore implements GraphEngine {
   /// Adds an edge from [startNode] to [endNode]. Without [noControl] the end
   /// node waits for the start node; without [noData] it gets its output.
   ///
-  /// Port of eino `graph.addEdgeWithMappings`. The field mappings of the Go
-  /// function belong to workflows.
+  /// With [mappings] (workflows) the end node gets the mapped fields instead
+  /// of the whole output.
+  ///
+  /// Port of eino `graph.addEdgeWithMappings`.
   void addEdge(
     String startNode,
     String endNode, {
     bool noControl = false,
     bool noData = false,
+    List<FieldMapping> mappings = const [],
   }) =>
       _change(() {
         if (noControl && noData) {
@@ -275,7 +288,8 @@ final class GraphCore implements GraphEngine {
               'data edge[$startNode]-[$endNode] have been added yet',
             );
           }
-          (_toValidate[startNode] ??= []).add(_PendingEdge(endNode));
+          (_toValidate[startNode] ??= [])
+              .add(_PendingEdge(endNode, List.unmodifiable(mappings)));
           _updateToValidate();
           (dataEdges[startNode] ??= []).add(endNode);
         }
@@ -359,6 +373,7 @@ final class GraphCore implements GraphEngine {
         final pending = _toValidate[startNode]!;
         for (var i = 0; i < pending.length; i++) {
           final endNode = pending[i].endNode;
+          final mappings = pending[i].mappings;
           final startType = _outputTypeOf(startNode);
           final endType = _inputTypeOf(endNode);
           if (startType == null && endType == null) continue;
@@ -377,7 +392,7 @@ final class GraphCore implements GraphEngine {
               ..inputType = endType
               ..outputType = endType
               ..helper = _helperOf(endNode)!.forPredecessorPassthrough();
-          } else {
+          } else if (mappings.isEmpty) {
             switch (checkAssignable(startType, endType)) {
               case Assignable.mustNot:
                 throw GraphBuildException(
@@ -391,6 +406,20 @@ final class GraphCore implements GraphEngine {
               case Assignable.must:
                 break;
             }
+            continue;
+          }
+
+          if (mappings.isNotEmpty) {
+            (fieldMappingRecords[endNode] ??= []).addAll(mappings);
+            validateFieldMappings(
+              _outputTypeOf(startNode)!,
+              _inputTypeOf(endNode)!,
+              mappings,
+            );
+            // The edge delivers the mapped fields; the node assembles its
+            // input from the fields of all its edges.
+            ((handlerOnEdges[startNode] ??= {})[endNode] ??= [])
+                .add(fieldMappingHandler(mappings));
           }
         }
       }
@@ -449,12 +478,42 @@ final class GraphCore implements GraphEngine {
       );
     }
 
-    if (options != null &&
-        (options.checkpointStore != null ||
-            options.interruptBeforeNodes.isNotEmpty ||
-            options.interruptAfterNodes.isNotEmpty)) {
-      throw UnimplementedError('checkpointing arrives in P5');
+    final preNodeHandlers = <String, List<HandlerPair>>{
+      for (final MapEntry(:key, :value) in handlerPreNode.entries)
+        key: List.of(value),
+    };
+    for (final MapEntry(key: nodeKey, value: mappings)
+        in fieldMappingRecords.entries) {
+      // Two mappings must not write the same field.
+      final targets = <String>{};
+      for (final mapping in mappings) {
+        if (!targets.add(mapping.targetKey)) {
+          throw GraphBuildException(
+            'duplicate mapping target field: ${mapping.toPath.join('.')} of '
+            'node[$nodeKey]',
+          );
+        }
+      }
+      // Into a list of this compile: a graph can be compiled more than once
+      // (a batch node compiles its inner task on every call), and the
+      // conversion must be there once.
+      (preNodeHandlers[nodeKey] ??= []).add(
+        fieldMappingConverter(_helperOf(nodeKey)!.input, List.of(mappings)),
+      );
     }
+
+    final state = localState;
+    if (options?.checkpointStore != null &&
+        state != null &&
+        !state.canBeCheckpointed) {
+      throw GraphBuildException(
+        'the graph has a checkpoint store, but its state type '
+        '${state.stateType.name} cannot be written to a checkpoint: it is '
+        'neither JSON nor registered. Register it with '
+        'TypeRegistry.registerName<${state.stateType.name}>',
+      );
+    }
+    ensureComposeTypesRegistered();
 
     final subGraphs = options == null || options.compileCallbacks.isEmpty
         ? null
@@ -515,7 +574,6 @@ final class GraphCore implements GraphEngine {
       maxRunSteps = chanSubscribeTo.length + 10;
     }
 
-    final state = localState;
     final runner = GraphRunner(
       chanSubscribeTo: chanSubscribeTo,
       successors: {
@@ -534,10 +592,33 @@ final class GraphCore implements GraphEngine {
       dag: dag,
       helper: helper,
       edgeHandlers: EdgeHandlerManager(handlerOnEdges),
-      preNodeHandlers: PreNodeHandlerManager(handlerPreNode),
+      preNodeHandlers: PreNodeHandlerManager(preNodeHandlers),
       preBranchHandlers: PreBranchHandlerManager(handlerPreBranch),
       mergeConfigs: options?.fanInMergeConfig ?? const {},
       maxRunSteps: maxRunSteps,
+      checkPointer: CheckPointer(
+        inputTypes: {
+          for (final MapEntry(key: name, value: call)
+              in chanSubscribeTo.entries)
+            name: call.action!.inputType,
+          Graph.end: outputType,
+        },
+        outputTypes: {
+          for (final MapEntry(key: name, value: call)
+              in chanSubscribeTo.entries)
+            name: call.action!.outputType,
+          Graph.start: inputType,
+        },
+        store: options?.checkpointStore,
+        serializer: options?.serializer,
+      ),
+      interruptBeforeNodes: List.unmodifiable(
+        options?.interruptBeforeNodes ?? const <String>[],
+      ),
+      interruptAfterNodes: List.unmodifiable(
+        options?.interruptAfterNodes ?? const <String>[],
+      ),
+      fieldMappedNodes: fieldMappingRecords.keys.toSet(),
       runContext: state == null
           ? null
           : (ctx) => withInternalState(ctx, state.create(ctx)),
@@ -593,7 +674,10 @@ final class GraphCore implements GraphEngine {
         compileOptions: options,
         nodes: Map.unmodifiable({
           for (final MapEntry(key: name, value: node) in nodes.entries)
-            name: node.describe(graphInfo: subGraphs[name]),
+            name: node.describe(
+              graphInfo: subGraphs[name],
+              mappings: fieldMappingRecords[name] ?? const [],
+            ),
         }),
         edges: _copyEdges(controlEdges),
         dataEdges: _copyEdges(dataEdges),
@@ -754,8 +838,18 @@ Future<Runnable<I, O>> compileAnyGraph<I, O>(
     transform: (ctx, input, callOptions) async =>
         outputType.stream(await runnable.transform(ctx, input, callOptions)),
   ).withContext(
-    // The address of the runnable is added to the context here.
-    (ctx, callOptions) => initGraphCallbacks(ctx, info, meta, callOptions),
+    // A compiled graph that is run on its own is a place of its own in the
+    // run: its interrupts are addressed below it.
+    (ctx, callOptions) => initGraphCallbacks(
+      appendAddressSegmentTo(
+        ctx,
+        AddressSegmentType.runnable,
+        compileOptions.graphName,
+      ),
+      info,
+      meta,
+      callOptions,
+    ),
   );
   return _CompiledRunnable<I, O>(packer);
 }

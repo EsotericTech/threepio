@@ -26,6 +26,10 @@ final class _TypeEntry<T extends Object> {
 
   Map<String, Object?> encode(Object value) => toJson(value as T);
 
+  R open<R>(R Function<X>() body) => body<T>();
+
+  bool isSubtypeOf<S>() => isSubtype<T, S>();
+
   String get typeName => '$T';
 }
 
@@ -141,6 +145,35 @@ abstract final class TypeRegistry {
   static Object? decode(Object? json) {
     _ensureBuiltIns();
     return _decode(json);
+  }
+
+  /// Whether some registered type is a `T`: a value declared as `T` (an
+  /// interface, say) may then be one that can be encoded.
+  @internal
+  static bool hasSubtypeOf<T extends Object>() {
+    _ensureBuiltIns();
+    return _entries.any((entry) => entry.isSubtypeOf<T>());
+  }
+
+  /// Calls [body] with the registered type [value] is encoded as, or returns
+  /// `null` when no registered type fits it.
+  ///
+  /// For code that has to rebuild a typed collection of registered values
+  /// (a `List<Message>` from the messages in a `List<Object?>`).
+  @internal
+  static R? withTypeOf<R>(Object value, R Function<T>() body) =>
+      _entryOf(value)?.open(body);
+
+  /// The first result that is not `null` of calling [body] with each
+  /// registered type, the most recently registered first.
+  @internal
+  static R? firstTypeWhere<R>(R? Function<T>() body) {
+    _ensureBuiltIns();
+    for (final entry in _entries.reversed) {
+      final R? result = entry.open<R?>(body);
+      if (result != null) return result;
+    }
+    return null;
   }
 
   /// Forgets every registration except the built-in ones.

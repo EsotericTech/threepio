@@ -22,6 +22,7 @@ import '../schema/document.dart';
 import '../schema/message.dart';
 import 'composable_runnable.dart';
 import 'errors.dart';
+import 'field_mapping.dart';
 import 'graph.dart';
 import 'graph_options.dart';
 import 'introspect.dart';
@@ -132,7 +133,11 @@ final class GraphNode {
   }
 
   /// The description of this node for [GraphInfo].
-  GraphNodeInfo describe({GraphInfo? graphInfo}) => GraphNodeInfo(
+  GraphNodeInfo describe({
+    GraphInfo? graphInfo,
+    List<FieldMapping> mappings = const [],
+  }) =>
+      GraphNodeInfo(
         component: executorMeta.component,
         instance: executorMeta.isPassthrough ? null : instance,
         options: options,
@@ -143,6 +148,7 @@ final class GraphNode {
         outputKey: nodeInfo.outputKey,
         graphInfo: graphInfo,
         isPassthrough: executorMeta.isPassthrough,
+        mappings: List.unmodifiable(mappings),
       );
 }
 

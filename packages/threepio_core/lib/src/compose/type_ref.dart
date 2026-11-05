@@ -11,7 +11,10 @@ import 'package:meta/meta.dart';
 
 import '../internal/type_utils.dart';
 import '../streaming/stream_reader.dart';
+import 'checkpoint_serializer.dart';
 import 'errors.dart';
+import 'field_mapping.dart';
+import 'stream_conversion.dart';
 
 /// How a value of one type relates to a place that takes another.
 ///
@@ -119,6 +122,53 @@ final class TypeRef<T> {
     throw ComposeTypeException('the type $T has no empty value');
   }
 
+  /// Whether [zeroValue] has a value to give.
+  bool get hasZeroValue => _zeroValues.any((candidate) => candidate is T);
+
+  /// [value] as it has to be for a place of this type, when it was read back
+  /// from a checkpoint.
+  ///
+  /// JSON forgets the type arguments of lists and maps: a `List<String>`
+  /// returns as a `List<Object?>`. A value that is no [T] for that reason is
+  /// rebuilt with the narrowest list and map types that hold its content;
+  /// any other value is returned as it is.
+  Object? revive(Object? value) => reviveFor<T>(value);
+
+  /// Reads [source] to its end and joins its chunks into one value, for a
+  /// checkpoint. `null` when the stream has no chunk.
+  ///
+  /// Port of the `concatStream` half of eino `defaultStreamConvertPair`. An
+  /// error in the stream for which [ignoreError] returns `true` ends the
+  /// reading without failing it.
+  Future<Object?> concatStream(
+    StreamReader<Object?> source,
+    bool Function(Object error) ignoreError,
+  ) async {
+    try {
+      return await concatStreamReader<T>(
+        stream(source),
+        ignoreError: ignoreError,
+      );
+    } on StreamReadException catch (error) {
+      if (error.isEmptyStream) return null;
+      rethrow;
+    }
+  }
+
+  /// The stream a streaming run goes on with for [value], which a checkpoint
+  /// kept in place of a stream.
+  ///
+  /// Port of the `restoreStream` half of eino `defaultStreamConvertPair`:
+  /// `null` gives a stream without chunks, a [T] a stream of that one chunk.
+  StreamReader<T> restoreStream(Object? value) {
+    if (value == null) return StreamReader<T>.fromIterable(const []);
+    final revived = revive(value);
+    if (revived is T) return StreamReader<T>.fromIterable([revived]);
+    throw ComposeTypeException(
+      'cannot convert value[${value.runtimeType}] to streamReader[$T]',
+    );
+  }
+
   /// A stream with [zeroValue] as its only chunk.
   ///
   /// Port of eino `emptyStreamFromGeneric`.
@@ -175,8 +225,8 @@ final class HandlerPair {
 
 /// The type-dependent operations for the input and the output of a runnable.
 ///
-/// Port of eino `genericHelper`. The field-mapping converters and the stream
-/// convert pairs of the Go struct belong to workflows and checkpoints (P5).
+/// Port of eino `genericHelper`. The stream convert pairs of the Go struct are
+/// methods of [TypeRef] (`concatStream`, `restoreStream`).
 final class GenericHelper {
   /// The helper for a runnable from [input] to [output].
   const GenericHelper(this.input, this.output);
@@ -197,6 +247,12 @@ final class GenericHelper {
   /// Checks that a value or the chunks of a stream fit the output type.
   HandlerPair get outputConverter =>
       HandlerPair(invoke: output.check, transform: output.stream);
+
+  /// Assembles the input from the fields that mapped edges delivered.
+  HandlerPair get inputFieldMappingConverter => fieldMappingConverter(input);
+
+  /// Assembles the output from the fields that mapped edges delivered.
+  HandlerPair get outputFieldMappingConverter => fieldMappingConverter(output);
 
   /// The helper of the same runnable behind an input key: it takes a map.
   GenericHelper forMapInput() => GenericHelper(mapType, output);
