@@ -1,12 +1,16 @@
-import 'dart:async';
-
 import 'stream_item.dart';
 import 'stream_reader.dart';
 import 'stream_writer.dart';
 
 /// Create a pipe with a reader and writer pair
 ///
-/// The capacity parameter specifies the buffer size for the stream.
+/// Items sent by the writer are buffered in the reader until they are
+/// received. Once the reader is closed, `send` returns `true` and drops the
+/// item instead of failing.
+///
+/// [capacity] is accepted for API compatibility with Eino's `schema.Pipe`. The
+/// buffer is unbounded and `send` never blocks.
+///
 /// Usage:
 /// ```dart
 /// final (reader, writer) = pipe<String>(capacity: 10);
@@ -35,37 +39,15 @@ import 'stream_writer.dart';
 /// }
 /// ```
 (StreamReader<T>, StreamWriter<T>) pipe<T>({int capacity = 0}) {
-  final controller = StreamController<StreamItem<T>>.broadcast(
-    // Use sync mode for unbuffered
-    sync: capacity == 0,
-  );
-
-  int closeCount = 0;
-  final closeLock = <void>[];
-
-  void onClose() {
-    closeCount++;
-    if (closeCount == 2) {
-      // Both reader and writer are closed
-      closeLock.clear();
-    }
-  }
-
-  final reader = StreamReader<T>.fromController(
-    controller,
-    onClose: onClose,
-    subscribe:
-        true, // Subscribe immediately to avoid missing events from writer
-  );
-  final writer = StreamWriter<T>.fromController(controller);
-
-  return (reader, writer);
+  final reader = StreamReader<T>.buffered();
+  return (reader, StreamWriter<T>.forReader(reader));
 }
 
 /// Merge multiple stream readers into a single reader
 ///
 /// All source streams are read concurrently and items are emitted
-/// as they arrive from any source.
+/// as they arrive from any source. Closing the merged reader releases every
+/// source.
 ///
 /// Usage:
 /// ```dart
@@ -86,35 +68,24 @@ StreamReader<T> mergeStreamReaders<T>(List<StreamReader<T>> readers) {
     return readers.first;
   }
 
-  final controller = StreamController<StreamItem<T>>.broadcast();
-  final subscriptions = <StreamSubscription<StreamItem<T>>>[];
+  final merged = StreamReader<T>.buffered(
+    onClose: () => _releaseAll(readers),
+  );
   var activeCount = readers.length;
 
   for (final reader in readers) {
-    final subscription = reader.controller.stream.listen(
-      controller.add,
-      onError: (Object error, StackTrace stackTrace) {
-        controller.add(StreamItem<T>.error(error, stackTrace));
-      },
+    reader.drainTo(
+      onItem: merged.feed,
       onDone: () {
         activeCount--;
         if (activeCount == 0) {
-          controller.close();
+          merged.feedDone();
         }
       },
-      cancelOnError: false,
     );
-    subscriptions.add(subscription);
   }
 
-  // Clean up subscriptions when the merged reader is closed
-  void onClose() {
-    for (final subscription in subscriptions) {
-      subscription.cancel();
-    }
-  }
-
-  return StreamReader<T>.fromController(controller, onClose: onClose);
+  return merged;
 }
 
 /// Merge multiple named stream readers into a single reader
@@ -151,49 +122,34 @@ StreamReader<T> mergeNamedStreamReaders<T>(
     return readers.values.first;
   }
 
-  final controller = StreamController<StreamItem<T>>.broadcast();
-  final subscriptions = <String, StreamSubscription<StreamItem<T>>>{};
+  final merged = StreamReader<T>.buffered(
+    onClose: () => _releaseAll(readers.values),
+  );
   var activeCount = readers.length;
 
-  for (final entry in readers.entries) {
-    final name = entry.key;
-    final reader = entry.value;
-
-    final subscription = reader.controller.stream.listen(
-      controller.add,
-      onError: (Object error, StackTrace stackTrace) {
-        controller.add(StreamItem<T>.error(error, stackTrace));
-      },
+  for (final MapEntry(key: name, value: reader) in readers.entries) {
+    reader.drainTo(
+      onItem: merged.feed,
       onDone: () {
         // Emit SourceEOF for this specific stream
-        controller.add(
-          StreamItem<T>.error(SourceEOFException(name)),
-        );
+        merged.feed(StreamItem<T>.error(SourceEOFException(name)));
 
         activeCount--;
         if (activeCount == 0) {
-          controller.close();
+          merged.feedDone();
         }
       },
-      cancelOnError: false,
     );
-    subscriptions[name] = subscription;
   }
 
-  // Clean up subscriptions when the merged reader is closed
-  void onClose() {
-    for (final subscription in subscriptions.values) {
-      subscription.cancel();
-    }
-  }
-
-  return StreamReader<T>.fromController(controller, onClose: onClose);
+  return merged;
 }
 
 /// Concatenate multiple stream readers sequentially
 ///
 /// Reads from each stream in order, moving to the next stream
-/// only after the previous one completes.
+/// only after the previous one completes. Errors of a stream are passed on in
+/// place and do not end it.
 ///
 /// Usage:
 /// ```dart
@@ -213,30 +169,31 @@ StreamReader<T> concatStreamReaders<T>(List<StreamReader<T>> readers) {
     return readers.first;
   }
 
-  final controller = StreamController<StreamItem<T>>.broadcast();
+  final concatenated = StreamReader<T>.buffered(
+    onClose: () => _releaseAll(readers),
+  );
 
-  Future<void> processReaders() async {
-    for (final reader in readers) {
-      // Use recv() to read all items from this reader
-      try {
-        while (true) {
-          final item = await reader.recv();
-          controller.add(StreamItem.data(item));
-        }
-      } on StreamEOFException {
-        // This reader is done, move to next
-      } catch (e, st) {
-        // Propagate other errors
-        controller.add(StreamItem<T>.error(e, st));
-      }
+  // Take over one reader at a time, the next one when the previous has ended.
+  void drainFrom(int index) {
+    if (index == readers.length) {
+      concatenated.feedDone();
+      return;
     }
-    await controller.close();
+
+    readers[index].drainTo(
+      onItem: concatenated.feed,
+      onDone: () => drainFrom(index + 1),
+    );
   }
 
-  // Start processing in the background
-  processReaders();
+  drainFrom(0);
 
-  return StreamReader<T>.fromController(controller);
+  return concatenated;
+}
+
+/// Releases the sources of [readers] when the reader derived from them closes.
+Future<void> _releaseAll<T>(Iterable<StreamReader<T>> readers) async {
+  await Future.wait([for (final reader in readers) reader.release()]);
 }
 
 /// Copy a stream reader into multiple independent readers

@@ -1,0 +1,62 @@
+{
+  "model_calls": [
+    {
+      "tools": [],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Hel"
+      },
+      "is_partial": true
+    },
+    {
+      "event_type": "cancelled",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "reason": "user pressed stop",
+      "cancelled_tool_call_ids": []
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": false,
+    "cancelled": true,
+    "usage": {
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0
+    },
+    "messages": []
+  }
+}

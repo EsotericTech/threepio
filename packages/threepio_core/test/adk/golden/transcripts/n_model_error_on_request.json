@@ -1,0 +1,54 @@
+{
+  "model_calls": [
+    {
+      "tools": [],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "error",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "error": "FormatException: bad gateway",
+      "stack_trace": "<stack-trace>",
+      "is_recoverable": false
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": false,
+    "cancelled": false,
+    "error": "FormatException: bad gateway",
+    "usage": {
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0
+    },
+    "messages": []
+  }
+}

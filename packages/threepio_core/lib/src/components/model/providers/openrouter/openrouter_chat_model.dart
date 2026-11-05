@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
+import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
@@ -50,12 +51,22 @@ class OpenRouterChatModel extends ToolCallingChatModel {
     this.httpClient,
     this.tools,
     this.responseParser = const OpenRouterResponseParser(),
-  });
+  }) : _http = SharedHttpClient(httpClient, owner: 'OpenRouterChatModel');
+
+  /// A copy of [source] with [tools] bound, sharing its HTTP client.
+  OpenRouterChatModel._bound(OpenRouterChatModel source, this.tools)
+      : config = source.config,
+        httpClient = source.httpClient,
+        responseParser = source.responseParser,
+        _http = source._http;
 
   /// OpenRouter configuration
   final OpenRouterConfig config;
 
-  /// HTTP client for making requests (tests inject a fake)
+  /// HTTP client for making requests (tests inject a fake).
+  ///
+  /// When omitted, the model creates one client on first use, reuses it for
+  /// every request and closes it in [dispose].
   final http.Client? httpClient;
 
   /// Tools bound to this model instance
@@ -64,7 +75,17 @@ class OpenRouterChatModel extends ToolCallingChatModel {
   /// Response parser for handling API responses
   final OpenRouterResponseParser responseParser;
 
-  http.Client get _client => httpClient ?? http.Client();
+  final SharedHttpClient _http;
+
+  http.Client get _client => _http.client;
+
+  /// Releases the HTTP client this model created for itself.
+  ///
+  /// Call it when the model is no longer needed; using it afterwards throws
+  /// a [StateError]. The client is shared with the models returned by
+  /// [withTools], so they stop working as well. A client passed as [httpClient] is left open: whoever created it
+  /// closes it.
+  void dispose() => _http.close();
 
   @override
   Future<Message> generate(
@@ -111,12 +132,7 @@ class OpenRouterChatModel extends ToolCallingChatModel {
 
   @override
   ToolCallingChatModel withTools(List<ToolInfo> tools) {
-    return OpenRouterChatModel(
-      config: config,
-      httpClient: httpClient,
-      tools: tools,
-      responseParser: responseParser,
-    );
+    return OpenRouterChatModel._bound(this, tools);
   }
 
   /// Merge options with bound tools
@@ -173,8 +189,12 @@ class OpenRouterChatModel extends ToolCallingChatModel {
     cancelToken?.throwIfCancelled();
     final url = Uri.parse('${config.baseUrl}/chat/completions');
 
+    // Outside the try: using a disposed model is a programming error,
+    // not a failed request.
+    final client = _client;
+
     try {
-      final request = _client.post(
+      final request = client.post(
         url,
         headers: _buildHeaders(),
         body: jsonEncode(requestBody),
@@ -214,12 +234,16 @@ class OpenRouterChatModel extends ToolCallingChatModel {
     cancelToken?.throwIfCancelled();
     final url = Uri.parse('${config.baseUrl}/chat/completions');
 
+    // Outside the try: using a disposed model is a programming error,
+    // not a failed request.
+    final client = _client;
+
     try {
       final request = http.Request('POST', url)
         ..headers.addAll(_buildHeaders())
         ..body = jsonEncode(requestBody);
 
-      final response = await _client.send(request).timeout(config.timeout);
+      final response = await client.send(request).timeout(config.timeout);
 
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();

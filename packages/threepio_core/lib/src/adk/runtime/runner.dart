@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../components/model/cancel_token.dart';
 import '../../schema/message.dart';
+import '../../streaming/stream_reader.dart';
 import '../events/agent_event.dart' hide TokenUsage;
 import 'chat_model_agent.dart';
 
@@ -111,6 +112,9 @@ class Runner {
   RunHandle? activeRun(String sessionId) => _active[sessionId];
 
   /// Starts a run. Throws [RunInProgressException] when [sessionId] is busy.
+  ///
+  /// The session is reserved before anything asynchronous happens, so two
+  /// calls for the same session can never both start.
   Future<RunHandle> run(
     List<Message> messages, {
     String? sessionId,
@@ -135,14 +139,55 @@ class Runner {
       },
     );
 
-    final reader = await agent.run(messages, context: context);
     final controller = StreamController<AgentEvent>();
     final resultCompleter = Completer<RunResult>();
+    final handle = RunHandle._(
+      runId: context.runId,
+      sessionId: sessionId,
+      events: controller.stream,
+      result: resultCompleter.future,
+      cancelToken: cancelToken,
+      pendingApprovals: pending,
+    );
+    if (sessionId != null) _active[sessionId] = handle;
+
     final appended = <Message>[];
     Message? finalMessage;
     var usage = TokenUsage.zero;
     var cancelled = false;
     String? error;
+
+    /// Ends the run: frees the session, closes [RunHandle.events] and
+    /// completes [RunHandle.result].
+    Future<void> finish() async {
+      if (sessionId != null) _active.remove(sessionId);
+
+      // A listener sees every event before the result completes. Without a
+      // listener the done event is never delivered, so waiting for it would
+      // leave the result pending forever; the events stay buffered instead.
+      final closed = controller.close();
+      if (controller.hasListener) await closed;
+
+      resultCompleter.complete(
+        RunResult(
+          runId: context.runId,
+          messages: appended,
+          finalMessage: finalMessage,
+          usage: usage,
+          cancelled: cancelled || cancelToken.isCancelled,
+          error: error,
+        ),
+      );
+    }
+
+    final StreamReader<AgentEvent> reader;
+    try {
+      reader = await agent.run(messages, context: context);
+    } catch (e) {
+      error = e.toString();
+      await finish();
+      rethrow;
+    }
 
     unawaited(() async {
       try {
@@ -169,30 +214,10 @@ class Runner {
         error ??= e.toString();
         controller.addError(e, st);
       } finally {
-        if (sessionId != null) _active.remove(sessionId);
-        await controller.close();
-        resultCompleter.complete(
-          RunResult(
-            runId: context.runId,
-            messages: appended,
-            finalMessage: finalMessage,
-            usage: usage,
-            cancelled: cancelled || cancelToken.isCancelled,
-            error: error,
-          ),
-        );
+        await finish();
       }
     }());
 
-    final handle = RunHandle._(
-      runId: context.runId,
-      sessionId: sessionId,
-      events: controller.stream,
-      result: resultCompleter.future,
-      cancelToken: cancelToken,
-      pendingApprovals: pending,
-    );
-    if (sessionId != null) _active[sessionId] = handle;
     return handle;
   }
 }

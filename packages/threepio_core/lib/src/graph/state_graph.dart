@@ -278,7 +278,6 @@ class StateGraph<S extends GraphState> {
       startIteration: checkpoint.iteration,
       existingPath: [...checkpoint.path, checkpoint.currentNode],
       threadId: threadId,
-      callbackManager: callbackManager,
     );
   }
 
@@ -299,7 +298,6 @@ class StateGraph<S extends GraphState> {
       return _resumeFromCheckpoint(
         checkpointId,
         threadId: threadId,
-        callbackManager: callbackManager,
       );
     }
 
@@ -327,14 +325,12 @@ class StateGraph<S extends GraphState> {
         () => _executeGraph(
           initialState,
           threadId: threadId,
-          callbackManager: callbackManager,
         ),
       );
     } else {
       return _executeGraph(
         initialState,
         threadId: threadId,
-        callbackManager: callbackManager,
       );
     }
   }
@@ -343,7 +339,6 @@ class StateGraph<S extends GraphState> {
   Future<GraphResult<S>> _resumeFromCheckpoint(
     String checkpointId, {
     String? threadId,
-    CallbackManager? callbackManager,
   }) async {
     if (checkpointStore == null) {
       throw StateError(
@@ -382,7 +377,6 @@ class StateGraph<S extends GraphState> {
       startIteration: checkpoint.iteration,
       existingPath: checkpoint.path,
       threadId: threadId ?? checkpoint.threadId,
-      callbackManager: callbackManager,
     );
   }
 
@@ -393,7 +387,6 @@ class StateGraph<S extends GraphState> {
     int startIteration = 0,
     List<String>? existingPath,
     String? threadId,
-    CallbackManager? callbackManager,
   }) async {
     var currentState = initialState;
     var currentNode = startNode ?? _entryPoint!;

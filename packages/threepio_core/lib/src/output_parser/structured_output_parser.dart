@@ -317,7 +317,7 @@ class PydanticOutputParser<T> extends OutputParser<T> {
       case 'array':
         return property.items != null
             ? [_propertyToExample(property.items!)]
-            : [];
+            : <dynamic>[];
       case 'object':
         if (property.properties != null) {
           final obj = <String, dynamic>{};
@@ -326,7 +326,7 @@ class PydanticOutputParser<T> extends OutputParser<T> {
           }
           return obj;
         }
-        return {};
+        return <String, dynamic>{};
       default:
         return null;
     }

@@ -262,7 +262,7 @@ class CommaSeparatedListOutputParser extends ListOutputParser {
 class ChainedOutputParser<T> extends OutputParser<T> {
   ChainedOutputParser(this.parsers) : assert(parsers.isNotEmpty);
 
-  final List<OutputParser> parsers;
+  final List<OutputParser<dynamic>> parsers;
 
   @override
   Future<T> parse(String text) async {
@@ -284,7 +284,7 @@ class ChainedOutputParser<T> extends OutputParser<T> {
       );
     }
 
-    return current as T;
+    return current;
   }
 
   @override

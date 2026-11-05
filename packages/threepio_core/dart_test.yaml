@@ -1,0 +1,18 @@
+# Test configuration for threepio_core.
+#
+# Run tests through tool/test_shards.sh (or tool/test_file_audit.sh for a single
+# file); both add a wall-clock cap and a resident-memory cap. A bare `dart test`
+# is never needed.
+
+# A test that has not finished after 30 s is hung, not slow.
+timeout: 30s
+
+# One suite at a time, so a runaway test cannot multiply its memory use.
+concurrency: 1
+
+tags:
+  # Tests that call live provider APIs. The tool scripts exclude the tag; the
+  # tests also skip themselves unless THREEPIO_INTEGRATION=1 is set:
+  #   THREEPIO_INTEGRATION=1 OPENAI_API_KEY=… dart test -j 1 --tags integration test/integration
+  integration:
+    timeout: 2x

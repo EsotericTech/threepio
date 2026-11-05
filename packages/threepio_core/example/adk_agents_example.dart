@@ -7,11 +7,9 @@ import 'dart:io';
 import 'package:threepio_core/threepio_core.dart';
 
 /// Agent Development Kit (ADK) example demonstrating:
-/// 1. ChatModelAgent with ReAct pattern
+/// 1. ChatModelAgent run through a Runner (model + tools loop)
 /// 2. Event streaming and handling
-/// 3. WorkflowAgent for multi-step processes
-/// 4. SupervisorAgent for delegation
-/// 5. Agent as Tool pattern
+/// 3. WorkflowAgent for multi-step processes (legacy agents)
 ///
 /// To run this example:
 /// 1. Set GEMINI_API_KEY environment variable
@@ -29,115 +27,95 @@ Future<void> main() async {
     config: GeminiConfig(apiKey: apiKey),
   );
 
-  await chatModelAgentExample(model);
-  await eventStreamingExample(model);
-  await workflowAgentExample(model);
+  try {
+    await chatModelAgentExample(model);
+    await eventStreamingExample(model);
+    await workflowAgentExample(model);
+  } finally {
+    model.dispose();
+  }
 }
 
-/// Example 1: ChatModelAgent with ReAct pattern
+/// Example 1: ChatModelAgent run through a Runner
 Future<void> chatModelAgentExample(GeminiChatModel model) async {
-  print('1. ChatModelAgent (ReAct Pattern)...\n');
+  print('1. ChatModelAgent (model + tools loop)...\n');
 
-  // Create tools and registry
-  final searchTool = _MockSearchTool();
-  final calculatorTool = _CalculatorTool();
-
-  final registry = ToolRegistry();
-  registry.register(searchTool);
-  registry.register(calculatorTool);
-
-  // Create agent
   final agent = ChatModelAgent(
-    name: 'research-assistant',
-    description: 'An AI assistant that can search and calculate',
-    model: model,
-    toolRegistry: registry,
-    systemPrompt: '''
+    ChatModelAgentConfig(
+      name: 'research-assistant',
+      description: 'An AI assistant that can search and calculate',
+      model: model,
+      tools: [_MockSearchTool(), _CalculatorTool()],
+      instruction: '''
 You are a helpful research assistant. You have access to:
 - search: Search for information on a topic
 - calculate: Perform mathematical calculations
 
 Always use tools when needed to provide accurate information.
 ''',
-    config: const ChatModelAgentConfig(
       maxIterations: 5,
-      maxToolCalls: 10,
-      emitPartialOutputs: true,
     ),
   );
 
-  // Run agent and get final result
+  // Run the agent and wait for the final result
   print('   User: What is 15% of 250?');
 
-  final result = await agent.invoke([
+  final handle = await Runner(agent: agent).run([
     Message.user('What is 15% of 250?'),
   ]);
+  final result = await handle.result;
 
-  print('   Agent: ${result.content}\n');
+  print('   Agent: ${result.finalMessage?.content ?? result.error}\n');
 }
 
 /// Example 2: Event streaming
 Future<void> eventStreamingExample(GeminiChatModel model) async {
   print('2. Event Streaming...\n');
 
-  final registry = ToolRegistry();
-  registry.register(_CalculatorTool());
-
   final agent = ChatModelAgent(
-    name: 'streaming-agent',
-    description: 'An agent that demonstrates event streaming',
-    model: model,
-    toolRegistry: registry,
-    config: const ChatModelAgentConfig(
-      emitPartialOutputs: true,
+    ChatModelAgentConfig(
+      name: 'streaming-agent',
+      description: 'An agent that demonstrates event streaming',
+      model: model,
+      tools: [_CalculatorTool()],
     ),
   );
 
   print('   User: Calculate 123 + 456 and explain the result.\n');
 
-  final reader = await agent.run([
+  final handle = await Runner(agent: agent).run([
     Message.user('Calculate 123 + 456 and explain the result.'),
   ]);
 
-  try {
-    while (true) {
-      final event = await reader.recv();
-      switch (event) {
-        case AgentRunStartEvent():
-          print('   [Event] Agent started (run: ${event.runId})');
+  await for (final event in handle.events) {
+    switch (event) {
+      case AgentRunStartEvent():
+        print('   [Event] Agent started (run: ${event.runId})');
 
-        case AgentActionEvent(action: final action):
-          if (action is ToolCallAction) {
-            print('   [Event] Calling tool: ${action.toolName}');
-            print('           Args: ${action.arguments}');
-          }
+      case AgentActionEvent(action: ToolCallAction(:final toolName, :final arguments)):
+        print('   [Event] Calling tool: $toolName');
+        print('           Args: $arguments');
 
-        case ToolResultEvent(toolName: final name, result: final result):
-          print('   [Event] Tool result from $name: $result');
+      case ToolResultEvent(toolName: final name, result: final result):
+        print('   [Event] Tool result from $name: $result');
 
-        case AgentOutputEvent(message: final message, isPartial: final isPartial):
-          if (!isPartial) {
-            print('\n   [Final] ${message.content}');
-          }
+      case AgentOutputEvent(message: final message, isPartial: false):
+        print('\n   [Final] ${message.content}');
 
-        case AgentRunEndEvent(tokenUsage: final usage):
-          print('\n   [Event] Agent completed');
-          if (usage != null) {
-            print('           Tokens: ${usage.totalTokens}');
-          }
+      case AgentUsageEvent(usage: final usage):
+        print('   [Event] Tokens: ${usage.totalTokens}');
 
-        case AgentErrorEvent(error: final error):
-          print('   [Error] $error');
+      case AgentRunEndEvent():
+        print('\n   [Event] Agent completed');
 
-        default:
-          // Other events
-          break;
-      }
+      case AgentErrorEvent(error: final error):
+        print('   [Error] $error');
+
+      default:
+        // Other events
+        break;
     }
-  } on StreamEOFException {
-    // Stream complete
   }
-  await reader.close();
 
   print('');
 }
@@ -146,11 +124,12 @@ Future<void> eventStreamingExample(GeminiChatModel model) async {
 Future<void> workflowAgentExample(GeminiChatModel model) async {
   print('3. WorkflowAgent (Sequential Steps)...\n');
 
+  // WorkflowAgent composes the legacy BaseAgent implementations.
   // Create empty tool registry for agents that don't need tools
   final emptyRegistry = ToolRegistry();
 
   // Create specialized agents for each step
-  final analyzerAgent = ChatModelAgent(
+  final analyzerAgent = LegacyChatModelAgent(
     name: 'analyzer',
     description: 'Analyzes user requests',
     model: model,
@@ -158,7 +137,7 @@ Future<void> workflowAgentExample(GeminiChatModel model) async {
     systemPrompt: 'You analyze user requests and extract key requirements. Be concise.',
   );
 
-  final plannerAgent = ChatModelAgent(
+  final plannerAgent = LegacyChatModelAgent(
     name: 'planner',
     description: 'Creates action plans',
     model: model,
@@ -166,7 +145,7 @@ Future<void> workflowAgentExample(GeminiChatModel model) async {
     systemPrompt: 'You create action plans based on analysis. List 3-5 steps.',
   );
 
-  final summarizerAgent = ChatModelAgent(
+  final summarizerAgent = LegacyChatModelAgent(
     name: 'summarizer',
     description: 'Summarizes plans',
     model: model,
@@ -253,7 +232,7 @@ class _MockSearchTool extends InvokableTool {
     final query = args['query'] as String;
 
     // Simulate search delay
-    await Future.delayed(const Duration(milliseconds: 100));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
 
     return jsonEncode({
       'query': query,

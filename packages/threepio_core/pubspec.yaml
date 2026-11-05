@@ -7,7 +7,9 @@ issue_tracker: https://github.com/EsotericTech/threepio/issues
 documentation: https://github.com/EsotericTech/threepio/blob/main/README.md
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  # The code generators this package is built with (freezed, json_serializable)
+  # need Dart 3.9, so nothing older can build or test it.
+  sdk: ^3.9.0
 
 dependencies:
   # Core
@@ -18,12 +20,9 @@ dependencies:
   json_annotation: ^4.8.0
 
   # Utilities
-  equatable: ^2.0.5
+  collection: ^1.18.0
+  logging: ^1.2.0
   uuid: ^4.2.0
-
-  # Streams & Async
-  rxdart: ^0.27.7
-  async: ^2.11.0
 
   # HTTP Client
   http: ^1.1.0
@@ -31,8 +30,6 @@ dependencies:
 dev_dependencies:
   # Testing
   test: ^1.24.0
-  mockito: ^5.4.0
-  dotenv: ^4.2.0
 
   # Code Generation
   build_runner: ^2.4.0

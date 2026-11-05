@@ -176,7 +176,7 @@ class JsonOutputParser extends OutputParser<Map<String, dynamic>> {
         if (property.items != null) {
           return [_propertyToExample(property.items!)];
         }
-        return [];
+        return <dynamic>[];
 
       case 'object':
         if (property.properties != null) {
@@ -186,7 +186,7 @@ class JsonOutputParser extends OutputParser<Map<String, dynamic>> {
           }
           return obj;
         }
-        return {};
+        return <String, dynamic>{};
 
       default:
         return null;

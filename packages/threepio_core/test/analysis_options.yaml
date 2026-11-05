@@ -1,0 +1,8 @@
+# Tests favour readable set-up code over these style lints.
+include: ../analysis_options.yaml
+
+linter:
+  rules:
+    cascade_invocations: false
+    prefer_const_constructors: false
+    unnecessary_lambdas: false

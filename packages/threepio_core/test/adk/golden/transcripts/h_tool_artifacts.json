@@ -1,0 +1,363 @@
+{
+  "model_calls": [
+    {
+      "tools": [
+        "capture_screen"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ]
+    },
+    {
+      "tools": [
+        "capture_screen"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "index": 0,
+              "id": "call_1",
+              "type": "function",
+              "function": {
+                "name": "capture_screen",
+                "arguments": "{}"
+              }
+            }
+          ],
+          "responseMeta": {
+            "finishReason": "tool_calls",
+            "usage": {
+              "promptTokens": 10,
+              "completionTokens": 5,
+              "totalTokens": 15,
+              "cost": 0.001
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "content": "Captured the screen.",
+          "toolCallId": "call_1",
+          "toolName": "capture_screen",
+          "extra": {
+            "data": {
+              "display": 1
+            },
+            "artifacts": [
+              {
+                "id": "artifact_1",
+                "path": "/tmp/kortney/capture.png",
+                "mime": "image/png",
+                "width": 1280,
+                "height": 720,
+                "bytes": 2048
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "capture_screen",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    },
+    {
+      "event_type": "action",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "action": {
+        "type": "tool_call",
+        "tool_call_id": "call_1",
+        "tool_name": "capture_screen",
+        "arguments": "{}"
+      },
+      "step_number": 0
+    },
+    {
+      "event_type": "tool_result",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "tool_call_id": "call_1",
+      "tool_name": "capture_screen",
+      "result": "Captured the screen.",
+      "is_error": false,
+      "duration_ms": "<duration>"
+    },
+    {
+      "event_type": "artifact",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "artifact": {
+        "id": "artifact_1",
+        "path": "/tmp/kortney/capture.png",
+        "mime": "image/png",
+        "width": 1280,
+        "height": 720,
+        "bytes": 2048
+      },
+      "tool_call_id": "call_1"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "tool",
+        "content": "Captured the screen.",
+        "toolCallId": "call_1",
+        "toolName": "capture_screen",
+        "extra": {
+          "data": {
+            "display": 1
+          },
+          "artifacts": [
+            {
+              "id": "artifact_1",
+              "path": "/tmp/kortney/capture.png",
+              "mime": "image/png",
+              "width": 1280,
+              "height": 720,
+              "bytes": 2048
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Here it is."
+      },
+      "is_partial": true
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Here it is.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Here it is.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "is_partial": false
+    },
+    {
+      "event_type": "run_end",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "output_message": {
+        "role": "assistant",
+        "content": "Here it is.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "duration_ms": "<duration>",
+      "tool_call_count": 1
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": true,
+    "cancelled": false,
+    "usage": {
+      "promptTokens": 20,
+      "completionTokens": 10,
+      "totalTokens": 30,
+      "cost": 0.002
+    },
+    "final_message": {
+      "role": "assistant",
+      "content": "Here it is.",
+      "responseMeta": {
+        "finishReason": "stop",
+        "usage": {
+          "promptTokens": 10,
+          "completionTokens": 5,
+          "totalTokens": 15,
+          "cost": 0.001
+        }
+      }
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "capture_screen",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      {
+        "role": "tool",
+        "content": "Captured the screen.",
+        "toolCallId": "call_1",
+        "toolName": "capture_screen",
+        "extra": {
+          "data": {
+            "display": 1
+          },
+          "artifacts": [
+            {
+              "id": "artifact_1",
+              "path": "/tmp/kortney/capture.png",
+              "mime": "image/png",
+              "width": 1280,
+              "height": 720,
+              "bytes": 2048
+            }
+          ]
+        }
+      },
+      {
+        "role": "assistant",
+        "content": "Here it is.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    ]
+  }
+}

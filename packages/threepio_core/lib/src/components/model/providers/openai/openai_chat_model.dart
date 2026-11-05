@@ -3,9 +3,9 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../../../../callbacks/callback_handler.dart';
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
+import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
@@ -35,19 +35,37 @@ class OpenAIChatModel extends ToolCallingChatModel {
     required this.config,
     this.httpClient,
     this.tools,
-  });
+  }) : _http = SharedHttpClient(httpClient, owner: 'OpenAIChatModel');
+
+  /// A copy of [source] with [tools] bound, sharing its HTTP client.
+  OpenAIChatModel._bound(OpenAIChatModel source, this.tools)
+      : config = source.config,
+        httpClient = source.httpClient,
+        _http = source._http;
 
   /// OpenAI configuration
   final OpenAIConfig config;
 
-  /// HTTP client for making requests
+  /// HTTP client for making requests.
+  ///
+  /// When omitted, the model creates one client on first use, reuses it for
+  /// every request and closes it in [dispose].
   final http.Client? httpClient;
 
   /// Tools bound to this model instance
   final List<ToolInfo>? tools;
 
-  /// Get or create HTTP client
-  http.Client get _client => httpClient ?? http.Client();
+  final SharedHttpClient _http;
+
+  http.Client get _client => _http.client;
+
+  /// Releases the HTTP client this model created for itself.
+  ///
+  /// Call it when the model is no longer needed; using it afterwards throws
+  /// a [StateError]. The client is shared with the models returned by
+  /// [withTools], so they stop working as well. A client passed as [httpClient] is left open: whoever created it
+  /// closes it.
+  void dispose() => _http.close();
 
   @override
   Future<Message> generate(
@@ -127,11 +145,7 @@ class OpenAIChatModel extends ToolCallingChatModel {
 
   @override
   ToolCallingChatModel withTools(List<ToolInfo> tools) {
-    return OpenAIChatModel(
-      config: config,
-      httpClient: httpClient,
-      tools: tools,
-    );
+    return OpenAIChatModel._bound(this, tools);
   }
 
   /// Merge options with bound tools
@@ -198,8 +212,12 @@ class OpenAIChatModel extends ToolCallingChatModel {
     final url = Uri.parse('${config.baseUrl}/chat/completions');
     final headers = _buildHeaders();
 
+    // Outside the try: using a disposed model is a programming error,
+    // not a failed request.
+    final client = _client;
+
     try {
-      final response = await _client
+      final response = await client
           .post(
             url,
             headers: headers,
@@ -231,12 +249,16 @@ class OpenAIChatModel extends ToolCallingChatModel {
     final url = Uri.parse('${config.baseUrl}/chat/completions');
     final headers = _buildHeaders();
 
+    // Outside the try: using a disposed model is a programming error,
+    // not a failed request.
+    final client = _client;
+
     try {
       final request = http.Request('POST', url)
         ..headers.addAll(headers)
         ..body = jsonEncode(requestBody);
 
-      final response = await _client.send(request).timeout(config.timeout);
+      final response = await client.send(request).timeout(config.timeout);
 
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();

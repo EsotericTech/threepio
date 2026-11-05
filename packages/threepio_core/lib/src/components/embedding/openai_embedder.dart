@@ -3,9 +3,9 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../../callbacks/callback_handler.dart';
 import '../../callbacks/callback_manager.dart';
 import '../../callbacks/run_info.dart';
+import '../../internal/shared_http_client.dart';
 import '../model/providers/openai/openai_config.dart';
 import 'embedder.dart';
 
@@ -37,19 +37,30 @@ class OpenAIEmbedder implements Embedder {
     required this.config,
     this.httpClient,
     this.defaultModel = 'text-embedding-3-small',
-  });
+  }) : _http = SharedHttpClient(httpClient, owner: 'OpenAIEmbedder');
 
   /// OpenAI configuration
   final OpenAIConfig config;
 
-  /// HTTP client for making requests
+  /// HTTP client for making requests.
+  ///
+  /// When omitted, the embedder creates one client on first use, reuses it
+  /// for every request and closes it in [dispose].
   final http.Client? httpClient;
 
   /// Default embedding model
   final String defaultModel;
 
-  /// Get or create HTTP client
-  http.Client get _client => httpClient ?? http.Client();
+  final SharedHttpClient _http;
+
+  http.Client get _client => _http.client;
+
+  /// Releases the HTTP client this embedder created for itself.
+  ///
+  /// Call it when the embedder is no longer needed; using it afterwards throws
+  /// a [StateError]. A client passed as [httpClient] is left open: whoever created it
+  /// closes it.
+  void dispose() => _http.close();
 
   @override
   Future<List<List<double>>> embedStrings(
@@ -122,8 +133,12 @@ class OpenAIEmbedder implements Embedder {
     final url = Uri.parse('${config.baseUrl}/embeddings');
     final headers = _buildHeaders();
 
+    // Outside the try: using a disposed embedder is a programming error,
+    // not a failed request.
+    final client = _client;
+
     try {
-      final response = await _client
+      final response = await client
           .post(
             url,
             headers: headers,
@@ -233,7 +248,7 @@ class OpenAIEmbedder implements Embedder {
 
       // Small delay to avoid rate limiting
       if (end < texts.length) {
-        await Future.delayed(const Duration(milliseconds: 100));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
       }
     }
 

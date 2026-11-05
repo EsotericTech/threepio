@@ -39,147 +39,213 @@ class SourceEOFException implements Exception {
   String toString() => 'EOF from source stream: $sourceName';
 }
 
-/// Reader for consuming items from a stream
+/// Reader for consuming items from a stream.
+///
+/// A reader has a single consumer: call [recv] until it throws
+/// [StreamEOFException], then [close]. Items that arrive before the consumer
+/// asks for them are buffered, so nothing is lost between creating a reader and
+/// the first [recv].
+///
+/// [copy], [transform] and the merge and concat helpers hand the reader over to
+/// the readers they return. From then on the original reader is unusable
+/// ([recv] throws [StreamClosedException]) and closing the derived readers
+/// releases the underlying source.
 class StreamReader<T> {
-  StreamReader._(this._controller,
-      {void Function()? onClose, bool subscribe = false})
-      : _onClose = onClose {
-    // Subscribe immediately if requested (for user-facing constructors)
-    if (subscribe) {
-      _ensureSubscription();
+  StreamReader._({Future<void> Function()? onClose}) : _onClose = onClose;
+
+  /// Create from a Dart Stream.
+  ///
+  /// The stream is listened to immediately; [close] cancels the subscription.
+  factory StreamReader.fromStream(Stream<T> stream) {
+    final reader = StreamReader<T>._();
+    final subscription = stream.listen(
+      (data) => reader.feed(StreamItem.data(data)),
+      onError: (Object error, StackTrace stackTrace) =>
+          reader.feed(StreamItem.error(error, stackTrace)),
+      onDone: reader.feedDone,
+      cancelOnError: false,
+    );
+    reader._onClose = subscription.cancel;
+    return reader;
+  }
+
+  /// Create from an iterable (array).
+  ///
+  /// All items are available at once and the end of the stream is reported by
+  /// the [recv] call that follows the last item.
+  factory StreamReader.fromIterable(Iterable<T> items) {
+    final reader = StreamReader<T>._();
+    for (final item in items) {
+      reader.feed(StreamItem.data(item));
+    }
+    reader.feedDone();
+    return reader;
+  }
+
+  /// Creates an empty reader that is filled through [feed] and [feedDone].
+  ///
+  /// [onClose] runs once, when the reader is closed or released.
+  @internal
+  factory StreamReader.buffered({Future<void> Function()? onClose}) {
+    return StreamReader<T>._(onClose: onClose);
+  }
+
+  Future<void> Function()? _onClose;
+
+  /// Items that arrived and were not yet received.
+  final Queue<StreamItem<T>> _queue = Queue<StreamItem<T>>();
+
+  /// [recv] calls waiting for an item, oldest first.
+  final Queue<Completer<StreamItem<T>>> _waiters =
+      Queue<Completer<StreamItem<T>>>();
+
+  /// Where items go once this reader was handed over by [drainTo].
+  ({void Function(StreamItem<T> item) onItem, void Function() onDone})? _drain;
+
+  /// The producer signalled the end of the stream.
+  bool _sourceDone = false;
+
+  /// [recv] is no longer allowed: closed, or handed over by [drainTo].
+  bool _isClosed = false;
+
+  /// The source was let go; late items are dropped.
+  bool _isReleased = false;
+
+  final _doneCompleter = Completer<void>();
+
+  /// Whether the source of this reader was released, either by [close] or by
+  /// closing the readers derived from it. Items fed afterwards are dropped.
+  @internal
+  bool get isReleased => _isReleased;
+
+  /// Adds an item to this reader's buffer, or completes a waiting [recv].
+  ///
+  /// Does nothing once the reader was released or the stream has ended, so a
+  /// producer never fails because its consumer went away.
+  @internal
+  void feed(StreamItem<T> item) {
+    if (_isReleased || _sourceDone) return;
+
+    final drain = _drain;
+    if (drain != null) {
+      drain.onItem(item);
+    } else if (_waiters.isNotEmpty) {
+      _waiters.removeFirst().complete(item);
+    } else {
+      _queue.add(item);
     }
   }
 
-  /// Create from a Dart Stream
-  factory StreamReader.fromStream(Stream<T> stream) {
-    final controller = StreamController<StreamItem<T>>.broadcast();
+  /// Marks the end of the stream: once the buffer is empty, [recv] throws
+  /// [StreamEOFException].
+  @internal
+  void feedDone() {
+    if (_isReleased || _sourceDone) return;
+    _sourceDone = true;
 
-    stream.listen(
-      (data) => controller.add(StreamItem.data(data)),
-      onError: (Object error, StackTrace stackTrace) =>
-          controller.add(StreamItem.error(error, stackTrace)),
-      onDone: controller.close,
-      cancelOnError: false,
-    );
-
-    // Subscribe immediately to ensure we don't miss events
-    return StreamReader._(controller, subscribe: true);
+    final drain = _drain;
+    if (drain != null) {
+      drain.onDone();
+    } else {
+      _failWaiters(const StreamEOFException());
+    }
   }
 
-  /// Create from an iterable (array)
-  factory StreamReader.fromIterable(Iterable<T> items) {
-    final controller = StreamController<StreamItem<T>>.broadcast();
-
-    Future.microtask(() {
-      for (final item in items) {
-        controller.add(StreamItem.data(item));
-      }
-      controller.close();
-    });
-
-    // Subscribe immediately to ensure we don't miss events
-    return StreamReader._(controller, subscribe: true);
-  }
-
-  final StreamController<StreamItem<T>> _controller;
-  final void Function()? _onClose;
-  StreamSubscription<StreamItem<T>>? _subscription;
-  final Queue<StreamItem<T>> _queue = Queue<StreamItem<T>>();
-  Completer<void>? _itemAvailable;
-  bool _streamDone = false;
-  bool _isClosed = false;
-  final _completer = Completer<void>();
-
-  /// Internal access to the controller stream (for utilities)
+  /// Hands this reader over to a derived reader.
+  ///
+  /// Buffered items are passed to [onItem] immediately, later ones as they
+  /// arrive, and [onDone] is called when the stream ends. This reader becomes
+  /// unusable; the new owner calls [release] when it is closed.
   @internal
-  StreamController<StreamItem<T>> get controller => _controller;
-
-  /// Internal factory for creating a reader from a controller
-  @internal
-  factory StreamReader.fromController(
-    StreamController<StreamItem<T>> controller, {
-    void Function()? onClose,
-    bool subscribe = false,
+  void drainTo({
+    required void Function(StreamItem<T> item) onItem,
+    required void Function() onDone,
   }) {
-    return StreamReader._(controller, onClose: onClose, subscribe: subscribe);
+    if (_drain != null) {
+      throw StateError(
+        'This StreamReader was already handed over to another reader; '
+        'use copy() to consume a stream more than once.',
+      );
+    }
+
+    final wasEnded = _sourceDone || _isReleased;
+    _isClosed = true;
+    _failWaiters(const StreamClosedException());
+    _drain = (onItem: onItem, onDone: onDone);
+
+    while (_queue.isNotEmpty) {
+      onItem(_queue.removeFirst());
+    }
+    if (wasEnded) onDone();
   }
 
-  /// Initialize subscription if not already done
-  void _ensureSubscription() {
-    if (_subscription != null) return;
+  /// Lets go of the source of this reader, for example by cancelling the
+  /// subscription behind [StreamReader.fromStream]. Safe to call repeatedly.
+  @internal
+  Future<void> release() async {
+    if (_isReleased) return;
+    _isReleased = true;
+    _queue.clear();
 
-    _subscription = _controller.stream.listen(
-      (item) {
-        _queue.add(item);
-        _itemAvailable?.complete();
-        _itemAvailable = null;
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        _queue.add(StreamItem.error(error, stackTrace));
-        _itemAvailable?.complete();
-        _itemAvailable = null;
-      },
-      onDone: () {
-        _streamDone = true;
-        _itemAvailable?.complete();
-        _itemAvailable = null;
-      },
-      cancelOnError: false,
-    );
+    try {
+      await _onClose?.call();
+    } finally {
+      _doneCompleter.complete();
+    }
+  }
+
+  void _failWaiters(Object error) {
+    while (_waiters.isNotEmpty) {
+      _waiters.removeFirst().completeError(error);
+    }
   }
 
   /// Receive the next item from the stream
   ///
   /// Returns the next chunk of data.
   /// Throws [StreamEOFException] when the stream ends.
-  /// Throws [StreamClosedException] if called after close.
+  /// Throws [StreamClosedException] if called after close, or if the reader
+  /// is closed while the call is waiting for an item.
   /// Rethrows any error from the stream.
   Future<T> recv() async {
     if (_isClosed) {
       throw const StreamClosedException();
     }
 
-    // Ensure we're subscribed to the stream
-    _ensureSubscription();
-
-    // Wait for items if queue is empty
-    while (true) {
-      // Check queue first
-      if (_queue.isNotEmpty) {
-        final item = _queue.removeFirst();
-
-        if (item.hasError) {
-          if (item.stackTrace != null) {
-            Error.throwWithStackTrace(item.error!, item.stackTrace!);
-          } else {
-            throw item.error!;
-          }
-        }
-
-        return item.chunk!;
-      }
-
-      // Stream ended and queue is empty
-      if (_streamDone) {
-        throw const StreamEOFException();
-      }
-
-      // Wait for next item
-      _itemAvailable = Completer<void>();
-      await _itemAvailable!.future;
+    final StreamItem<T> item;
+    if (_queue.isNotEmpty) {
+      item = _queue.removeFirst();
+    } else if (_sourceDone) {
+      throw const StreamEOFException();
+    } else {
+      final waiter = Completer<StreamItem<T>>();
+      _waiters.add(waiter);
+      item = await waiter.future;
     }
+
+    final error = item.error;
+    if (error != null) {
+      Error.throwWithStackTrace(error, item.stackTrace ?? StackTrace.current);
+    }
+
+    return item.chunk as T;
   }
 
   /// Receive all remaining items as a list
   ///
   /// Consumes the entire stream and returns all items.
-  /// Throws on error.
+  /// Throws on error. The [SourceEOFException] markers of a named merge are
+  /// not errors and are skipped.
   Future<List<T>> collectAll() async {
     final result = <T>[];
 
     try {
       while (true) {
-        result.add(await recv());
+        try {
+          result.add(await recv());
+        } on SourceEOFException {
+          // One source of a named merge ended; the others go on.
+        }
       }
     } on StreamEOFException {
       // Expected end of stream
@@ -189,10 +255,16 @@ class StreamReader<T> {
   }
 
   /// Convert this reader to a Dart Stream
+  ///
+  /// The [SourceEOFException] markers of a named merge are skipped.
   Stream<T> asStream() async* {
     try {
       while (true) {
-        yield await recv();
+        try {
+          yield await recv();
+        } on SourceEOFException {
+          // One source of a named merge ended; the others go on.
+        }
       }
     } on StreamEOFException {
       // Expected end of stream
@@ -201,26 +273,30 @@ class StreamReader<T> {
 
   /// Close the stream reader
   ///
-  /// Should be called when done reading to free resources.
+  /// Should be called when done reading to free resources. A [recv] call that
+  /// is waiting for an item completes with [StreamClosedException].
+  ///
+  /// Closing a reader that was handed over by [copy], [transform] or a merge
+  /// or concat helper does nothing: the derived readers own the source.
   Future<void> close() async {
     if (_isClosed) {
       return;
     }
 
     _isClosed = true;
-    _onClose?.call();
-    await _subscription?.cancel();
-    await _controller.close();
-    _completer.complete();
+    _failWaiters(const StreamClosedException());
+    await release();
   }
 
   /// Wait for the stream to be closed
-  Future<void> get done => _completer.future;
+  Future<void> get done => _doneCompleter.future;
 
   /// Copy this stream reader into multiple independent readers
   ///
   /// The original reader becomes unusable after this operation.
-  /// Each returned reader can independently consume the stream.
+  /// Each returned reader can independently consume the stream and sees every
+  /// item, whenever it starts reading. The source is released when the last
+  /// copy is closed.
   List<StreamReader<T>> copy(int n) {
     if (n < 1) {
       return [];
@@ -230,66 +306,62 @@ class StreamReader<T> {
       return [this];
     }
 
-    // Create n broadcast controllers for the copies
-    final controllers = List.generate(
+    var openCopies = n;
+    Future<void> onCopyClosed() async {
+      openCopies--;
+      if (openCopies == 0) await release();
+    }
+
+    final copies = List.generate(
       n,
-      (_) => StreamController<StreamItem<T>>.broadcast(),
+      (_) => StreamReader<T>._(onClose: onCopyClosed),
     );
 
-    // Broadcast items to all controllers
-    _controller.stream.listen(
-      (item) {
-        for (final controller in controllers) {
-          controller.add(item);
-        }
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        for (final controller in controllers) {
-          controller.add(StreamItem.error(error, stackTrace));
+    drainTo(
+      onItem: (item) {
+        for (final copy in copies) {
+          copy.feed(item);
         }
       },
       onDone: () {
-        for (final controller in controllers) {
-          controller.close();
+        for (final copy in copies) {
+          copy.feedDone();
         }
       },
-      cancelOnError: false,
     );
 
-    // Mark this reader as closed since copies will handle consumption
-    _isClosed = true;
-
-    return controllers.map((c) => StreamReader._(c)).toList();
+    return copies;
   }
 
   /// Transform elements using a converter function
   ///
-  /// Return [NoValueException] from the converter to skip an element.
+  /// Throw [NoValueException] from the converter to skip an element. Any
+  /// other exception is delivered to the consumer of the returned reader.
+  ///
+  /// The original reader becomes unusable after this operation; closing the
+  /// returned reader releases it.
   StreamReader<R> transform<R>(R Function(T) converter) {
-    final controller = StreamController<StreamItem<R>>.broadcast();
+    final transformed = StreamReader<R>._(onClose: release);
 
-    _controller.stream.listen(
-      (item) {
-        if (item.hasError) {
-          controller.add(StreamItem<R>.error(item.error!, item.stackTrace));
-        } else if (item.chunk != null) {
-          try {
-            final converted = converter(item.chunk as T);
-            controller.add(StreamItem.data(converted));
-          } on NoValueException {
-            // Skip this item
-          } catch (e, st) {
-            controller.add(StreamItem<R>.error(e, st));
-          }
+    drainTo(
+      onItem: (item) {
+        final error = item.error;
+        if (error != null) {
+          transformed.feed(StreamItem<R>.error(error, item.stackTrace));
+          return;
+        }
+
+        try {
+          transformed.feed(StreamItem.data(converter(item.chunk as T)));
+        } on NoValueException {
+          // Skip this item
+        } catch (e, st) {
+          transformed.feed(StreamItem<R>.error(e, st));
         }
       },
-      onError: (Object error, StackTrace stackTrace) {
-        controller.add(StreamItem<R>.error(error, stackTrace));
-      },
-      onDone: controller.close,
-      cancelOnError: false,
+      onDone: transformed.feedDone,
     );
 
-    return StreamReader<R>.fromController(controller);
+    return transformed;
   }
 }

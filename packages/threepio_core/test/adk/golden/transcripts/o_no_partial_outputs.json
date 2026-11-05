@@ -1,0 +1,154 @@
+{
+  "model_calls": [
+    {
+      "tools": [],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "reasoning",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "delta": "thinking"
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Hello",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        },
+        "reasoningContent": "thinking"
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Hello",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        },
+        "reasoningContent": "thinking"
+      },
+      "is_partial": false
+    },
+    {
+      "event_type": "run_end",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "output_message": {
+        "role": "assistant",
+        "content": "Hello",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        },
+        "reasoningContent": "thinking"
+      },
+      "duration_ms": "<duration>",
+      "tool_call_count": 0
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": true,
+    "cancelled": false,
+    "usage": {
+      "promptTokens": 10,
+      "completionTokens": 5,
+      "totalTokens": 15,
+      "cost": 0.001
+    },
+    "final_message": {
+      "role": "assistant",
+      "content": "Hello",
+      "responseMeta": {
+        "finishReason": "stop",
+        "usage": {
+          "promptTokens": 10,
+          "completionTokens": 5,
+          "totalTokens": 15,
+          "cost": 0.001
+        }
+      },
+      "reasoningContent": "thinking"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Hello",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        },
+        "reasoningContent": "thinking"
+      }
+    ]
+  }
+}

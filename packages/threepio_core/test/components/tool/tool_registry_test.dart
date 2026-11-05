@@ -1,7 +1,11 @@
 import 'package:test/test.dart';
 import 'package:threepio_core/src/components/tool/examples/calculator_tool.dart';
 import 'package:threepio_core/src/components/tool/examples/weather_tool.dart';
+import 'package:threepio_core/src/components/tool/invokable_tool.dart';
+import 'package:threepio_core/src/components/tool/tool_executor.dart';
 import 'package:threepio_core/src/components/tool/tool_registry.dart';
+import 'package:threepio_core/src/schema/message.dart';
+import 'package:threepio_core/src/schema/tool_info.dart';
 
 void main() {
   group('ToolRegistry', () {
@@ -159,4 +163,138 @@ void main() {
       expect(registry.count, equals(1));
     });
   });
+
+  // Before the fix, register() stored the tool from a fire-and-forget
+  // `info().then(...)`, so a registry that was used right after registering
+  // looked empty.
+  group('ToolRegistry registration', () {
+    test('a registered tool counts and is listed at once', () {
+      final calculator = CalculatorTool();
+      final registry = ToolRegistry()..register(calculator);
+
+      expect(registry.count, 1);
+      expect(registry.getAllTools(), [calculator]);
+    });
+
+    test('getToolInfoList right after register returns every tool', () async {
+      final registry = ToolRegistry(tools: [CalculatorTool(), WeatherTool()]);
+
+      final infos = await registry.getToolInfoList();
+
+      expect(infos.map((i) => i.function.name), ['calculator', 'get_weather']);
+    });
+
+    test('findTool right after register finds the tool', () async {
+      final calculator = CalculatorTool();
+      final registry = ToolRegistry()..register(calculator);
+
+      expect(await registry.findTool('calculator'), same(calculator));
+      expect(await registry.findTool('missing'), isNull);
+    });
+
+    test('getTool finds the tool once ready has completed', () async {
+      final slow = _NamedTool('slow', delay: const Duration(milliseconds: 5));
+      final registry = ToolRegistry()..register(slow);
+      expect(registry.getTool('slow'), isNull);
+
+      await registry.ready;
+
+      expect(registry.getTool('slow'), same(slow));
+      expect(registry.hasTool('slow'), isTrue);
+      expect(registry.getToolNames(), ['slow']);
+    });
+
+    test('ToolExecutor finds a tool registered a moment ago', () async {
+      final registry = ToolRegistry()..register(CalculatorTool());
+      final executor = ToolExecutor(registry: registry);
+
+      final result = await executor.executeToolCall(
+        const ToolCall(
+          id: 'call_1',
+          function: FunctionCall(
+            name: 'calculator',
+            arguments: '{"operation": "add", "a": 1, "b": 2}',
+          ),
+        ),
+      );
+
+      expect(result.error, isNull);
+      expect(result.output, contains('3'));
+    });
+
+    test('the later registration of a name wins, whichever resolves first',
+        () async {
+      final first = _NamedTool('same', delay: const Duration(milliseconds: 5));
+      final second = _NamedTool('same');
+      final registry = ToolRegistry()
+        ..register(first)
+        ..register(second);
+
+      await registry.ready;
+
+      expect(registry.getTool('same'), same(second));
+      expect(registry.getAllTools(), [second]);
+      expect(registry.count, 1);
+    });
+
+    test('unregister also removes a registration that is still pending',
+        () async {
+      final registry = ToolRegistry()
+        ..register(_NamedTool('gone'))
+        ..register(_NamedTool('kept'))
+        ..unregister('gone');
+
+      await registry.ready;
+
+      expect(registry.getToolNames(), ['kept']);
+      expect(registry.count, 1);
+    });
+
+    test('clear drops pending registrations', () async {
+      final registry = ToolRegistry()
+        ..register(_NamedTool('a'))
+        ..clear();
+
+      await registry.ready;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(registry.count, 0);
+      expect(registry.getToolNames(), isEmpty);
+      expect(await registry.getToolInfoList(), isEmpty);
+    });
+
+    test('a tool whose info() fails is reported by the async accessors',
+        () async {
+      final registry = ToolRegistry()..register(_BrokenTool());
+
+      await expectLater(registry.ready, throwsStateError);
+      await expectLater(registry.getToolInfoList(), throwsStateError);
+      await expectLater(registry.findTool('any'), throwsStateError);
+
+      registry.clear();
+      await expectLater(registry.ready, completes);
+    });
+  });
+}
+
+class _NamedTool extends BaseTool {
+  _NamedTool(this.name, {this.delay = Duration.zero});
+
+  final String name;
+  final Duration delay;
+
+  @override
+  Future<ToolInfo> info() async {
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    return ToolInfo.simple(
+      name: name,
+      description: 'test tool',
+      properties: const {},
+    );
+  }
+}
+
+class _BrokenTool extends BaseTool {
+  @override
+  Future<ToolInfo> info() => throw StateError('no info');
 }

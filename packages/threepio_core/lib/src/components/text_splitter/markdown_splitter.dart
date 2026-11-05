@@ -1,4 +1,5 @@
 import '../../schema/document.dart';
+import 'fixed_size_split.dart';
 import 'text_splitter.dart';
 
 /// Markdown-aware text splitter.
@@ -238,7 +239,13 @@ class MarkdownSplitter extends TextSplitter {
         result.addAll(_splitWithSeparators(part, remainingSeparators, options));
       } else {
         // No more separators, force split
-        result.addAll(_forceSplit(part, options.chunkSize, options.chunkOverlap));
+        result.addAll(
+          splitByLength(
+            part,
+            chunkSize: options.chunkSize,
+            chunkOverlap: options.chunkOverlap,
+          ),
+        );
       }
     }
 
@@ -308,7 +315,13 @@ class MarkdownSplitter extends TextSplitter {
 
     if (currentChunk.isNotEmpty) {
       if (currentChunk.length > options.chunkSize) {
-        chunks.addAll(_forceSplit(currentChunk, options.chunkSize, options.chunkOverlap));
+        chunks.addAll(
+          splitByLength(
+            currentChunk,
+            chunkSize: options.chunkSize,
+            chunkOverlap: options.chunkOverlap,
+          ),
+        );
       } else {
         chunks.add(currentChunk);
       }
@@ -322,26 +335,6 @@ class MarkdownSplitter extends TextSplitter {
       return text;
     }
     return text.substring(text.length - overlapSize);
-  }
-
-  List<String> _forceSplit(String text, int chunkSize, int chunkOverlap) {
-    final chunks = <String>[];
-    var start = 0;
-
-    while (start < text.length) {
-      var end = start + chunkSize;
-      if (end > text.length) {
-        end = text.length;
-      }
-
-      chunks.add(text.substring(start, end));
-      start = end - chunkOverlap;
-      if (start <= 0) {
-        start = end;
-      }
-    }
-
-    return chunks;
   }
 
   String? _extractHeaderContext(String chunk) {

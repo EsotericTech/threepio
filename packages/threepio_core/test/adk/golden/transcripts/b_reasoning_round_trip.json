@@ -1,0 +1,349 @@
+{
+  "model_calls": [
+    {
+      "tools": [
+        "read_clipboard"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ]
+    },
+    {
+      "tools": [
+        "read_clipboard"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "index": 0,
+              "id": "call_1",
+              "type": "function",
+              "function": {
+                "name": "read_clipboard",
+                "arguments": "{}"
+              }
+            }
+          ],
+          "responseMeta": {
+            "finishReason": "tool_calls",
+            "usage": {
+              "promptTokens": 10,
+              "completionTokens": 5,
+              "totalTokens": 15,
+              "cost": 0.001
+            }
+          },
+          "reasoningContent": "The user wants the clipboard.",
+          "extra": {
+            "reasoning_details": [
+              {
+                "type": "reasoning.text",
+                "text": "The user wants ",
+                "index": 0
+              }
+            ]
+          }
+        },
+        {
+          "role": "tool",
+          "content": "{\"text\":\"hello world\"}",
+          "toolCallId": "call_1",
+          "toolName": "read_clipboard",
+          "extra": {}
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "reasoning",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "delta": "The user wants "
+    },
+    {
+      "event_type": "reasoning",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "delta": "the clipboard."
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "read_clipboard",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        },
+        "reasoningContent": "The user wants the clipboard.",
+        "extra": {
+          "reasoning_details": [
+            {
+              "type": "reasoning.text",
+              "text": "The user wants ",
+              "index": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event_type": "action",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "action": {
+        "type": "tool_call",
+        "tool_call_id": "call_1",
+        "tool_name": "read_clipboard",
+        "arguments": "{}"
+      },
+      "step_number": 0
+    },
+    {
+      "event_type": "tool_result",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "tool_call_id": "call_1",
+      "tool_name": "read_clipboard",
+      "result": "{\"text\":\"hello world\"}",
+      "is_error": false,
+      "duration_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "tool",
+        "content": "{\"text\":\"hello world\"}",
+        "toolCallId": "call_1",
+        "toolName": "read_clipboard",
+        "extra": {}
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "It says hello world."
+      },
+      "is_partial": true
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "It says hello world.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "It says hello world.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "is_partial": false
+    },
+    {
+      "event_type": "run_end",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "output_message": {
+        "role": "assistant",
+        "content": "It says hello world.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "duration_ms": "<duration>",
+      "tool_call_count": 1
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": true,
+    "cancelled": false,
+    "usage": {
+      "promptTokens": 20,
+      "completionTokens": 10,
+      "totalTokens": 30,
+      "cost": 0.002
+    },
+    "final_message": {
+      "role": "assistant",
+      "content": "It says hello world.",
+      "responseMeta": {
+        "finishReason": "stop",
+        "usage": {
+          "promptTokens": 10,
+          "completionTokens": 5,
+          "totalTokens": 15,
+          "cost": 0.001
+        }
+      }
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "read_clipboard",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        },
+        "reasoningContent": "The user wants the clipboard.",
+        "extra": {
+          "reasoning_details": [
+            {
+              "type": "reasoning.text",
+              "text": "The user wants ",
+              "index": 0
+            }
+          ]
+        }
+      },
+      {
+        "role": "tool",
+        "content": "{\"text\":\"hello world\"}",
+        "toolCallId": "call_1",
+        "toolName": "read_clipboard",
+        "extra": {}
+      },
+      {
+        "role": "assistant",
+        "content": "It says hello world.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    ]
+  }
+}

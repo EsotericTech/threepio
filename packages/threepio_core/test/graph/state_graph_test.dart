@@ -1,4 +1,5 @@
 import 'package:test/test.dart';
+import 'package:threepio_core/src/graph/checkpoint/exceptions.dart';
 import 'package:threepio_core/src/graph/graph_node.dart';
 import 'package:threepio_core/src/graph/graph_state.dart';
 import 'package:threepio_core/src/graph/state_graph.dart';
@@ -291,7 +292,11 @@ void main() {
 
       expect(
         () => graph.invoke(TestState(value: 0, message: 'test')),
-        throwsStateError,
+        throwsA(
+          isA<MaxIterationsExceededException>()
+              .having((e) => e.maxIterations, 'maxIterations', 10)
+              .having((e) => e.currentNode, 'currentNode', 'loop'),
+        ),
       );
     });
 

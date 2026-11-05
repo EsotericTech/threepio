@@ -1,6 +1,6 @@
-import 'dart:io';
+@Tags(['integration'])
+library;
 
-import 'package:dotenv/dotenv.dart';
 import 'package:test/test.dart';
 import 'package:threepio_core/src/components/model/providers/openai/openai_chat_model.dart';
 import 'package:threepio_core/src/components/model/providers/openai/openai_config.dart';
@@ -11,12 +11,20 @@ import 'package:threepio_core/src/output_parser/structured_output_parser.dart';
 import 'package:threepio_core/src/schema/message.dart';
 import 'package:threepio_core/src/schema/tool_info.dart';
 
+import '../support/integration.dart';
+
 /// Integration tests for structured output parsing with real OpenAI API calls
 ///
 /// These tests verify that our parsers can handle real LLM outputs and
 /// properly validate, retry, and transform structured data.
 ///
-/// Run with: flutter test test/integration/structured_output_integration_test.dart
+/// They run only when `THREEPIO_INTEGRATION=1` and `OPENAI_API_KEY` are set in
+/// the environment:
+///
+/// ```sh
+/// THREEPIO_INTEGRATION=1 OPENAI_API_KEY=… \\
+///   dart test -j 1 --tags integration test/integration/structured_output_integration_test.dart
+/// ```
 
 // Test enums
 enum Sentiment { positive, negative, neutral }
@@ -79,30 +87,16 @@ class Article {
 }
 
 void main() {
-  late String apiKey;
+  final apiKey = integrationApiKey(
+    'OPENAI_API_KEY',
+    suite: 'Structured Output Integration Tests',
+  );
+  if (apiKey == null) return;
+
   late OpenAIConfig config;
   late OpenAIChatModel model;
 
   setUpAll(() {
-    // Load environment variables
-    final envPath = '/Users/gp/FlutterProjects/threepio/.env';
-    final envFile = File(envPath);
-
-    if (!envFile.existsSync()) {
-      throw StateError(
-        'Environment file not found at $envPath. Please create it with OPENAI_API_KEY.',
-      );
-    }
-
-    final env = DotEnv()..load([envPath]);
-    apiKey = env['OPENAI_API_KEY'] ?? '';
-
-    if (apiKey.isEmpty) {
-      throw StateError(
-        'OPENAI_API_KEY not found in .env file. Please add your API key.',
-      );
-    }
-
     config = OpenAIConfig(
       apiKey: apiKey,
       defaultModel: 'gpt-4o-mini', // Use mini for faster/cheaper tests
@@ -110,7 +104,6 @@ void main() {
 
     model = OpenAIChatModel(config: config);
 
-    print('✓ API key loaded successfully');
     print('✓ Using model: ${config.defaultModel}');
   });
 

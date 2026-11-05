@@ -1,4 +1,5 @@
-import 'dart:io';
+@Tags(['integration'])
+library;
 
 import 'package:test/test.dart';
 import 'package:threepio_core/src/components/model/chat_model_options.dart';
@@ -7,16 +8,18 @@ import 'package:threepio_core/src/components/model/providers/openrouter/openrout
 import 'package:threepio_core/src/schema/message.dart';
 import 'package:threepio_core/src/streaming/stream_reader.dart';
 
-void main() {
-  // Skip these tests if OPENROUTER_API_KEY is not set
-  final apiKey = Platform.environment['OPENROUTER_API_KEY'];
+import '../support/integration.dart';
 
-  if (apiKey == null || apiKey.isEmpty) {
-    test('OPENROUTER_API_KEY not set - skipping integration tests', () {
-      print('Skipping OpenRouter integration tests: OPENROUTER_API_KEY not set');
-    });
-    return;
-  }
+/// Integration tests for the OpenRouter chat model with real API calls.
+///
+/// They run only when `THREEPIO_INTEGRATION=1` and `OPENROUTER_API_KEY` are
+/// set in the environment.
+void main() {
+  final apiKey = integrationApiKey(
+    'OPENROUTER_API_KEY',
+    suite: 'OpenRouter Integration Tests',
+  );
+  if (apiKey == null) return;
 
   group('OpenRouter Integration Tests', () {
     late OpenRouterChatModel model;

@@ -1,7 +1,9 @@
+@Tags(['integration'])
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dotenv/dotenv.dart';
 import 'package:test/test.dart';
 import 'package:threepio_core/src/components/model/chat_model_options.dart';
 import 'package:threepio_core/src/components/model/providers/openai/openai_chat_model.dart';
@@ -14,38 +16,28 @@ import 'package:threepio_core/src/schema/message.dart';
 import 'package:threepio_core/src/schema/tool_info.dart';
 import 'package:threepio_core/src/streaming/stream_reader.dart';
 
+import '../support/integration.dart';
+
 /// Integration tests for OpenAI chat model with real API calls
 ///
-/// These tests make actual API calls to OpenAI and require a valid API key
-/// in the .env file at the project root.
+/// These tests make actual API calls to OpenAI. They run only when
+/// `THREEPIO_INTEGRATION=1` and `OPENAI_API_KEY` are set in the environment:
 ///
-/// Run with: flutter test test/integration/openai_integration_test.dart
+/// ```sh
+/// THREEPIO_INTEGRATION=1 OPENAI_API_KEY=… \
+///   dart test -j 1 --tags integration test/integration/openai_integration_test.dart
+/// ```
 void main() {
-  late String apiKey;
+  final apiKey = integrationApiKey(
+    'OPENAI_API_KEY',
+    suite: 'OpenAI Integration Tests',
+  );
+  if (apiKey == null) return;
+
   late OpenAIConfig config;
   late OpenAIChatModel model;
 
   setUpAll(() {
-    // Load environment variables from project root
-    final envPath = '/Users/gp/FlutterProjects/threepio/.env';
-    final envFile = File(envPath);
-
-    if (!envFile.existsSync()) {
-      throw StateError(
-        'Environment file not found at $envPath. Please create it with OPENAI_API_KEY.',
-      );
-    }
-
-    final env = DotEnv()..load([envPath]);
-    apiKey = env['OPENAI_API_KEY'] ?? '';
-
-    if (apiKey.isEmpty) {
-      throw StateError(
-        'OPENAI_API_KEY not found in .env file. Please add your API key.',
-      );
-    }
-
-    // Create config with the API key
     config = OpenAIConfig(
       apiKey: apiKey,
       defaultModel: 'gpt-4o-mini', // Use mini for faster/cheaper tests
@@ -53,7 +45,6 @@ void main() {
 
     model = OpenAIChatModel(config: config);
 
-    print('✓ API key loaded successfully');
     print('✓ Using model: ${config.defaultModel}');
   });
 

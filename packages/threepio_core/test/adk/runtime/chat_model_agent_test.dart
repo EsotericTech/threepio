@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:test/test.dart';
 import 'package:threepio_core/threepio_core.dart';
 
-import 'fake_chat_model.dart';
+import '../../support/scripted_chat_model.dart';
 
 void main() {
   const usage = TokenUsage(promptTokens: 10, completionTokens: 5, totalTokens: 15, cost: 0.001);
@@ -12,7 +12,7 @@ void main() {
 
   group('ChatModelAgent', () {
     test('streams text, appends the assistant turn and ends the run', () async {
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [text('Hel'), text('lo'), finish('stop', usage: usage)],
       ]);
       final agent = ChatModelAgent(ChatModelAgentConfig(name: 'k', model: model, instruction: 'Be brief'));
@@ -27,8 +27,8 @@ void main() {
       expect(finalOutput.message.content, 'Hello');
       expect(events.whereType<AgentUsageEvent>().single.usage.cost, 0.001);
       // The instruction went first in the prompt.
-      expect(model.calls.single.first.role, RoleType.system);
-      expect(model.calls.single.first.content, 'Be brief');
+      expect(model.calls.single.messages.first.role, RoleType.system);
+      expect(model.calls.single.messages.first.content, 'Be brief');
     });
 
     test('runs parallel tool calls, returns results in call order, then answers', () async {
@@ -42,7 +42,7 @@ void main() {
         order.add('fast');
         return ToolOutput(content: 'fast:${args['value']}');
       });
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [
           toolCallDelta(0, id: 'c1', name: 'slow', args: '{"value":'),
           toolCallDelta(0, args: ' "a"}'),
@@ -72,7 +72,7 @@ void main() {
 
     test('unknown tools and throwing tools become error results, not exceptions', () async {
       final boom = ScriptedTool('boom', (ctx, args) async => throw StateError('kaput'));
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [toolCallDelta(0, id: 'c1', name: 'nope', args: '{}'), toolCallDelta(1, id: 'c2', name: 'boom', args: '{}'), finish('tool_calls')],
         [text('ok'), finish('stop')],
       ]);
@@ -87,7 +87,7 @@ void main() {
 
     test('approval: denied calls do not run; allowed calls do', () async {
       final tool = ScriptedTool('delete', (ctx, args) async => const ToolOutput(content: 'deleted'));
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [toolCallDelta(0, id: 'c1', name: 'delete', args: '{}'), finish('tool_calls')],
         [toolCallDelta(0, id: 'c2', name: 'delete', args: '{}'), finish('tool_calls')],
         [text('ok'), finish('stop')],
@@ -119,11 +119,12 @@ void main() {
     test('cancel while tools run: synthetic results, cancelled event, no further model call', () async {
       final token = CancelToken();
       final hang = ScriptedTool('hang', (ctx, args) async {
-        await Future<void>.delayed(const Duration(seconds: 5));
+        // Never completes: the run is cancelled while this call is pending.
+        await Completer<void>().future;
         return const ToolOutput(content: 'late');
       });
       final quick = ScriptedTool('quick', (ctx, args) async => const ToolOutput(content: 'q'));
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [toolCallDelta(0, id: 'c1', name: 'hang', args: '{}'), toolCallDelta(1, id: 'c2', name: 'quick', args: '{}'), finish('tool_calls')],
         [text('never'), finish('stop')],
       ]);
@@ -145,7 +146,7 @@ void main() {
 
     test('cancel during the model stream ends the run cleanly', () async {
       final token = CancelToken();
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [text('a'), text('b'), text('c'), finish('stop')],
       ], delayPerChunk: const Duration(milliseconds: 30));
       final agent = ChatModelAgent(ChatModelAgentConfig(name: 'k', model: model));
@@ -159,7 +160,7 @@ void main() {
 
     test('stops with a recoverable error after maxIterations', () async {
       final tool = ScriptedTool('t', (ctx, args) async => const ToolOutput(content: 'again'));
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         for (var i = 0; i < 3; i++) [toolCallDelta(0, id: 'c$i', name: 't', args: '{}'), finish('tool_calls')],
       ]);
       final agent = ChatModelAgent(ChatModelAgentConfig(name: 'k', model: model, tools: [tool], maxIterations: 2));
@@ -172,7 +173,7 @@ void main() {
     });
 
     test('reasoning deltas are surfaced and reasoning_details echoed back', () async {
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [
           reasoning('think').copyWith(extra: {'reasoning_details': [{'type': 'reasoning.text', 'text': 'think', 'index': 0}]}),
           toolCallDelta(0, id: 'c1', name: 't', args: '{}'),
@@ -195,7 +196,7 @@ void main() {
         log.add('tool');
         return const ToolOutput(content: 'r');
       });
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [toolCallDelta(0, id: 'c1', name: 't', args: '{}'), finish('tool_calls')],
         [text('ok'), finish('stop')],
       ]);
@@ -234,7 +235,7 @@ void main() {
 
   group('Runner', () {
     test('assembles a RunResult and tracks one run per session', () async {
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [text('hi'), finish('stop', usage: usage)],
       ]);
       final runner = Runner(agent: ChatModelAgent(ChatModelAgentConfig(name: 'k', model: model)));
@@ -253,7 +254,7 @@ void main() {
 
     test('approve() answers pending approvals; timeout applies the default', () async {
       final tool = ScriptedTool('delete', (ctx, args) async => const ToolOutput(content: 'gone'));
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [toolCallDelta(0, id: 'c1', name: 'delete', args: '{}'), finish('tool_calls')],
         [toolCallDelta(0, id: 'c2', name: 'delete', args: '{}'), finish('tool_calls')],
         [text('ok'), finish('stop')],
@@ -263,7 +264,7 @@ void main() {
           name: 'k', model: model, tools: [tool],
           approvalPolicy: const ApprovalPolicy(toolsRequiringApproval: {'delete'}),
         )),
-        approvalTimeout: const Duration(milliseconds: 80),
+        approvalTimeout: const Duration(milliseconds: 20),
         defaultApproval: false,
       );
       final handle = await runner.run([Message.user('x')]);
@@ -286,7 +287,7 @@ void main() {
     });
 
     test('cancel() marks the result cancelled', () async {
-      final model = FakeChatModel([
+      final model = ScriptedChatModel([
         [text('a'), text('b'), finish('stop')],
       ], delayPerChunk: const Duration(milliseconds: 40));
       final runner = Runner(agent: ChatModelAgent(ChatModelAgentConfig(name: 'k', model: model)));

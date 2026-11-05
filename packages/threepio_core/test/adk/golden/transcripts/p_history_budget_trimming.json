@@ -1,0 +1,182 @@
+{
+  "model_calls": [
+    {
+      "tools": [
+        "read_clipboard"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "Latest question"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "Old question xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "old_call",
+              "type": "function",
+              "function": {
+                "name": "read_clipboard",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "content": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "toolCallId": "old_call"
+        },
+        {
+          "role": "assistant",
+          "content": "Old answer zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        },
+        {
+          "role": "user",
+          "content": "Latest question"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Short answer."
+      },
+      "is_partial": true
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Short answer.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Short answer.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "is_partial": false
+    },
+    {
+      "event_type": "run_end",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "output_message": {
+        "role": "assistant",
+        "content": "Short answer.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "duration_ms": "<duration>",
+      "tool_call_count": 0
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": true,
+    "cancelled": false,
+    "usage": {
+      "promptTokens": 10,
+      "completionTokens": 5,
+      "totalTokens": 15,
+      "cost": 0.001
+    },
+    "final_message": {
+      "role": "assistant",
+      "content": "Short answer.",
+      "responseMeta": {
+        "finishReason": "stop",
+        "usage": {
+          "promptTokens": 10,
+          "completionTokens": 5,
+          "totalTokens": 15,
+          "cost": 0.001
+        }
+      }
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "Short answer.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    ]
+  }
+}

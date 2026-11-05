@@ -1,0 +1,212 @@
+{
+  "model_calls": [
+    {
+      "tools": [
+        "hang",
+        "quick"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "hang",
+              "arguments": "{}"
+            }
+          },
+          {
+            "index": 1,
+            "id": "call_2",
+            "type": "function",
+            "function": {
+              "name": "quick",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    },
+    {
+      "event_type": "action",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "action": {
+        "type": "tool_call",
+        "tool_call_id": "call_1",
+        "tool_name": "hang",
+        "arguments": "{}"
+      },
+      "step_number": 0
+    },
+    {
+      "event_type": "action",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "action": {
+        "type": "tool_call",
+        "tool_call_id": "call_2",
+        "tool_name": "quick",
+        "arguments": "{}"
+      },
+      "step_number": 0
+    },
+    {
+      "event_type": "tool_result",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "tool_call_id": "call_2",
+      "tool_name": "quick",
+      "result": "quick result",
+      "is_error": false,
+      "duration_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "tool",
+        "content": "Error: cancelled by the user before it finished.",
+        "toolCallId": "call_1",
+        "toolName": "hang"
+      }
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "tool",
+        "content": "quick result",
+        "toolCallId": "call_2",
+        "toolName": "quick",
+        "extra": {}
+      }
+    },
+    {
+      "event_type": "cancelled",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "reason": "user pressed stop",
+      "cancelled_tool_call_ids": [
+        "call_1"
+      ]
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": false,
+    "cancelled": true,
+    "usage": {
+      "promptTokens": 10,
+      "completionTokens": 5,
+      "totalTokens": 15,
+      "cost": 0.001
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "hang",
+              "arguments": "{}"
+            }
+          },
+          {
+            "index": 1,
+            "id": "call_2",
+            "type": "function",
+            "function": {
+              "name": "quick",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      {
+        "role": "tool",
+        "content": "Error: cancelled by the user before it finished.",
+        "toolCallId": "call_1",
+        "toolName": "hang"
+      },
+      {
+        "role": "tool",
+        "content": "quick result",
+        "toolCallId": "call_2",
+        "toolName": "quick",
+        "extra": {}
+      }
+    ]
+  }
+}

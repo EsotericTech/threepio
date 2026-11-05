@@ -1,0 +1,394 @@
+{
+  "model_calls": [
+    {
+      "tools": [
+        "boom"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ]
+    },
+    {
+      "tools": [
+        "boom"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Kortney. Answer briefly."
+        },
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "index": 0,
+              "id": "call_1",
+              "type": "function",
+              "function": {
+                "name": "no_such_tool",
+                "arguments": "{}"
+              }
+            },
+            {
+              "index": 1,
+              "id": "call_2",
+              "type": "function",
+              "function": {
+                "name": "boom",
+                "arguments": "{}"
+              }
+            }
+          ],
+          "responseMeta": {
+            "finishReason": "tool_calls",
+            "usage": {
+              "promptTokens": 10,
+              "completionTokens": 5,
+              "totalTokens": 15,
+              "cost": 0.001
+            }
+          }
+        },
+        {
+          "role": "tool",
+          "content": "Error: Unknown tool: no_such_tool",
+          "toolCallId": "call_1",
+          "toolName": "no_such_tool",
+          "extra": {
+            "is_error": true
+          }
+        },
+        {
+          "role": "tool",
+          "content": "Error: boom failed: Bad state: kaput",
+          "toolCallId": "call_2",
+          "toolName": "boom",
+          "extra": {
+            "is_error": true
+          }
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_type": "run_start",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "What is on my clipboard?"
+        }
+      ],
+      "metadata": {
+        "surface": "panel"
+      }
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "no_such_tool",
+              "arguments": "{}"
+            }
+          },
+          {
+            "index": 1,
+            "id": "call_2",
+            "type": "function",
+            "function": {
+              "name": "boom",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    },
+    {
+      "event_type": "action",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "action": {
+        "type": "tool_call",
+        "tool_call_id": "call_1",
+        "tool_name": "no_such_tool",
+        "arguments": "{}"
+      },
+      "step_number": 0
+    },
+    {
+      "event_type": "action",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "action": {
+        "type": "tool_call",
+        "tool_call_id": "call_2",
+        "tool_name": "boom",
+        "arguments": "{}"
+      },
+      "step_number": 0
+    },
+    {
+      "event_type": "tool_result",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "tool_call_id": "call_1",
+      "tool_name": "no_such_tool",
+      "result": "Unknown tool: no_such_tool",
+      "is_error": true,
+      "duration_ms": "<duration>"
+    },
+    {
+      "event_type": "tool_result",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "tool_call_id": "call_2",
+      "tool_name": "boom",
+      "result": "boom failed: Bad state: kaput",
+      "is_error": true,
+      "duration_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "tool",
+        "content": "Error: Unknown tool: no_such_tool",
+        "toolCallId": "call_1",
+        "toolName": "no_such_tool",
+        "extra": {
+          "is_error": true
+        }
+      }
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "tool",
+        "content": "Error: boom failed: Bad state: kaput",
+        "toolCallId": "call_2",
+        "toolName": "boom",
+        "extra": {
+          "is_error": true
+        }
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Neither worked."
+      },
+      "is_partial": true
+    },
+    {
+      "event_type": "usage",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "usage": {
+        "promptTokens": 10,
+        "completionTokens": 5,
+        "totalTokens": 15,
+        "cost": 0.001
+      },
+      "latency_ms": "<duration>"
+    },
+    {
+      "event_type": "message",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Neither worked.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    },
+    {
+      "event_type": "output",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "message": {
+        "role": "assistant",
+        "content": "Neither worked.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "is_partial": false
+    },
+    {
+      "event_type": "run_end",
+      "run_id": "<run-id>",
+      "timestamp": "<timestamp>",
+      "agent_name": "kortney",
+      "output_message": {
+        "role": "assistant",
+        "content": "Neither worked.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      "duration_ms": "<duration>",
+      "tool_call_count": 2
+    }
+  ],
+  "result": {
+    "run_id": "<run-id>",
+    "succeeded": true,
+    "cancelled": false,
+    "usage": {
+      "promptTokens": 20,
+      "completionTokens": 10,
+      "totalTokens": 30,
+      "cost": 0.002
+    },
+    "final_message": {
+      "role": "assistant",
+      "content": "Neither worked.",
+      "responseMeta": {
+        "finishReason": "stop",
+        "usage": {
+          "promptTokens": 10,
+          "completionTokens": 5,
+          "totalTokens": 15,
+          "cost": 0.001
+        }
+      }
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "no_such_tool",
+              "arguments": "{}"
+            }
+          },
+          {
+            "index": 1,
+            "id": "call_2",
+            "type": "function",
+            "function": {
+              "name": "boom",
+              "arguments": "{}"
+            }
+          }
+        ],
+        "responseMeta": {
+          "finishReason": "tool_calls",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      },
+      {
+        "role": "tool",
+        "content": "Error: Unknown tool: no_such_tool",
+        "toolCallId": "call_1",
+        "toolName": "no_such_tool",
+        "extra": {
+          "is_error": true
+        }
+      },
+      {
+        "role": "tool",
+        "content": "Error: boom failed: Bad state: kaput",
+        "toolCallId": "call_2",
+        "toolName": "boom",
+        "extra": {
+          "is_error": true
+        }
+      },
+      {
+        "role": "assistant",
+        "content": "Neither worked.",
+        "responseMeta": {
+          "finishReason": "stop",
+          "usage": {
+            "promptTokens": 10,
+            "completionTokens": 5,
+            "totalTokens": 15,
+            "cost": 0.001
+          }
+        }
+      }
+    ]
+  }
+}

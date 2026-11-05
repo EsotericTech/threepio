@@ -1,13 +1,21 @@
-// Integration tests for Gemini Chat Model
-// Run with: dart test test/components/model/providers/gemini/gemini_integration_test.dart
+// Integration tests for Gemini Chat Model.
 //
-// Requires GEMINI_API_KEY environment variable or pass directly
+// They run only when THREEPIO_INTEGRATION=1 and GEMINI_API_KEY are set in the
+// environment:
+//
+//   THREEPIO_INTEGRATION=1 GEMINI_API_KEY=… dart test -j 1 --tags integration \
+//     test/components/model/providers/gemini/gemini_integration_test.dart
+
+@Tags(['integration'])
+library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:threepio_core/threepio_core.dart';
+
+import '../../../../support/integration.dart';
 
 /// Simple calculator tool for testing
 class CalculatorTool extends InvokableTool {
@@ -129,14 +137,11 @@ class TemperatureConverterTool extends InvokableTool {
 }
 
 void main() {
-  // API key must be provided via environment variable
-  final apiKey = Platform.environment['GEMINI_API_KEY'];
-  if (apiKey == null || apiKey.isEmpty) {
-    test('GEMINI_API_KEY not set - skipping integration tests', () {
-      print('Skipping Gemini integration tests: GEMINI_API_KEY not set');
-    });
-    return;
-  }
+  final apiKey = integrationApiKey(
+    'GEMINI_API_KEY',
+    suite: 'Gemini Integration Tests',
+  );
+  if (apiKey == null) return;
 
   late GeminiConfig config;
   late GeminiChatModel model;

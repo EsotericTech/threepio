@@ -70,7 +70,7 @@ class ToolExecutor {
   Future<ToolExecutionResult> executeToolCall(ToolCall toolCall) async {
     try {
       // Get the tool from registry
-      final tool = registry.getTool(toolCall.function.name);
+      final tool = await registry.findTool(toolCall.function.name);
       if (tool == null) {
         return ToolExecutionResult(
           toolCallId: toolCall.id,

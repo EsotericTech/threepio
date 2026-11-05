@@ -56,22 +56,22 @@ class Lambda<I, O> implements Runnable<I, O> {
   @override
   Future<O> invoke(I input, {RunnableOptions? options}) async {
     if (_invokeFunc != null) {
-      return _invokeFunc!(input, options);
+      return _invokeFunc(input, options);
     }
 
     // Fallback: if stream is available, collect first result
     if (_streamFunc != null) {
-      return await _streamFunc!(input, options).first;
+      return await _streamFunc(input, options).first;
     }
 
     // Fallback: if collect is available, create single-item stream
     if (_collectFunc != null) {
-      return await _collectFunc!(Stream.value(input), options);
+      return await _collectFunc(Stream.value(input), options);
     }
 
     // Fallback: if transform is available, use it
     if (_transformFunc != null) {
-      return await _transformFunc!(Stream.value(input), options).first;
+      return await _transformFunc(Stream.value(input), options).first;
     }
 
     throw RunnableException(
@@ -83,23 +83,23 @@ class Lambda<I, O> implements Runnable<I, O> {
   @override
   Stream<O> stream(I input, {RunnableOptions? options}) {
     if (_streamFunc != null) {
-      return _streamFunc!(input, options);
+      return _streamFunc(input, options);
     }
 
     // Fallback: if invoke is available, wrap result in stream
     if (_invokeFunc != null) {
-      return Stream.fromFuture(_invokeFunc!(input, options));
+      return Stream.fromFuture(_invokeFunc(input, options));
     }
 
     // Fallback: if transform is available, create single-item stream
     if (_transformFunc != null) {
-      return _transformFunc!(Stream.value(input), options);
+      return _transformFunc(Stream.value(input), options);
     }
 
     // Fallback: if collect is available, use transform fallback
     if (_collectFunc != null) {
       return Stream.fromFuture(
-        _collectFunc!(Stream.value(input), options),
+        _collectFunc(Stream.value(input), options),
       );
     }
 
@@ -112,24 +112,24 @@ class Lambda<I, O> implements Runnable<I, O> {
   @override
   Future<O> collect(Stream<I> input, {RunnableOptions? options}) async {
     if (_collectFunc != null) {
-      return _collectFunc!(input, options);
+      return _collectFunc(input, options);
     }
 
     // Fallback: if transform is available, take first result
     if (_transformFunc != null) {
-      return await _transformFunc!(input, options).first;
+      return await _transformFunc(input, options).first;
     }
 
     // Fallback: if invoke is available, use first input item
     if (_invokeFunc != null) {
       final firstInput = await input.first;
-      return await _invokeFunc!(firstInput, options);
+      return await _invokeFunc(firstInput, options);
     }
 
     // Fallback: if stream is available, use first input item
     if (_streamFunc != null) {
       final firstInput = await input.first;
-      return await _streamFunc!(firstInput, options).first;
+      return await _streamFunc(firstInput, options).first;
     }
 
     throw RunnableException(
@@ -141,22 +141,22 @@ class Lambda<I, O> implements Runnable<I, O> {
   @override
   Stream<O> transform(Stream<I> input, {RunnableOptions? options}) {
     if (_transformFunc != null) {
-      return _transformFunc!(input, options);
+      return _transformFunc(input, options);
     }
 
     // Fallback: if collect is available, wrap result in stream
     if (_collectFunc != null) {
-      return Stream.fromFuture(_collectFunc!(input, options));
+      return Stream.fromFuture(_collectFunc(input, options));
     }
 
     // Fallback: if stream is available, transform each input
     if (_streamFunc != null) {
-      return input.asyncExpand((item) => _streamFunc!(item, options));
+      return input.asyncExpand((item) => _streamFunc(item, options));
     }
 
     // Fallback: if invoke is available, transform each input
     if (_invokeFunc != null) {
-      return input.asyncMap((item) => _invokeFunc!(item, options));
+      return input.asyncMap((item) => _invokeFunc(item, options));
     }
 
     throw RunnableException(

@@ -1,4 +1,5 @@
 import '../../schema/document.dart';
+import 'fixed_size_split.dart';
 import 'text_splitter.dart';
 
 /// Recursively splits text using multiple separators
@@ -146,7 +147,12 @@ class RecursiveCharacterTextSplitter extends TextSplitter {
         } else {
           // No more separators, force split by character
           chunks.addAll(
-              _forceSplit(split, options.chunkSize, options.chunkOverlap));
+            splitByLength(
+              split,
+              chunkSize: options.chunkSize,
+              chunkOverlap: options.chunkOverlap,
+            ),
+          );
         }
         continue;
       }
@@ -221,29 +227,6 @@ class RecursiveCharacterTextSplitter extends TextSplitter {
     }
 
     return text.substring(text.length - overlapSize);
-  }
-
-  /// Force split text into chunks when no separators work
-  List<String> _forceSplit(String text, int chunkSize, int chunkOverlap) {
-    final chunks = <String>[];
-    var start = 0;
-
-    while (start < text.length) {
-      var end = start + chunkSize;
-      if (end > text.length) {
-        end = text.length;
-      }
-
-      chunks.add(text.substring(start, end));
-
-      // Move start forward, accounting for overlap
-      start = end - chunkOverlap;
-      if (start <= 0) {
-        start = end; // Avoid infinite loop
-      }
-    }
-
-    return chunks;
   }
 }
 
