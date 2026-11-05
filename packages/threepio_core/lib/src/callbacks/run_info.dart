@@ -119,6 +119,24 @@ class RunInfo {
   /// that might be useful for logging or tracing.
   final Map<String, dynamic>? metadata;
 
+  /// What a callback handler is given when the component that fires a
+  /// callback has not said what it is.
+  ///
+  /// The counterpart of the `nil` run info of eino: a component reports
+  /// itself with `ensureRunInfo` or `reuseHandlers` before it fires its start
+  /// callback. One that fires two start callbacks in a row, or none at all,
+  /// leaves the handlers without that information, and they get this value
+  /// instead (an empty name, an empty type and [ComponentType.custom]).
+  static const RunInfo unknown = RunInfo(
+    name: '',
+    type: '',
+    componentType: ComponentType.custom,
+  );
+
+  /// Whether this is [unknown]: nothing is known about the component.
+  bool get isUnknown =>
+      name.isEmpty && type.isEmpty && componentType == ComponentType.custom;
+
   /// Create a copy with modified fields
   RunInfo copyWith({
     String? name,

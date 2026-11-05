@@ -14,7 +14,8 @@ documents, templates, stream readers, chunk concatenation, the type registry)
 together with the run context every later API takes, and so is the Eino
 `components` package (the contracts of chat models, tools, templates,
 embedders, retrievers, indexers, loaders, parsers and transformers, their call
-options and callback payloads, and the tools made from functions).
+options and callback payloads, and the tools made from functions), and the
+Eino `callbacks` package with tracing to Langfuse over OpenTelemetry.
 
 ### Fixed
 
@@ -189,6 +190,66 @@ options and callback payloads, and the tools made from functions).
   signals (`StreamEOFException`, …) and `InterruptSignal` are deliberately not
   threepio exceptions, and mistakes in the calling code stay `ArgumentError`
   and `StateError`.
+- **Callbacks** (`package:threepio_core/callbacks.dart`, port of the Eino
+  packages `callbacks` and `utils/callbacks`): a way to watch the components
+  of a run from outside.
+  - `ComponentCallbackHandler`: the contract of a handler, with the hooks
+    `onStart`, `onEnd`, `onError`, `onStartWithStreamInput` and
+    `onEndWithStreamOutput`. Each gets the `RunContext`, the `RunInfo` of the
+    component and its payload, and returns the context the run goes on with.
+    Stream hooks get a copy of the stream of their own. A hook that throws is
+    logged (`threepio.callbacks`) and does not fail the run.
+  - `CallbackHandlerBuilder` builds a handler from functions;
+    `HandlerHelper` builds one from typed handlers per kind of component
+    (`ModelCallbackHandler`, `ToolCallbackHandler`, `PromptCallbackHandler`,
+    `EmbeddingCallbackHandler`, `RetrieverCallbackHandler`,
+    `IndexerCallbackHandler`, `LoaderCallbackHandler`,
+    `TransformerCallbackHandler`, `ToolsNodeCallbackHandlers`,
+    `AgentCallbackHandler`, and plain handlers for graphs, chains and
+    lambdas). `CallbackTiming` and `TimingChecker` let a handler say which
+    callbacks it wants, which saves the stream copies it would not read.
+  - Handlers travel in the run context: `RunContext.withHandlers`,
+    `runInfo`, `hasCallbacks` and `callbackHandlers` (extension
+    `CallbackContext`). `GlobalCallbacks` holds the handlers of every run.
+  - For code that fires callbacks: `ensureRunInfo`, `initCallbacks`,
+    `reuseHandlers`, `appendHandlers`, and `onStart`, `onEnd`, `onError`,
+    `onStartWithStreamInput`, `onEndWithStreamOutput`, `onEndWithCopies`.
+    The last six are exported from `callbacks.dart` only (see "Migration
+    notes").
+  - `LegacyCallbackHandlerAdapter` runs a `CallbackHandler` of the older API
+    as a `ComponentCallbackHandler`; the map that API passes around travels
+    in the run context.
+  - `RunInfo.unknown` and `RunInfo.isUnknown`: what a handler is given when a
+    component did not say what it is.
+- **The chat model providers and `DefaultChatTemplate` fire the new
+  callbacks.** `OpenAIChatModel`, `OpenRouterChatModel` and `GeminiChatModel`
+  report `generate` and `stream` to the handlers of
+  `ChatModelOptions.runContext` and to `GlobalCallbacks` (the latter also
+  when a call has no run context), with a `ModelCallbackInput` and a
+  `ModelCallbackOutput` that carry the model configuration and the token
+  usage; a handler gets the chunks of a streamed answer through a copy of the
+  stream. The three are `TypedComponent`s (`OpenAI`, `OpenRouter`, `Gemini`)
+  and `CallbackAwareComponent`s. A `CallbackManager` in the options is called
+  as before.
+- **Tracing** (also in `callbacks.dart`):
+  - `LangfuseHandler`, a port of eino-ext `callbacks/langfuse/v2`. It turns
+    the components of a run into Langfuse observations (generation, agent,
+    tool, retriever, embedding, chain, span) and sends them with
+    OpenTelemetry's protocol to `/api/public/otel/v1/traces`. `startTrace`
+    and `endTrace` open and close the root of a trace, with its name, user,
+    session, tags, release, environment, version and metadata; `flush` and
+    `shutdown` deliver what is pending. `LangfuseConfig` has the sample rate,
+    a mask function for what must not leave the application, limits for the
+    size of a value and of a span, queue and batch sizes, the retry policy,
+    and the option to leave out the spans of an agent's own machinery.
+  - `OtlpHttpTraceExporter` exports spans to any OpenTelemetry collector that
+    takes OTLP over HTTP in the JSON encoding: a bounded queue (`SpanQueue`),
+    batches by size and by flush interval, retries with back-off
+    (`OtlpRetryConfig`), sampling per trace, masking. `OtlpSpan`,
+    `OtlpSpanEvent`, `OtlpStatus` and `encodeOtlpTraces` are the data model,
+    `SpanExporter` the interface to plug in another transport.
+- `MessageConcatException`, a `ThreepioException`: what the strict concat
+  functions throw for chunks that contradict each other (see "Changed").
 - `ToolRegistry.ready` and `ToolRegistry.findTool(name)`.
 - `dispose()` on `OpenAIChatModel`, `OpenRouterChatModel`, `GeminiChatModel`
   and `OpenAIEmbedder`. A client passed as `httpClient` is never closed by it.
@@ -210,10 +271,10 @@ options and callback payloads, and the tools made from functions).
 - **`MessageConcatenator.concat` joins chunks the way Eino's `ConcatMessages`
   does**, and stays as tolerant as it was. `concatMessages` is the strict
   port: where the fragments of one tool call carry different ids, types or
-  names, or two values under one key of `extra` cannot be joined, it throws an
-  `ArgumentError`. `MessageConcatenator.concat` keeps the first non-empty id,
-  type and name, as it always did, and the last of two values that cannot be
-  joined. What changed for both:
+  names, or two values under one key of `extra` cannot be joined, it throws a
+  `MessageConcatException`. `MessageConcatenator.concat` keeps the first
+  non-empty id, type and name, as it always did, and the last of two values
+  that cannot be joined. What changed for both:
   - Tool calls come out with the ones that have no `index` first and the
     others by ascending index.
   - Usage: the highest token counts and cost of all chunks and the last
@@ -241,6 +302,27 @@ options and callback payloads, and the tools made from functions).
 - `OpenRouterChatModel` and the back-off of `RetryingChatModel` also stop when
   the cancel token of `ChatModelOptions.runContext` is cancelled, not only the
   one in `ChatModelOptions.cancelToken`.
+- **Chunks that contradict each other are a `MessageConcatException`**, not
+  an `ArgumentError`, in `concatMessages`, `concatMessageArray`,
+  `concatMessageStream` and `concatToolResults`: different roles, names, tool
+  call ids or tool names, fragments of one tool call that disagree, values of
+  `extra` that cannot be joined, lists of different lengths, a non-text part
+  of a tool result in two chunks. That is a matter of the data a provider
+  streamed, not of the calling code. Calling one of these functions without
+  any chunk is still an `ArgumentError`, and `MessageConcatenator.concat`
+  reports everything it rejects as `ArgumentError`, as before.
+- **`LoggingHandler`, `MetricsHandler`, `TracingHandler` and
+  `CallbackManager` write to `package:logging` instead of `print`.** The
+  loggers are `threepio.callbacks.logging`, `.metrics` and `.tracing` (level
+  `INFO`) and `threepio.callbacks` (level `WARNING`, for a handler that
+  throws). Nothing appears on the console unless the application listens to
+  `Logger.root.onRecord`.
+- `DefaultChatTemplate.isCallbacksEnabled` is `true`: the template reports
+  its work to the callback handlers of `ChatTemplateOptions.runContext`
+  itself.
+- `OpenAIChatModel`, `OpenRouterChatModel` and `GeminiChatModel` implement
+  `TypedComponent` and `CallbackAwareComponent`.
+- `fake_async` is a dev dependency.
 - `ChatTemplate` and `DocumentTransformer` have a `const` constructor.
 - The messages of `FormatException`s thrown by `MessageJsonParser` for a
   `fromJson` that itself throws a `FormatException` now start with `failed to
@@ -273,6 +355,18 @@ options and callback payloads, and the tools made from functions).
 
 ### Deprecated
 
+- `CallbackHandler`, `BaseCallbackHandler` and `CallbackManager`, the older
+  callback API. Nothing is removed and nothing changes where they are used
+  today (`StateGraph`, the model providers, `OpenAIEmbedder`,
+  `VectorRetriever`, `InMemoryVectorStore`, the chains); the analyzer now
+  points at them. New handlers extend `ComponentCallbackHandler`; an existing
+  one joins a run of the new kind through `LegacyCallbackHandlerAdapter`.
+- `RetrieverOptions.callbackManager` and `RetrieverOptions.context`: put the
+  handlers on `RetrieverOptions.runContext` instead.
+- The client for Langfuse's ingestion API (`/api/public/ingestion`) in
+  `src/observability/langfuse/` (`LangfuseClient` and what belongs to it). It
+  was never exported; Langfuse has deprecated that API. `LangfuseHandler`
+  replaces it.
 - `MessagePartCommon.extra`: use `MessageInputPart.extra` or
   `MessageOutputPart.extra`, as Eino does. A file name goes into
   `MessageInputFile.name`; the OpenAI and OpenRouter converters still read it
@@ -288,6 +382,34 @@ options and callback payloads, and the tools made from functions).
 
 ### Migration notes
 
+- **Catching concat conflicts.** Code that caught `ArgumentError` around
+  `concatMessages`, `concatMessageArray`, `concatMessageStream` or
+  `concatToolResults` to deal with a malformed stream catches
+  `MessageConcatException` (or `ThreepioException`) instead. Code that calls
+  `MessageConcatenator.concat` is not affected.
+- **From `BaseCallbackHandler` to `ComponentCallbackHandler`.** Nothing has
+  to change now. To move a handler: extend `ComponentCallbackHandler`, take
+  `RunContext ctx` where the hook took the `Map<String, dynamic> context`
+  (keep what the handler remembers in the context with a private
+  `ContextKey`, and return the context), and take the payload as `Object?`
+  where it was a `CallbackInput` or `CallbackOutput` (`input` itself is what
+  `input.data` was). Give a run its handlers with
+  `RunContext.background().withHandlers([...])` in place of
+  `CallbackManager([...])`.
+- **Firing callbacks from your own component.** `onStart`, `onEnd`, `onError`,
+  `onStartWithStreamInput`, `onEndWithStreamOutput` and `onEndWithCopies` are
+  not exported from `package:threepio_core/threepio_core.dart`, because a
+  class that inherits a member called `onStart`, `onEnd` or `onError` and
+  calls it without `this.` would call the imported function instead. Import
+  `package:threepio_core/callbacks.dart`, with a prefix if the names collide
+  with your own.
+- **Console output of the shipped callback handlers.** `LoggingHandler`,
+  `MetricsHandler.printSummary`, `TracingHandler.printTrace` and
+  `printTimeline` no longer print. To see their output, listen to the logger:
+  `Logger.root.onRecord.listen((r) => print(r.message));`.
+- A class that `implements` `OpenAIChatModel`, `OpenRouterChatModel` or
+  `GeminiChatModel` (instead of extending it) has to add `componentTypeName`
+  and `isCallbacksEnabled`.
 - Rename `RunContext(...)` to `AgentRunScope(...)` where you pass a `context:`
   to `ChatModelAgent.run`. Code that goes through `Runner` is not affected.
 - `StreamReader` can no longer be instantiated or extended; it never had a

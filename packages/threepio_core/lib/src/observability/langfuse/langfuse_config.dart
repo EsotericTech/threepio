@@ -17,6 +17,11 @@ import 'dart:convert';
 ///   flushInterval: Duration(seconds: 5),
 /// );
 /// ```
+@Deprecated(
+  'Uses the ingestion API Langfuse has deprecated (/api/public/ingestion). '
+  'Use LangfuseHandler from '
+  'package:threepio_core/callbacks.dart, which exports OTLP traces.',
+)
 class LangfuseConfig {
   /// Langfuse server URL (required)
   /// Examples: 'https://cloud.langfuse.com', 'https://us.cloud.langfuse.com'

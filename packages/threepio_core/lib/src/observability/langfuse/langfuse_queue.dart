@@ -14,6 +14,11 @@ import 'models/langfuse_event.dart';
 /// - Non-blocking put (returns false if full)
 /// - Blocking get with timeout
 /// - Join mechanism to wait for all tasks to complete
+@Deprecated(
+  'Uses the ingestion API Langfuse has deprecated (/api/public/ingestion). '
+  'Use LangfuseHandler from '
+  'package:threepio_core/callbacks.dart, which exports OTLP traces.',
+)
 class LangfuseEventQueue {
   final int _maxSize;
   final Queue<LangfuseIngestionEvent> _queue = Queue();

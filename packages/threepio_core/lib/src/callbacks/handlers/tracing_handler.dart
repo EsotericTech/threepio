@@ -1,5 +1,9 @@
+import 'package:logging/logging.dart';
+
 import '../callback_handler.dart';
 import '../run_info.dart';
+
+final _log = Logger('threepio.callbacks.tracing');
 
 /// Trace event types
 enum TraceEventType {
@@ -101,13 +105,14 @@ class TracingHandler extends BaseCallbackHandler {
     return events.where((e) => e.componentName == componentName).toList();
   }
 
-  /// Print the complete trace
+  /// Log the complete trace (logger `threepio.callbacks.tracing`, level
+  /// `INFO`)
   void printTrace() {
-    print('=== Execution Trace ===');
+    _log.info('=== Execution Trace ===');
     for (final event in events) {
-      print(event);
+      _log.info(event);
     }
-    print('=======================');
+    _log.info('=======================');
   }
 
   /// Get current depth from context
@@ -271,10 +276,10 @@ class TracingHandler extends BaseCallbackHandler {
   void printTimeline() {
     final timeline = getTimeline();
 
-    print('=== Execution Timeline ===');
+    _log.info('=== Execution Timeline ===');
     for (final entry in timeline.entries) {
-      print('${entry.key}: ${entry.value.inMilliseconds}ms');
+      _log.info('${entry.key}: ${entry.value.inMilliseconds}ms');
     }
-    print('==========================');
+    _log.info('==========================');
   }
 }

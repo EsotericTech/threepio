@@ -1,5 +1,9 @@
+import 'package:logging/logging.dart';
+
 import '../callback_handler.dart';
 import '../run_info.dart';
+
+final _log = Logger('threepio.callbacks.metrics');
 
 /// Execution metrics collected by the handler
 class ExecutionMetrics {
@@ -113,16 +117,17 @@ class MetricsHandler extends BaseCallbackHandler {
     return Duration(milliseconds: totalMs ~/ durations.length);
   }
 
-  /// Print summary of all metrics
+  /// Log a summary of all metrics (logger `threepio.callbacks.metrics`,
+  /// level `INFO`)
   void printSummary() {
-    print('=== Execution Metrics Summary ===');
-    print('Total executions: ${metrics.length}');
+    _log.info('=== Execution Metrics Summary ===');
+    _log.info('Total executions: ${metrics.length}');
 
     final successful = metrics.where((m) => m.isSuccess).length;
     final failed = metrics.where((m) => m.isFailed).length;
 
-    print('Successful: $successful');
-    print('Failed: $failed');
+    _log.info('Successful: $successful');
+    _log.info('Failed: $failed');
 
     if (metrics.isNotEmpty) {
       final avgDuration = Duration(
@@ -133,7 +138,7 @@ class MetricsHandler extends BaseCallbackHandler {
             metrics.length,
       );
 
-      print('Average duration: ${avgDuration.inMilliseconds}ms');
+      _log.info('Average duration: ${avgDuration.inMilliseconds}ms');
 
       // Group by component
       final byComponent = <String, List<ExecutionMetrics>>{};
@@ -141,18 +146,18 @@ class MetricsHandler extends BaseCallbackHandler {
         byComponent.putIfAbsent(metric.componentName, () => []).add(metric);
       }
 
-      print('\nBy component:');
+      _log.info('\nBy component:');
       for (final entry in byComponent.entries) {
         final componentMetrics = entry.value;
         final avgComponentDuration = getAverageDuration(entry.key);
-        print(
+        _log.info(
           '  ${entry.key}: ${componentMetrics.length} calls, '
           'avg ${avgComponentDuration?.inMilliseconds ?? 0}ms',
         );
       }
     }
 
-    print('================================');
+    _log.info('================================');
   }
 
   @override
@@ -197,7 +202,7 @@ class MetricsHandler extends BaseCallbackHandler {
       metrics.add(metric);
 
       if (autoLog) {
-        print(
+        _log.info(
           '[Metrics] ${metric.componentName}: '
           '${metric.duration?.inMilliseconds}ms',
         );
@@ -225,7 +230,7 @@ class MetricsHandler extends BaseCallbackHandler {
       metrics.add(metric);
 
       if (autoLog) {
-        print(
+        _log.info(
           '[Metrics] ${metric.componentName} FAILED: '
           '${metric.duration?.inMilliseconds}ms - $error',
         );

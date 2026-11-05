@@ -100,12 +100,13 @@ class ChatModelOptions {
   /// call stops as soon as either token is cancelled.
   final CancelToken? cancelToken;
 
-  /// The context of the run this call belongs to: its cancellation and its
-  /// values.
+  /// The context of the run this call belongs to: its cancellation, its
+  /// values and its callback handlers.
   ///
   /// `generate` and `stream` keep the signatures they had before
   /// [RunContext] existed, so the context travels here. A graph sets it for
-  /// its model nodes.
+  /// its model nodes. The providers report the call to the callback handlers
+  /// of the context (`RunContext.withHandlers`).
   final RunContext? runContext;
 
   /// Options that only one implementation understands, each an instance of a

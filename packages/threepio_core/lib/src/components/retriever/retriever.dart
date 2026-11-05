@@ -57,12 +57,23 @@ class RetrieverOptions {
 
   /// Callback manager for execution lifecycle events
   ///
-  /// Belongs to the callback API threepio had before [runContext].
+  /// Belongs to the callback API threepio had before [runContext]. It keeps
+  /// working: a retriever that reports to a `CallbackManager` still does.
+  @Deprecated(
+    'Put the handlers on the run context instead: '
+    'runContext: ctx.withHandlers([...]). The CallbackManager given here '
+    'keeps being called.',
+  )
   final dynamic callbackManager;
 
   /// Execution context that flows through callbacks
   ///
-  /// Belongs to the callback API threepio had before [runContext].
+  /// Belongs to the callback API threepio had before [runContext]: it is the
+  /// map the handlers of a `CallbackManager` pass along.
+  @Deprecated(
+    'Use runContext, the context of the run, instead. The map given here '
+    'keeps being passed to the handlers of callbackManager.',
+  )
   final Map<String, dynamic>? context;
 
   /// Arbitrary metadata to pass through execution

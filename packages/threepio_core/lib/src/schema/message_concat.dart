@@ -5,10 +5,28 @@ library;
 
 import 'package:meta/meta.dart';
 
+import '../errors.dart';
 import '../streaming/stream_reader.dart';
 import 'concat.dart';
 import 'message.dart';
 import 'tool_result.dart';
+
+/// The chunks of a stream cannot be joined because they contradict each
+/// other: two roles in one message, two names for one tool call, two images
+/// in a tool result that may have one.
+///
+/// Thrown by [concatMessages], [concatMessageArray], [concatMessageStream]
+/// and [concatToolResults]. It says something about the data, typically what
+/// a provider streamed, and nothing about the calling code; calling one of
+/// these functions without any chunk is a mistake of the caller and stays an
+/// [ArgumentError].
+class MessageConcatException extends ThreepioException {
+  /// A conflict described by [message].
+  const MessageConcatException(super.message, {super.cause});
+
+  @override
+  String toString() => 'MessageConcatException: $message';
+}
 
 /// Joins the chunks of a streamed message into one message.
 ///
@@ -33,8 +51,8 @@ import 'tool_result.dart';
 ///   an addition to Eino, where two lists cannot be joined: providers stream
 ///   list-valued extras (OpenRouter's `reasoning_details`) in pieces.
 ///
-/// Throws [ArgumentError] when [chunks] is empty or the chunks contradict each
-/// other.
+/// Throws [MessageConcatException] when the chunks contradict each other, and
+/// [ArgumentError] when [chunks] is empty.
 Message concatMessages(List<Message> chunks) =>
     _concatMessages(chunks, lenient: false);
 
@@ -45,7 +63,8 @@ Message concatMessages(List<Message> chunks) =>
 /// the first one that has a value wins, and where the values under one key of
 /// `extra` cannot be joined, the last one is kept. Everything else is as in
 /// [concatMessages], including what makes it throw: an empty list, and chunks
-/// with different roles, names, tool call ids or tool names.
+/// with different roles, names, tool call ids or tool names. Here all of them
+/// are reported as [ArgumentError], as that method always did.
 @internal
 Message concatMessagesLeniently(List<Message> chunks) =>
     _concatMessages(chunks, lenient: true);
@@ -68,20 +87,24 @@ Message _concatMessages(List<Message> chunks, {required bool lenient}) {
   final extras = <Map<String, dynamic>>[];
   _ResponseMetaBuilder? meta;
 
+  Never conflict(String message) {
+    // The older entry point has always reported these as argument errors.
+    if (lenient) throw ArgumentError(message);
+    throw MessageConcatException(message);
+  }
+
   String? agreed(String? known, String? next, String what) {
     if (next == null || next.isEmpty) return known;
     if (known == null || known.isEmpty) return next;
     if (known != next) {
-      throw ArgumentError(
-        "cannot concat messages with different $what: '$known' '$next'",
-      );
+      conflict("cannot concat messages with different $what: '$known' '$next'");
     }
     return known;
   }
 
   for (final chunk in chunks) {
     if (chunk.role != role) {
-      throw ArgumentError(
+      conflict(
         'cannot concat messages with different roles: '
         "'${role.name}' '${chunk.role.name}'",
       );
@@ -135,14 +158,14 @@ Message _concatMessages(List<Message> chunks, {required bool lenient}) {
 ///
 /// Port of eino `schema.ConcatMessageArray`: the result has one message per
 /// position, the [concatMessages] of the messages the chunks have there.
-/// Throws [ArgumentError] when the lists differ in length.
+/// Throws [MessageConcatException] when the lists differ in length.
 List<Message> concatMessageArray(List<List<Message>> arrays) {
   if (arrays.isEmpty) return [];
 
   final length = arrays.first.length;
   for (final array in arrays) {
     if (array.length != length) {
-      throw ArgumentError(
+      throw MessageConcatException(
         'unexpected array length. Got ${array.length}, expected $length',
       );
     }
@@ -179,8 +202,8 @@ Future<Message> concatMessageStream(StreamReader<Message> stream) async {
 /// Port of eino `schema.ConcatToolResults`. The parts of all chunks are put
 /// one after the other and neighbouring text parts are joined into one. A
 /// part that is not text is kept as it is, and each such type (image, audio,
-/// video, file) may occur in one chunk only: throws [ArgumentError] when the
-/// same one comes in two chunks.
+/// video, file) may occur in one chunk only: throws [MessageConcatException]
+/// when the same one comes in two chunks.
 ToolResult concatToolResults(List<ToolResult> chunks) {
   final seenIn = <ToolPartType, int>{};
   final parts = <ToolOutputPart>[];
@@ -190,7 +213,7 @@ ToolResult concatToolResults(List<ToolResult> chunks) {
       if (part.type == ToolPartType.text) continue;
       final previous = seenIn[part.type];
       if (previous != null && previous != index) {
-        throw ArgumentError(
+        throw MessageConcatException(
           'conflicting ${part.type.name} parts found in chunk $previous and '
           'chunk $index: non-text modality parts cannot appear in multiple '
           'chunks',
@@ -249,7 +272,10 @@ Map<String, dynamic> _concatExtra(
     // ignore: avoid_catching_errors
   } on StateError catch (error, stackTrace) {
     Error.throwWithStackTrace(
-      ArgumentError('failed to concat extra: ${error.message}'),
+      MessageConcatException(
+        'failed to concat extra: ${error.message}',
+        cause: error,
+      ),
       stackTrace,
     );
   }
@@ -290,7 +316,7 @@ List<ToolCall> _concatToolCalls(
     if (next.isEmpty) return known;
     if (known.isEmpty) return next;
     if (known != next && !lenient) {
-      throw ArgumentError(
+      throw MessageConcatException(
         "cannot concat ToolCalls with different $what: '$known' '$next'",
       );
     }

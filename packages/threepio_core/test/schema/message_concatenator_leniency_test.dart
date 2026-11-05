@@ -31,6 +31,9 @@ ToolCall _call(
       index: index,
     );
 
+/// What the strict function reports chunks that contradict each other as.
+final throwsConflict = throwsA(isA<MessageConcatException>());
+
 void main() {
   group('fragments of one tool call that disagree', () {
     final differentIds = [
@@ -88,7 +91,7 @@ void main() {
       expect(
         () => concatMessages(differentIds),
         throwsA(
-          isA<ArgumentError>().having(
+          isA<MessageConcatException>().having(
             (e) => e.message,
             'message',
             contains('cannot concat ToolCalls with different tool id'),
@@ -98,7 +101,7 @@ void main() {
       expect(
         () => concatMessages(differentNames),
         throwsA(
-          isA<ArgumentError>().having(
+          isA<MessageConcatException>().having(
             (e) => e.message,
             'message',
             contains('cannot concat ToolCalls with different tool name'),
@@ -108,7 +111,7 @@ void main() {
       expect(
         () => concatMessages(differentTypes),
         throwsA(
-          isA<ArgumentError>().having(
+          isA<MessageConcatException>().having(
             (e) => e.message,
             'message',
             contains('cannot concat ToolCalls with different tool type'),
@@ -148,7 +151,7 @@ void main() {
       expect(
         () => concatMessages(mixedTypes),
         throwsA(
-          isA<ArgumentError>()
+          isA<MessageConcatException>()
               .having((e) => e.message, 'message', contains('failed to concat extra')),
         ),
       );
@@ -263,7 +266,7 @@ void main() {
       final chunks = [Message.user('a'), Message.assistant('b')];
 
       expect(() => MessageConcatenator.concat(chunks), throwsArgumentError);
-      expect(() => concatMessages(chunks), throwsArgumentError);
+      expect(() => concatMessages(chunks), throwsConflict);
     });
 
     test('chunks with different names', () {
@@ -273,7 +276,7 @@ void main() {
       ];
 
       expect(() => MessageConcatenator.concat(chunks), throwsArgumentError);
-      expect(() => concatMessages(chunks), throwsArgumentError);
+      expect(() => concatMessages(chunks), throwsConflict);
     });
 
     test('tool messages with different tool call ids or tool names', () {
@@ -288,7 +291,7 @@ void main() {
 
       for (final chunks in [differentIds, differentNames]) {
         expect(() => MessageConcatenator.concat(chunks), throwsArgumentError);
-        expect(() => concatMessages(chunks), throwsArgumentError);
+        expect(() => concatMessages(chunks), throwsConflict);
       }
     });
   });

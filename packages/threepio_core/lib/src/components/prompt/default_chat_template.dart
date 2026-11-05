@@ -1,11 +1,15 @@
 /// The chat template Eino ships: a list of message templates.
 library;
 
+import '../../callbacks/callback_context.dart';
+import '../../callbacks/component_callbacks.dart';
+import '../../callbacks/run_info.dart';
 import '../../core/run_context.dart';
 import '../../schema/message.dart';
 import '../../schema/message_template.dart';
 import '../component_type.dart';
 import 'chat_template.dart';
+import 'prompt_callbacks.dart';
 
 /// A chat template made of [MessagesTemplate]s that are rendered one after
 /// the other.
@@ -18,6 +22,11 @@ import 'chat_template.dart';
 /// content filled in, a [MessagesPlaceholder] to the messages stored under
 /// its key. Rendering stops at the first template that fails, with the
 /// `FormatException` it threw.
+///
+/// The template reports its work to the callback handlers of
+/// `options.runContext` itself: a [PromptCallbackInput] with the variables
+/// when it starts, a [PromptCallbackOutput] with the messages when it is
+/// done, or the error that stopped it.
 final class DefaultChatTemplate extends ChatTemplate
     implements TypedComponent, CallbackAwareComponent {
   /// A template that renders [templates] as [formatType].
@@ -32,23 +41,35 @@ final class DefaultChatTemplate extends ChatTemplate
   @override
   String get componentTypeName => 'Default';
 
-  // Eino's template fires its callbacks itself (and returns `true` here).
-  // That needs the callback chain of the run context, which this library does
-  // not have yet; until it does, the graph a template is a node of fires them.
   @override
-  bool get isCallbacksEnabled => false;
+  bool get isCallbacksEnabled => true;
 
   @override
   Future<List<Message>> format(
     Map<String, dynamic> variables, {
     ChatTemplateOptions? options,
   }) async {
-    final ctx = options?.runContext ?? RunContext.background();
+    var ctx = ensureRunInfo(
+      options?.runContext ?? RunContext.background(),
+      componentTypeName,
+      ComponentType.promptTemplate,
+    );
+    ctx = await onStart(
+      ctx,
+      PromptCallbackInput(variables: variables, templates: templates),
+    );
 
     final result = <Message>[];
-    for (final template in templates) {
-      result.addAll(await template.format(ctx, variables, formatType));
+    try {
+      for (final template in templates) {
+        result.addAll(await template.format(ctx, variables, formatType));
+      }
+    } catch (error, stackTrace) {
+      await onError(ctx, error, stackTrace);
+      rethrow;
     }
+
+    await onEnd(ctx, PromptCallbackOutput(result: result, templates: templates));
     return result;
   }
 }

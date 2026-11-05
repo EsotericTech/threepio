@@ -1,8 +1,12 @@
 import 'dart:async';
 
+import 'package:logging/logging.dart';
+
 import '../errors.dart';
 import 'callback_handler.dart';
 import 'run_info.dart';
+
+final _log = Logger('threepio.callbacks');
 
 /// Exception thrown when callback execution fails
 class CallbackException implements ThreepioException {
@@ -27,6 +31,15 @@ class CallbackException implements ThreepioException {
 /// The CallbackManager maintains a list of callback handlers and provides
 /// convenience methods for triggering callbacks across all handlers.
 /// It ensures callbacks are called in order and handles errors gracefully.
+/// A handler that throws is logged (logger `threepio.callbacks`, level
+/// `WARNING`) and the others are still called.
+///
+/// This is the older callback API. It keeps working where it works today
+/// (`StateGraph`, the model providers, `OpenAIEmbedder`, `VectorRetriever`,
+/// `InMemoryVectorStore`, the chains). New code gives a run its handlers
+/// through the run context: `RunContext.background().withHandlers([...])`
+/// with `ComponentCallbackHandler`s, and `GlobalCallbacks` for the handlers
+/// of every run.
 ///
 /// Example:
 /// ```dart
@@ -44,6 +57,11 @@ class CallbackException implements ThreepioException {
 ///   CallbackInput(input),
 /// );
 /// ```
+@Deprecated(
+  'Give a run its handlers with RunContext.withHandlers and '
+  'ComponentCallbackHandler instead; GlobalCallbacks replaces the global '
+  'handlers. CallbackManager keeps working for existing code.',
+)
 class CallbackManager {
   CallbackManager([List<CallbackHandler>? handlers])
       : _handlers = List.from(handlers ?? []);
@@ -104,10 +122,12 @@ class CallbackManager {
       try {
         currentContext = await handler.onStart(currentContext, info, input);
       } catch (e, stackTrace) {
-        // Log but don't fail - callbacks shouldn't break the main flow
-        print(
-            'Warning: Callback handler ${handler.runtimeType} failed in onStart: $e');
-        print(stackTrace);
+        // Logged, not rethrown: a callback must not break the main flow.
+        _log.warning(
+          'Callback handler ${handler.runtimeType} failed in onStart',
+          e,
+          stackTrace,
+        );
       }
     }
 
@@ -131,9 +151,12 @@ class CallbackManager {
       try {
         currentContext = await handler.onEnd(currentContext, info, output);
       } catch (e, stackTrace) {
-        print(
-            'Warning: Callback handler ${handler.runtimeType} failed in onEnd: $e');
-        print(stackTrace);
+        // Logged, not rethrown: a callback must not break the main flow.
+        _log.warning(
+          'Callback handler ${handler.runtimeType} failed in onEnd',
+          e,
+          stackTrace,
+        );
       }
     }
 
@@ -163,9 +186,12 @@ class CallbackManager {
           stackTrace,
         );
       } catch (e, st) {
-        print(
-            'Warning: Callback handler ${handler.runtimeType} failed in onError: $e');
-        print(st);
+        // Logged, not rethrown: a callback must not break the main flow.
+        _log.warning(
+          'Callback handler ${handler.runtimeType} failed in onError',
+          e,
+          st,
+        );
       }
     }
 
@@ -190,9 +216,12 @@ class CallbackManager {
           input,
         );
       } catch (e, stackTrace) {
-        print(
-            'Warning: Callback handler ${handler.runtimeType} failed in onStartWithStreamInput: $e');
-        print(stackTrace);
+        // Logged, not rethrown: a callback must not break the main flow.
+        _log.warning(
+          'Callback handler ${handler.runtimeType} failed in onStartWithStreamInput',
+          e,
+          stackTrace,
+        );
       }
     }
 
@@ -218,9 +247,12 @@ class CallbackManager {
           output,
         );
       } catch (e, stackTrace) {
-        print(
-            'Warning: Callback handler ${handler.runtimeType} failed in onEndWithStreamOutput: $e');
-        print(stackTrace);
+        // Logged, not rethrown: a callback must not break the main flow.
+        _log.warning(
+          'Callback handler ${handler.runtimeType} failed in onEndWithStreamOutput',
+          e,
+          stackTrace,
+        );
       }
     }
 

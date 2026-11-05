@@ -4,8 +4,23 @@
 /// composition framework, and streaming infrastructure for building LLM applications.
 library threepio_core;
 
-// Callback system exports
-export 'src/callbacks/callback_exports.dart';
+// Callbacks (port of the Eino packages `callbacks` and `utils/callbacks`),
+// the older callback API, and tracing (OTLP, Langfuse).
+//
+// The five functions a component fires its callbacks with are left out:
+// `onStart`, `onEnd` and `onError` are names that classes all over an
+// application inherit (from `BaseCallbackHandler`, among others), and an
+// imported top-level function takes precedence over an inherited member in
+// Dart, so exporting them here could change what existing code calls. Code
+// that fires callbacks imports `package:threepio_core/callbacks.dart`.
+export 'callbacks.dart'
+    hide
+        onEnd,
+        onEndWithCopies,
+        onEndWithStreamOutput,
+        onError,
+        onStart,
+        onStartWithStreamInput;
 export 'src/components/embedding/embedder.dart';
 export 'src/components/embedding/openai_embedder.dart';
 // Component exports

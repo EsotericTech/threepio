@@ -81,6 +81,17 @@ class CallbackOutput {
 ///   }
 /// }
 /// ```
+///
+/// This is the older callback API: the context is a map and the hooks cannot
+/// see the run they belong to. It keeps working wherever a `CallbackManager`
+/// is used. New handlers extend `ComponentCallbackHandler`; an existing
+/// handler takes part in a run of the new kind through
+/// `LegacyCallbackHandlerAdapter`.
+@Deprecated(
+  'Extend ComponentCallbackHandler instead, or wrap this handler in '
+  'LegacyCallbackHandlerAdapter. CallbackHandler keeps working for existing '
+  'code.',
+)
 abstract class CallbackHandler {
   /// Called when a component starts execution
   ///
@@ -169,6 +180,14 @@ abstract class CallbackHandler {
 ///   }
 /// }
 /// ```
+///
+/// This is the older callback API; see [CallbackHandler]. New handlers extend
+/// `ComponentCallbackHandler`, whose hooks all have a default as well.
+@Deprecated(
+  'Extend ComponentCallbackHandler instead, or wrap this handler in '
+  'LegacyCallbackHandlerAdapter. BaseCallbackHandler keeps working for '
+  'existing code.',
+)
 abstract class BaseCallbackHandler implements CallbackHandler {
   const BaseCallbackHandler();
 

@@ -14,6 +14,11 @@ import 'package:threepio_core/src/observability/langfuse/models/langfuse_observa
 import 'package:threepio_core/src/observability/langfuse/models/langfuse_trace.dart';
 
 /// Consumer that processes events from queue and uploads in batches
+@Deprecated(
+  'Uses the ingestion API Langfuse has deprecated (/api/public/ingestion). '
+  'Use LangfuseHandler from '
+  'package:threepio_core/callbacks.dart, which exports OTLP traces.',
+)
 class LangfuseConsumer {
   final LangfuseHttpClient _client;
   final LangfuseEventQueue _queue;

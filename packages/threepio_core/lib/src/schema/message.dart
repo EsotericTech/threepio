@@ -714,8 +714,10 @@ class MessageConcatenator {
   /// be noticed; use this method where a best-effort message is better than
   /// none.
   ///
-  /// Like [concatMessages], it throws [ArgumentError] for an empty list and
-  /// for chunks with different roles, names, tool call ids or tool names.
+  /// It throws [ArgumentError] for an empty list and for chunks with
+  /// different roles, names, tool call ids or tool names. ([concatMessages]
+  /// reports the latter, like every other contradiction between chunks, as a
+  /// `MessageConcatException`.)
   static Message concat(List<Message> messages) =>
       concatMessagesLeniently(messages);
 }

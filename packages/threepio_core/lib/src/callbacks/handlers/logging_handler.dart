@@ -1,10 +1,18 @@
+import 'package:logging/logging.dart';
+
 import '../callback_handler.dart';
 import '../run_info.dart';
 
+final _log = Logger('threepio.callbacks.logging');
+
 /// Simple logging callback handler
 ///
-/// Logs component execution to the console with configurable verbosity.
-/// Useful for debugging and understanding execution flow.
+/// Logs component execution with configurable verbosity. Useful for
+/// debugging and understanding execution flow.
+///
+/// The lines go to the `package:logging` logger `threepio.callbacks.logging`
+/// at level `INFO`; nothing is written to the console unless the application
+/// listens to `Logger.root.onRecord`.
 ///
 /// Example:
 /// ```dart
@@ -17,7 +25,7 @@ import '../run_info.dart';
 /// final manager = CallbackManager([handler]);
 /// final options = RunnableOptions(callbackManager: manager);
 ///
-/// // Execution will be logged to console
+/// // Execution is logged to `threepio.callbacks.logging`
 /// await runnable.invoke(input, options: options);
 /// ```
 class LoggingHandler extends BaseCallbackHandler {
@@ -49,19 +57,19 @@ class LoggingHandler extends BaseCallbackHandler {
     final timestamp = DateTime.now().toIso8601String();
 
     if (verbose) {
-      print('$prefix [$timestamp] START: ${info.name} (${info.type})');
-      print('  Component Type: ${info.componentType}');
+      _log.info('$prefix [$timestamp] START: ${info.name} (${info.type})');
+      _log.info('  Component Type: ${info.componentType}');
       if (info.metadata != null) {
-        print('  Metadata: ${info.metadata}');
+        _log.info('  Metadata: ${info.metadata}');
       }
       if (logInputs) {
-        print('  Input: ${input.data}');
+        _log.info('  Input: ${input.data}');
         if (input.metadata != null) {
-          print('  Input Metadata: ${input.metadata}');
+          _log.info('  Input Metadata: ${input.metadata}');
         }
       }
     } else {
-      print('$prefix START: ${info.name}');
+      _log.info('$prefix START: ${info.name}');
     }
 
     return context;
@@ -76,15 +84,15 @@ class LoggingHandler extends BaseCallbackHandler {
     final timestamp = DateTime.now().toIso8601String();
 
     if (verbose) {
-      print('$prefix [$timestamp] END: ${info.name}');
+      _log.info('$prefix [$timestamp] END: ${info.name}');
       if (logOutputs) {
-        print('  Output: ${output.data}');
+        _log.info('  Output: ${output.data}');
         if (output.metadata != null) {
-          print('  Output Metadata: ${output.metadata}');
+          _log.info('  Output Metadata: ${output.metadata}');
         }
       }
     } else {
-      print('$prefix END: ${info.name}');
+      _log.info('$prefix END: ${info.name}');
     }
 
     return context;
@@ -99,13 +107,13 @@ class LoggingHandler extends BaseCallbackHandler {
   ) async {
     final timestamp = DateTime.now().toIso8601String();
 
-    print('$prefix [$timestamp] ERROR in ${info.name}:');
-    print('  Error: $error');
+    _log.info('$prefix [$timestamp] ERROR in ${info.name}:');
+    _log.info('  Error: $error');
 
     if (verbose) {
-      print('  Component: ${info.type} (${info.componentType})');
-      print('  Stack trace:');
-      print('$stackTrace');
+      _log.info('  Component: ${info.type} (${info.componentType})');
+      _log.info('  Stack trace:');
+      _log.info('$stackTrace');
     }
 
     return context;
@@ -118,7 +126,7 @@ class LoggingHandler extends BaseCallbackHandler {
     Stream<dynamic> input,
   ) async {
     final timestamp = DateTime.now().toIso8601String();
-    print('$prefix [$timestamp] START (streaming input): ${info.name}');
+    _log.info('$prefix [$timestamp] START (streaming input): ${info.name}');
     return context;
   }
 
@@ -129,7 +137,7 @@ class LoggingHandler extends BaseCallbackHandler {
     Stream<dynamic> output,
   ) async {
     final timestamp = DateTime.now().toIso8601String();
-    print('$prefix [$timestamp] END (streaming output): ${info.name}');
+    _log.info('$prefix [$timestamp] END (streaming output): ${info.name}');
     return context;
   }
 }

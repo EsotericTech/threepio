@@ -103,7 +103,7 @@ List<MessageOutputPart>? concatParts(List<MessageOutputPart> parts) =>
 final throwsConcatError = throwsA(isA<ArgumentError>());
 
 Matcher throwsConcatErrorWith(String text) => throwsA(
-      isA<ArgumentError>().having((e) => '${e.message}', 'message', contains(text)),
+      isA<MessageConcatException>().having((e) => e.message, 'message', contains(text)),
     );
 
 void main() {
@@ -1022,8 +1022,8 @@ void main() {
         );
 
     Matcher throwsConflict(String type) => throwsA(
-          isA<ArgumentError>().having(
-            (e) => '${e.message}',
+          isA<MessageConcatException>().having(
+            (e) => e.message,
             'message',
             allOf(contains('conflicting'), contains(type)),
           ),

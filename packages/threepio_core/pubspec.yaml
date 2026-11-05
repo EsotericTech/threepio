@@ -33,6 +33,8 @@ dependencies:
 dev_dependencies:
   # Testing
   test: ^1.24.0
+  # Fake time for tests of timers (flush intervals, retry backoff)
+  fake_async: ^1.3.0
 
   # Code Generation
   build_runner: ^2.4.0

@@ -6,12 +6,14 @@ import 'package:http/http.dart' as http;
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
 import '../../../../errors.dart';
+import '../../../../internal/model_call_callbacks.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
 import '../../../../streaming/stream_utils.dart';
 import '../../../../streaming/stream_writer.dart';
+import '../../../component_type.dart';
 import '../../base_chat_model.dart';
 import '../../chat_model_options.dart';
 import 'openai_config.dart';
@@ -31,7 +33,8 @@ import 'openai_converters.dart';
 /// final response = await model.generate(messages);
 /// print(response.content);
 /// ```
-class OpenAIChatModel extends ToolCallingChatModel {
+class OpenAIChatModel extends ToolCallingChatModel
+    implements TypedComponent, CallbackAwareComponent {
   OpenAIChatModel({
     required this.config,
     this.httpClient,
@@ -69,13 +72,36 @@ class OpenAIChatModel extends ToolCallingChatModel {
   void dispose() => _http.close();
 
   @override
+  String get componentTypeName => 'OpenAI';
+
+  /// The model reports its calls to the callback handlers of
+  /// `options.runContext` (and to the global ones) itself, with the model
+  /// configuration and the token usage.
+  @override
+  bool get isCallbacksEnabled => true;
+
+  @override
   Future<Message> generate(
     List<Message> input, {
     ChatModelOptions? options,
-  }) async {
+  }) {
     // Merge options with tools if bound
     final mergedOptions = _mergeOptions(options);
+    return ModelCallCallbacks.generate(
+      mergedOptions,
+      typeName: componentTypeName,
+      defaultModel: config.defaultModel,
+      input: input,
+      generate: () => _generate(input, mergedOptions),
+    );
+  }
 
+  /// One completion, reported to the `CallbackManager` of the older callback
+  /// API when the options carry one.
+  Future<Message> _generate(
+    List<Message> input,
+    ChatModelOptions mergedOptions,
+  ) async {
     // Get callback manager if available
     final callbackManager = mergedOptions.callbackManager as CallbackManager?;
 
@@ -127,10 +153,22 @@ class OpenAIChatModel extends ToolCallingChatModel {
   Future<StreamReader<Message>> stream(
     List<Message> input, {
     ChatModelOptions? options,
-  }) async {
+  }) {
     // Merge options with tools if bound
     final mergedOptions = _mergeOptions(options);
+    return ModelCallCallbacks.stream(
+      mergedOptions,
+      typeName: componentTypeName,
+      defaultModel: config.defaultModel,
+      input: input,
+      stream: () => _stream(input, mergedOptions),
+    );
+  }
 
+  Future<StreamReader<Message>> _stream(
+    List<Message> input,
+    ChatModelOptions mergedOptions,
+  ) async {
     // Build request body
     final requestBody = _buildRequestBody(
       input,

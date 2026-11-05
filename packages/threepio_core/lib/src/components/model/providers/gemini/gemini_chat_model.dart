@@ -6,12 +6,14 @@ import 'package:http/http.dart' as http;
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
 import '../../../../errors.dart';
+import '../../../../internal/model_call_callbacks.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
 import '../../../../streaming/stream_utils.dart';
 import '../../../../streaming/stream_writer.dart';
+import '../../../component_type.dart';
 import '../../base_chat_model.dart';
 import '../../chat_model_options.dart';
 import 'gemini_config.dart';
@@ -83,7 +85,8 @@ import 'gemini_response_parser.dart';
 /// );
 /// // Images are in response.assistantGenMultiContent
 /// ```
-class GeminiChatModel extends ToolCallingChatModel {
+class GeminiChatModel extends ToolCallingChatModel
+    implements TypedComponent, CallbackAwareComponent {
   GeminiChatModel({
     required this.config,
     this.httpClient,
@@ -124,12 +127,36 @@ class GeminiChatModel extends ToolCallingChatModel {
   void dispose() => _http.close();
 
   @override
+  String get componentTypeName => 'Gemini';
+
+  /// The model reports its calls to the callback handlers of
+  /// `options.runContext` (and to the global ones) itself, with the model
+  /// configuration and the token usage.
+  @override
+  bool get isCallbacksEnabled => true;
+
+  @override
   Future<Message> generate(
     List<Message> input, {
     ChatModelOptions? options,
-  }) async {
+  }) {
     // Merge options with tools if bound
     final mergedOptions = _mergeOptions(options);
+    return ModelCallCallbacks.generate(
+      mergedOptions,
+      typeName: componentTypeName,
+      defaultModel: config.defaultModel,
+      input: input,
+      generate: () => _generate(input, mergedOptions),
+    );
+  }
+
+  /// One completion, reported to the `CallbackManager` of the older callback
+  /// API when the options carry one.
+  Future<Message> _generate(
+    List<Message> input,
+    ChatModelOptions mergedOptions,
+  ) async {
     final model = mergedOptions.model ?? config.defaultModel;
 
     // Check if this is an Imagen model
@@ -173,15 +200,22 @@ class GeminiChatModel extends ToolCallingChatModel {
   Future<StreamReader<Message>> stream(
     List<Message> input, {
     ChatModelOptions? options,
-  }) async {
+  }) {
     // Merge options with tools if bound
     final mergedOptions = _mergeOptions(options);
+    return ModelCallCallbacks.stream(
+      mergedOptions,
+      typeName: componentTypeName,
+      defaultModel: config.defaultModel,
+      input: input,
+      stream: () {
+        // Build request body
+        final requestBody = _buildRequestBody(input, mergedOptions);
 
-    // Build request body
-    final requestBody = _buildRequestBody(input, mergedOptions);
-
-    // Make streaming API call
-    return await _makeStreamingRequest(requestBody, mergedOptions);
+        // Make streaming API call
+        return _makeStreamingRequest(requestBody, mergedOptions);
+      },
+    );
   }
 
   @override

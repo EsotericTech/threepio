@@ -11,6 +11,11 @@ import 'langfuse_config.dart';
 import 'models/langfuse_event.dart';
 
 /// HTTP client for Langfuse API
+@Deprecated(
+  'Uses the ingestion API Langfuse has deprecated (/api/public/ingestion). '
+  'Use LangfuseHandler from '
+  'package:threepio_core/callbacks.dart, which exports OTLP traces.',
+)
 class LangfuseHttpClient {
   final LangfuseConfig _config;
   final http.Client _httpClient;

@@ -6,12 +6,14 @@ import 'package:http/http.dart' as http;
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
 import '../../../../internal/call_cancellation.dart';
+import '../../../../internal/model_call_callbacks.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
 import '../../../../streaming/stream_utils.dart';
 import '../../../../streaming/stream_writer.dart';
+import '../../../component_type.dart';
 import '../../base_chat_model.dart';
 import '../../cancel_token.dart';
 import '../../chat_model_options.dart';
@@ -47,7 +49,8 @@ import 'openrouter_response_parser.dart';
 ///   ).toOptions(),
 /// );
 /// ```
-class OpenRouterChatModel extends ToolCallingChatModel {
+class OpenRouterChatModel extends ToolCallingChatModel
+    implements TypedComponent, CallbackAwareComponent {
   OpenRouterChatModel({
     required this.config,
     this.httpClient,
@@ -90,11 +93,35 @@ class OpenRouterChatModel extends ToolCallingChatModel {
   void dispose() => _http.close();
 
   @override
+  String get componentTypeName => 'OpenRouter';
+
+  /// The model reports its calls to the callback handlers of
+  /// `options.runContext` (and to the global ones) itself, with the model
+  /// configuration and the token usage.
+  @override
+  bool get isCallbacksEnabled => true;
+
+  @override
   Future<Message> generate(
     List<Message> input, {
     ChatModelOptions? options,
-  }) async {
+  }) {
     final mergedOptions = _mergeOptions(options);
+    return ModelCallCallbacks.generate(
+      mergedOptions,
+      typeName: componentTypeName,
+      defaultModel: config.defaultModel,
+      input: input,
+      generate: () => _generate(input, mergedOptions),
+    );
+  }
+
+  /// One completion, reported to the `CallbackManager` of the older callback
+  /// API when the options carry one.
+  Future<Message> _generate(
+    List<Message> input,
+    ChatModelOptions mergedOptions,
+  ) async {
     final callbackManager = mergedOptions.callbackManager as CallbackManager?;
 
     Future<Message> execute() async {
@@ -133,8 +160,21 @@ class OpenRouterChatModel extends ToolCallingChatModel {
   Future<StreamReader<Message>> stream(
     List<Message> input, {
     ChatModelOptions? options,
-  }) async {
+  }) {
     final mergedOptions = _mergeOptions(options);
+    return ModelCallCallbacks.stream(
+      mergedOptions,
+      typeName: componentTypeName,
+      defaultModel: config.defaultModel,
+      input: input,
+      stream: () => _stream(input, mergedOptions),
+    );
+  }
+
+  Future<StreamReader<Message>> _stream(
+    List<Message> input,
+    ChatModelOptions mergedOptions,
+  ) async {
     final requestBody = _buildRequestBody(input, mergedOptions, stream: true);
     final cancellation = CallCancellation.of(mergedOptions);
     var streaming = false;
