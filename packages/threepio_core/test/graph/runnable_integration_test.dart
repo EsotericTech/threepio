@@ -1,6 +1,5 @@
 import 'package:test/test.dart';
-import 'package:threepio_core/src/compose/lambda.dart';
-import 'package:threepio_core/src/compose/runnable.dart';
+import 'package:threepio_core/src/graph/legacy_runnable.dart';
 import 'package:threepio_core/src/graph/graph_node.dart';
 import 'package:threepio_core/src/graph/graph_state.dart';
 import 'package:threepio_core/src/graph/runnable_integration.dart';
@@ -15,7 +14,7 @@ void main() {
 
       final runnable = graph.toRunnable();
 
-      expect(runnable, isA<Runnable<TestState, GraphResult<TestState>>>());
+      expect(runnable, isA<LegacyRunnable<TestState, GraphResult<TestState>>>());
     });
 
     test('graph runnable invoke works', () async {

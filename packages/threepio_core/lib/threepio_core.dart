@@ -41,8 +41,19 @@ export 'src/components/tool/agent.dart';
 export 'src/components/tool/tool_executor.dart';
 export 'src/components/tool/tool_registry.dart';
 export 'src/components/vector_store/vector_store_exports.dart';
-// Graph orchestration exports
-export 'src/graph/graph_exports.dart';
+// Orchestration: runnables, lambdas, graphs, chains and the tools node (port
+// of the Eino package `compose`).
+export 'compose.dart';
+// The state graph that predates the compose port. Its five checkpoint names
+// that compose uses for its own contracts are left out here; they are in
+// `package:threepio_core/legacy_graph.dart`.
+export 'src/graph/graph_exports.dart'
+    hide
+        CheckpointSerializer,
+        CheckpointStore,
+        FileCheckpointStore,
+        InMemoryCheckpointStore,
+        JsonCheckpointSerializer;
 // Advanced Agent Development Kit exports
 export 'src/adk/adk_exports.dart';
 // Memory and persistence exports

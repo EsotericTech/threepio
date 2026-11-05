@@ -1,11 +1,10 @@
 import 'package:test/test.dart';
-import 'package:threepio_core/src/compose/lambda.dart';
-import 'package:threepio_core/src/compose/runnable.dart';
+import 'package:threepio_core/src/graph/legacy_runnable.dart';
 
 void main() {
-  group('Lambda', () {
+  group('LegacyLambda', () {
     test('invoke-only lambda works', () async {
-      final lambda = Lambda<String, String>(
+      final lambda = LegacyLambda<String, String>(
         invoke: (input, options) async => input.toUpperCase(),
       );
 
@@ -14,7 +13,7 @@ void main() {
     });
 
     test('stream-only lambda works', () async {
-      final lambda = Lambda<String, String>(
+      final lambda = LegacyLambda<String, String>(
         stream: (input, options) async* {
           for (final char in input.split('')) {
             yield char.toUpperCase();
@@ -27,7 +26,7 @@ void main() {
     });
 
     test('invoke falls back to stream.first', () async {
-      final lambda = Lambda<String, String>(
+      final lambda = LegacyLambda<String, String>(
         stream: (input, options) async* {
           yield input.toUpperCase();
         },
@@ -38,7 +37,7 @@ void main() {
     });
 
     test('stream falls back to wrapping invoke', () async {
-      final lambda = Lambda<String, String>(
+      final lambda = LegacyLambda<String, String>(
         invoke: (input, options) async => input.toUpperCase(),
       );
 
@@ -47,7 +46,7 @@ void main() {
     });
 
     test('collect works with custom function', () async {
-      final lambda = Lambda<String, String>(
+      final lambda = LegacyLambda<String, String>(
         collect: (input, options) async {
           final items = await input.toList();
           return items.join('');
@@ -59,7 +58,7 @@ void main() {
     });
 
     test('transform works with stream mapping', () async {
-      final lambda = Lambda<String, String>(
+      final lambda = LegacyLambda<String, String>(
         transform: (input, options) {
           return input.map((s) => s.toUpperCase());
         },
@@ -72,17 +71,17 @@ void main() {
 
     test('throws when no execution mode provided', () {
       expect(
-        () => Lambda<String, String>(),
+        () => LegacyLambda<String, String>(),
         throwsArgumentError,
       );
     });
 
     test('pipe composes lambdas', () async {
-      final lambda1 = Lambda<String, String>(
+      final lambda1 = LegacyLambda<String, String>(
         invoke: (input, options) async => input.toUpperCase(),
       );
 
-      final lambda2 = Lambda<String, int>(
+      final lambda2 = LegacyLambda<String, int>(
         invoke: (input, options) async => input.length,
       );
 
@@ -93,7 +92,7 @@ void main() {
     });
 
     test('batch processes multiple inputs', () async {
-      final lambda = Lambda<int, int>(
+      final lambda = LegacyLambda<int, int>(
         invoke: (input, options) async => input * 2,
       );
 
@@ -102,7 +101,7 @@ void main() {
     });
 
     test('batchParallel processes multiple inputs in parallel', () async {
-      final lambda = Lambda<int, int>(
+      final lambda = LegacyLambda<int, int>(
         invoke: (input, options) async {
           // Simulate async work
           await Future.delayed(Duration(milliseconds: 10));
@@ -115,7 +114,7 @@ void main() {
     });
   });
 
-  group('Lambda helper functions', () {
+  group('LegacyLambda helper functions', () {
     test('lambda() creates invoke-only lambda', () async {
       final l = lambda<String, String>((input) async => input.toUpperCase());
 
@@ -144,35 +143,35 @@ void main() {
     });
   });
 
-  group('RunnableSequence', () {
+  group('LegacyRunnableSequence', () {
     test('composes two runnables in sequence', () async {
-      final first = Lambda<String, String>(
+      final first = LegacyLambda<String, String>(
         invoke: (input, options) async => input.toUpperCase(),
       );
 
-      final second = Lambda<String, int>(
+      final second = LegacyLambda<String, int>(
         invoke: (input, options) async => input.length,
       );
 
-      final sequence = RunnableSequence(first: first, second: second);
+      final sequence = LegacyRunnableSequence(first: first, second: second);
 
       final result = await sequence.invoke('hello');
       expect(result, equals(5));
     });
 
     test('stream mode chains properly', () async {
-      final first = Lambda<String, String>(
+      final first = LegacyLambda<String, String>(
         stream: (input, options) async* {
           yield input.toUpperCase();
           yield input.toLowerCase();
         },
       );
 
-      final second = Lambda<String, int>(
+      final second = LegacyLambda<String, int>(
         invoke: (input, options) async => input.length,
       );
 
-      final sequence = RunnableSequence(first: first, second: second);
+      final sequence = LegacyRunnableSequence(first: first, second: second);
 
       final results = await sequence.stream('HELLO').toList();
       expect(results, hasLength(2));
@@ -181,18 +180,18 @@ void main() {
     });
 
     test('collect mode works', () async {
-      final first = Lambda<String, String>(
+      final first = LegacyLambda<String, String>(
         collect: (input, options) async {
           final items = await input.toList();
           return items.join('');
         },
       );
 
-      final second = Lambda<String, String>(
+      final second = LegacyLambda<String, String>(
         invoke: (input, options) async => input.toUpperCase(),
       );
 
-      final sequence = RunnableSequence(first: first, second: second);
+      final sequence = LegacyRunnableSequence(first: first, second: second);
 
       final result =
           await sequence.collect(Stream.fromIterable(['a', 'b', 'c']));
@@ -200,15 +199,15 @@ void main() {
     });
 
     test('transform mode chains streams', () async {
-      final first = Lambda<String, String>(
+      final first = LegacyLambda<String, String>(
         transform: (input, options) => input.map((s) => s.toUpperCase()),
       );
 
-      final second = Lambda<String, int>(
+      final second = LegacyLambda<String, int>(
         transform: (input, options) => input.map((s) => s.length),
       );
 
-      final sequence = RunnableSequence(first: first, second: second);
+      final sequence = LegacyRunnableSequence(first: first, second: second);
 
       final results = await sequence
           .transform(Stream.fromIterable(['a', 'bb', 'ccc']))
@@ -217,9 +216,9 @@ void main() {
     });
   });
 
-  group('RunnableOptions', () {
+  group('LegacyRunnableOptions', () {
     test('copyWith creates new instance with updated values', () {
-      final options = RunnableOptions(
+      final options = LegacyRunnableOptions(
         metadata: {'key': 'value'},
         tags: ['tag1'],
       );
@@ -238,7 +237,7 @@ void main() {
     });
 
     test('copyWith preserves unspecified values', () {
-      final options = RunnableOptions(
+      final options = LegacyRunnableOptions(
         metadata: {'key': 'value'},
         tags: ['tag1'],
       );
@@ -252,14 +251,14 @@ void main() {
     });
   });
 
-  group('RunnableException', () {
+  group('LegacyRunnableException', () {
     test('toString includes message', () {
-      final ex = RunnableException('Test error');
+      final ex = LegacyRunnableException('Test error');
       expect(ex.toString(), contains('Test error'));
     });
 
     test('toString includes runnable type', () {
-      final ex = RunnableException(
+      final ex = LegacyRunnableException(
         'Test error',
         runnableType: 'TestRunnable',
       );
@@ -268,7 +267,7 @@ void main() {
 
     test('toString includes cause', () {
       final cause = Exception('Root cause');
-      final ex = RunnableException('Test error', cause: cause);
+      final ex = LegacyRunnableException('Test error', cause: cause);
       expect(ex.toString(), contains('Root cause'));
     });
   });

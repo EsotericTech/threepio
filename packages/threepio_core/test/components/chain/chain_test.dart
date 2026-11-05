@@ -1,6 +1,6 @@
 import 'package:test/test.dart';
 import 'package:threepio_core/src/components/chain/base_chain.dart';
-import 'package:threepio_core/src/compose/runnable.dart';
+import 'package:threepio_core/src/graph/legacy_runnable.dart';
 
 // Test chain implementations
 class UppercaseChain extends BaseChain {
@@ -113,7 +113,7 @@ void main() {
       // pipe() creates a generic Runnable composition
       final piped = chain1.pipe(chain2);
 
-      expect(piped, isA<Runnable>());
+      expect(piped, isA<LegacyRunnable>());
 
       // Test that it actually works
       final result = await piped.invoke({'number': 5});

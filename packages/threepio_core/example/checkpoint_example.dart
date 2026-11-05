@@ -2,6 +2,9 @@
 
 import 'dart:async';
 
+// The checkpoint stores of the state graph share their names with the
+// contracts of the compose port, so the umbrella library leaves them out.
+import 'package:threepio_core/legacy_graph.dart' as legacy;
 import 'package:threepio_core/threepio_core.dart';
 
 /// Checkpoint & Resume example demonstrating:
@@ -26,7 +29,7 @@ Future<void> basicCheckpointExample() async {
   print('1. Basic Checkpoint Example...\n');
 
   // Create checkpoint store
-  final store = InMemoryCheckpointStore<WorkflowState>();
+  final store = legacy.InMemoryCheckpointStore<WorkflowState>();
 
   // Create graph with checkpointing enabled
   final graph = StateGraph<WorkflowState>(
@@ -79,7 +82,7 @@ Future<void> basicCheckpointExample() async {
 Future<void> humanInTheLoopExample() async {
   print('2. Human-in-the-Loop Example...\n');
 
-  final store = InMemoryCheckpointStore<ApprovalState>();
+  final store = legacy.InMemoryCheckpointStore<ApprovalState>();
 
   final graph = StateGraph<ApprovalState>(
     checkpointConfig: CheckpointConfig(
@@ -158,7 +161,7 @@ Future<void> humanInTheLoopExample() async {
 Future<void> checkpointManagementExample() async {
   print('3. Checkpoint Management Example...\n');
 
-  final store = InMemoryCheckpointStore<WorkflowState>();
+  final store = legacy.InMemoryCheckpointStore<WorkflowState>();
 
   // Create some checkpoints
   for (var i = 1; i <= 5; i++) {

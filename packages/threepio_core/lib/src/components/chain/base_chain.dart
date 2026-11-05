@@ -1,6 +1,6 @@
 import '../../callbacks/callback_manager.dart';
 import '../../callbacks/run_info.dart';
-import '../../compose/runnable.dart';
+import '../../graph/legacy_runnable.dart';
 import '../../errors.dart';
 
 /// Base interface for composable processing chains
@@ -27,7 +27,7 @@ import '../../errors.dart';
 /// }
 /// ```
 abstract class BaseChain
-    implements Runnable<Map<String, dynamic>, Map<String, dynamic>> {
+    implements LegacyRunnable<Map<String, dynamic>, Map<String, dynamic>> {
   /// Input keys expected by this chain
   List<String> get inputKeys;
 
@@ -45,7 +45,7 @@ abstract class BaseChain
   @override
   Future<Map<String, dynamic>> invoke(
     Map<String, dynamic> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     // Validate inputs
     _validateInputs(input);
@@ -82,7 +82,7 @@ abstract class BaseChain
   @override
   Stream<Map<String, dynamic>> stream(
     Map<String, dynamic> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async* {
     // Get callback manager if available
     final callbackManager = options?.callbackManager as CallbackManager?;
@@ -114,7 +114,7 @@ abstract class BaseChain
   @override
   Future<Map<String, dynamic>> collect(
     Stream<Map<String, dynamic>> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     // Default implementation: take first input and invoke
     // Subclasses can override for collecting multiple inputs
@@ -125,7 +125,7 @@ abstract class BaseChain
   @override
   Stream<Map<String, dynamic>> transform(
     Stream<Map<String, dynamic>> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) {
     // Default implementation: map each input through invoke
     // Subclasses can override for true streaming transformation
@@ -133,15 +133,15 @@ abstract class BaseChain
   }
 
   @override
-  Runnable<Map<String, dynamic>, O2> pipe<O2>(
-      Runnable<Map<String, dynamic>, O2> next) {
+  LegacyRunnable<Map<String, dynamic>, O2> pipe<O2>(
+      LegacyRunnable<Map<String, dynamic>, O2> next) {
     return _ChainPipe<O2>(first: this, second: next);
   }
 
   @override
   Future<List<Map<String, dynamic>>> batch(
     List<Map<String, dynamic>> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     final results = <Map<String, dynamic>>[];
     for (final input in inputs) {
@@ -153,7 +153,7 @@ abstract class BaseChain
   @override
   Future<List<Map<String, dynamic>>> batchParallel(
     List<Map<String, dynamic>> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     return Future.wait(
       inputs.map((input) => invoke(input, options: options)),
@@ -164,7 +164,7 @@ abstract class BaseChain
   Future<Map<String, dynamic>> run(
     Map<String, dynamic> inputs, {
     List<String>? returnOnlyOutputs,
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     final outputs = await invoke(inputs, options: options);
 
@@ -208,19 +208,19 @@ abstract class BaseChain
 }
 
 /// Internal class for composing a chain with a generic runnable
-class _ChainPipe<O> implements Runnable<Map<String, dynamic>, O> {
+class _ChainPipe<O> implements LegacyRunnable<Map<String, dynamic>, O> {
   _ChainPipe({
     required this.first,
     required this.second,
   });
 
   final BaseChain first;
-  final Runnable<Map<String, dynamic>, O> second;
+  final LegacyRunnable<Map<String, dynamic>, O> second;
 
   @override
   Future<O> invoke(
     Map<String, dynamic> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     final intermediate = await first.invoke(input, options: options);
     return await second.invoke(intermediate, options: options);
@@ -229,7 +229,7 @@ class _ChainPipe<O> implements Runnable<Map<String, dynamic>, O> {
   @override
   Stream<O> stream(
     Map<String, dynamic> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) {
     final intermediateStream = first.stream(input, options: options);
     return second.transform(intermediateStream, options: options);
@@ -238,7 +238,7 @@ class _ChainPipe<O> implements Runnable<Map<String, dynamic>, O> {
   @override
   Future<O> collect(
     Stream<Map<String, dynamic>> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     final intermediate = await first.collect(input, options: options);
     return await second.invoke(intermediate, options: options);
@@ -247,21 +247,21 @@ class _ChainPipe<O> implements Runnable<Map<String, dynamic>, O> {
   @override
   Stream<O> transform(
     Stream<Map<String, dynamic>> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) {
     final intermediateStream = first.transform(input, options: options);
     return second.transform(intermediateStream, options: options);
   }
 
   @override
-  Runnable<Map<String, dynamic>, O2> pipe<O2>(Runnable<O, O2> next) {
+  LegacyRunnable<Map<String, dynamic>, O2> pipe<O2>(LegacyRunnable<O, O2> next) {
     return _ChainPipe<O2>(first: first, second: second.pipe(next));
   }
 
   @override
   Future<List<O>> batch(
     List<Map<String, dynamic>> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     final results = <O>[];
     for (final input in inputs) {
@@ -273,7 +273,7 @@ class _ChainPipe<O> implements Runnable<Map<String, dynamic>, O> {
   @override
   Future<List<O>> batchParallel(
     List<Map<String, dynamic>> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     return Future.wait(
       inputs.map((input) => invoke(input, options: options)),
@@ -394,7 +394,7 @@ class SequentialChain extends BaseChain {
   @override
   Stream<Map<String, dynamic>> stream(
     Map<String, dynamic> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) {
     // For sequential chains with streaming, we need to handle it carefully
     // We'll execute chains sequentially and stream the final result
@@ -404,7 +404,7 @@ class SequentialChain extends BaseChain {
   @override
   Stream<Map<String, dynamic>> transform(
     Stream<Map<String, dynamic>> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) {
     // For transform mode, chain the transformations
     var stream = input;
@@ -487,7 +487,7 @@ class ParallelChain extends BaseChain {
   @override
   Stream<Map<String, dynamic>> stream(
     Map<String, dynamic> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) {
     // For parallel chains with streaming, merge the streams
     return Stream.fromFuture(invoke(input, options: options));
@@ -496,7 +496,7 @@ class ParallelChain extends BaseChain {
   @override
   Stream<Map<String, dynamic>> transform(
     Stream<Map<String, dynamic>> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async* {
     // For transform mode with parallel chains, we need to handle carefully
     // Broadcast the input to all chains and merge outputs

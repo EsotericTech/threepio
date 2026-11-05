@@ -1,5 +1,5 @@
 import '../callbacks/callback_manager.dart';
-import '../compose/runnable.dart';
+import 'legacy_runnable.dart';
 import 'graph_node.dart';
 import 'graph_state.dart';
 import 'state_graph.dart';
@@ -18,14 +18,14 @@ import 'state_graph.dart';
 /// ```
 extension StateGraphRunnable<S extends GraphState> on StateGraph<S> {
   /// Convert this graph to a Runnable
-  Runnable<S, GraphResult<S>> toRunnable() {
+  LegacyRunnable<S, GraphResult<S>> toRunnable() {
     return _GraphRunnable<S>(this);
   }
 }
 
 /// Internal Runnable wrapper for StateGraph
 class _GraphRunnable<S extends GraphState>
-    implements Runnable<S, GraphResult<S>> {
+    implements LegacyRunnable<S, GraphResult<S>> {
   _GraphRunnable(this.graph);
 
   final StateGraph<S> graph;
@@ -33,7 +33,7 @@ class _GraphRunnable<S extends GraphState>
   @override
   Future<GraphResult<S>> invoke(
     S input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     return await graph.invoke(
       input,
@@ -44,7 +44,7 @@ class _GraphRunnable<S extends GraphState>
   @override
   Stream<GraphResult<S>> stream(
     S input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async* {
     // For graphs, streaming means yielding the final result
     // Could be enhanced to stream intermediate states
@@ -55,7 +55,7 @@ class _GraphRunnable<S extends GraphState>
   @override
   Future<GraphResult<S>> collect(
     Stream<S> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     // Take first input and invoke
     final firstInput = await input.first;
@@ -65,21 +65,21 @@ class _GraphRunnable<S extends GraphState>
   @override
   Stream<GraphResult<S>> transform(
     Stream<S> input, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) {
     // Map each input through the graph
     return input.asyncMap((item) => invoke(item, options: options));
   }
 
   @override
-  Runnable<S, O2> pipe<O2>(Runnable<GraphResult<S>, O2> next) {
+  LegacyRunnable<S, O2> pipe<O2>(LegacyRunnable<GraphResult<S>, O2> next) {
     return _PipeRunnable<S, GraphResult<S>, O2>(first: this, second: next);
   }
 
   @override
   Future<List<GraphResult<S>>> batch(
     List<S> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     final results = <GraphResult<S>>[];
     for (final input in inputs) {
@@ -91,7 +91,7 @@ class _GraphRunnable<S extends GraphState>
   @override
   Future<List<GraphResult<S>>> batchParallel(
     List<S> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     return Future.wait(
       inputs.map((input) => invoke(input, options: options)),
@@ -100,48 +100,48 @@ class _GraphRunnable<S extends GraphState>
 }
 
 /// Internal pipe implementation
-class _PipeRunnable<I, M, O> implements Runnable<I, O> {
+class _PipeRunnable<I, M, O> implements LegacyRunnable<I, O> {
   _PipeRunnable({
     required this.first,
     required this.second,
   });
 
-  final Runnable<I, M> first;
-  final Runnable<M, O> second;
+  final LegacyRunnable<I, M> first;
+  final LegacyRunnable<M, O> second;
 
   @override
-  Future<O> invoke(I input, {RunnableOptions? options}) async {
+  Future<O> invoke(I input, {LegacyRunnableOptions? options}) async {
     final intermediate = await first.invoke(input, options: options);
     return await second.invoke(intermediate, options: options);
   }
 
   @override
-  Stream<O> stream(I input, {RunnableOptions? options}) {
+  Stream<O> stream(I input, {LegacyRunnableOptions? options}) {
     final intermediateStream = first.stream(input, options: options);
     return second.transform(intermediateStream, options: options);
   }
 
   @override
-  Future<O> collect(Stream<I> input, {RunnableOptions? options}) async {
+  Future<O> collect(Stream<I> input, {LegacyRunnableOptions? options}) async {
     final intermediate = await first.collect(input, options: options);
     return await second.invoke(intermediate, options: options);
   }
 
   @override
-  Stream<O> transform(Stream<I> input, {RunnableOptions? options}) {
+  Stream<O> transform(Stream<I> input, {LegacyRunnableOptions? options}) {
     final intermediateStream = first.transform(input, options: options);
     return second.transform(intermediateStream, options: options);
   }
 
   @override
-  Runnable<I, O2> pipe<O2>(Runnable<O, O2> next) {
+  LegacyRunnable<I, O2> pipe<O2>(LegacyRunnable<O, O2> next) {
     return _PipeRunnable<I, O, O2>(first: this, second: next);
   }
 
   @override
   Future<List<O>> batch(
     List<I> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     final results = <O>[];
     for (final input in inputs) {
@@ -153,7 +153,7 @@ class _PipeRunnable<I, M, O> implements Runnable<I, O> {
   @override
   Future<List<O>> batchParallel(
     List<I> inputs, {
-    RunnableOptions? options,
+    LegacyRunnableOptions? options,
   }) async {
     return Future.wait(
       inputs.map((input) => invoke(input, options: options)),
@@ -162,7 +162,7 @@ class _PipeRunnable<I, M, O> implements Runnable<I, O> {
 }
 
 /// Extension to use Runnables as graph nodes
-extension RunnableNode<I, O> on Runnable<I, O> {
+extension RunnableNode<I, O> on LegacyRunnable<I, O> {
   /// Convert this Runnable to a node function
   ///
   /// The state type must have a way to extract input and set output.

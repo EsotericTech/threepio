@@ -1,286 +1,287 @@
-import 'runnable.dart';
+/// Lambdas: functions as nodes of a graph.
+///
+/// Port of eino `compose/types_lambda.go`.
+library;
 
-/// Lambda wraps custom functions into a Runnable
+import 'dart:async';
+
+import 'package:meta/meta.dart';
+
+import '../callbacks/run_info.dart';
+import '../core/run_context.dart';
+import '../schema/message.dart';
+import '../schema/message_parser.dart';
+import '../streaming/stream_reader.dart';
+import 'composable_runnable.dart';
+import 'stream_conversion.dart';
+
+/// How a lambda reports itself.
 ///
-/// This allows you to create runnables from simple functions without
-/// implementing the full Runnable interface.
+/// Port of eino `compose.LambdaOpt` (`WithLambdaType`,
+/// `WithLambdaCallbackEnable`).
+@immutable
+final class LambdaOptions {
+  /// The settings of a lambda.
+  const LambdaOptions({this.type = '', this.callbacksEnabled = false});
+
+  /// The implementation name the lambda's callbacks report as `RunInfo.type`.
+  final String type;
+
+  /// Whether the function fires its own callbacks (with `onStart` and the
+  /// other functions of `callbacks.dart`). When `false`, the graph fires them
+  /// around the lambda.
+  final bool callbacksEnabled;
+}
+
+/// A function as a node of a graph, chain or workflow.
 ///
-/// You can provide implementations for any of the 4 execution modes.
-/// If a mode is not provided, a default implementation will be used.
+/// Port of eino `compose.Lambda`. A lambda is written for one of the four
+/// ways to run a node, or for several of them ([Lambda.any]); the graph
+/// derives the others (see `Runnable`):
 ///
-/// Example:
 /// ```dart
-/// // Simple invoke-only lambda
-/// final lambda = Lambda<String, String>(
-///   invoke: (input, options) async => input.toUpperCase(),
+/// final upper = Lambda<String, String>.invokable(
+///   (ctx, input) => input.toUpperCase(),
 /// );
-///
-/// // Lambda with streaming support
-/// final streamingLambda = Lambda<String, String>(
-///   invoke: (input, options) async => input.toUpperCase(),
-///   stream: (input, options) async* {
-///     for (final char in input.split('')) {
-///       yield char.toUpperCase();
-///     }
-///   },
-/// );
+/// graph.addLambdaNode('upper', upper);
 /// ```
-class Lambda<I, O> implements Runnable<I, O> {
-  Lambda({
-    Future<O> Function(I input, RunnableOptions? options)? invoke,
-    Stream<O> Function(I input, RunnableOptions? options)? stream,
-    Future<O> Function(Stream<I> input, RunnableOptions? options)? collect,
-    Stream<O> Function(Stream<I> input, RunnableOptions? options)? transform,
-  })  : _invokeFunc = invoke,
-        _streamFunc = stream,
-        _collectFunc = collect,
-        _transformFunc = transform {
-    // At least one execution mode must be provided
-    if (invoke == null &&
-        stream == null &&
-        collect == null &&
-        transform == null) {
-      throw ArgumentError(
-        'Lambda must have at least one execution mode defined',
+///
+/// [I] and [O] are the input and output type of the node. The graph checks
+/// them against the neighbours of the node when edges are added.
+///
+/// The variants that also receive call options (`CallOption.lambda`) are the
+/// static methods [invokableWithOption], [streamableWithOption],
+/// [collectableWithOption], [transformableWithOption] and [anyWithOption]:
+/// they have a third type argument, which a constructor cannot have.
+final class Lambda<I, O> {
+  Lambda._(this.executor);
+
+  /// A lambda from a function that takes a value and returns a value. Port of
+  /// eino `compose.InvokableLambda`.
+  factory Lambda.invokable(
+    FutureOr<O> Function(RunContext ctx, I input) fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, _NoOption>(
+        options,
+        invoke: (ctx, input, _) async => fn(ctx, input),
       );
-    }
-  }
 
-  final Future<O> Function(I input, RunnableOptions? options)? _invokeFunc;
-  final Stream<O> Function(I input, RunnableOptions? options)? _streamFunc;
-  final Future<O> Function(Stream<I> input, RunnableOptions? options)?
-      _collectFunc;
-  final Stream<O> Function(Stream<I> input, RunnableOptions? options)?
-      _transformFunc;
-
-  @override
-  Future<O> invoke(I input, {RunnableOptions? options}) async {
-    if (_invokeFunc != null) {
-      return _invokeFunc(input, options);
-    }
-
-    // Fallback: if stream is available, collect first result
-    if (_streamFunc != null) {
-      return await _streamFunc(input, options).first;
-    }
-
-    // Fallback: if collect is available, create single-item stream
-    if (_collectFunc != null) {
-      return await _collectFunc(Stream.value(input), options);
-    }
-
-    // Fallback: if transform is available, use it
-    if (_transformFunc != null) {
-      return await _transformFunc(Stream.value(input), options).first;
-    }
-
-    throw RunnableException(
-      'No suitable execution mode available for invoke',
-      runnableType: 'Lambda',
-    );
-  }
-
-  @override
-  Stream<O> stream(I input, {RunnableOptions? options}) {
-    if (_streamFunc != null) {
-      return _streamFunc(input, options);
-    }
-
-    // Fallback: if invoke is available, wrap result in stream
-    if (_invokeFunc != null) {
-      return Stream.fromFuture(_invokeFunc(input, options));
-    }
-
-    // Fallback: if transform is available, create single-item stream
-    if (_transformFunc != null) {
-      return _transformFunc(Stream.value(input), options);
-    }
-
-    // Fallback: if collect is available, use transform fallback
-    if (_collectFunc != null) {
-      return Stream.fromFuture(
-        _collectFunc(Stream.value(input), options),
+  /// A lambda from a function that takes a value and returns a stream. Port
+  /// of eino `compose.StreamableLambda`.
+  factory Lambda.streamable(
+    FutureOr<StreamReader<O>> Function(RunContext ctx, I input) fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, _NoOption>(
+        options,
+        stream: (ctx, input, _) async => fn(ctx, input),
       );
-    }
 
-    throw RunnableException(
-      'No suitable execution mode available for stream',
-      runnableType: 'Lambda',
-    );
+  /// A lambda from a function that takes a stream and returns a value. Port
+  /// of eino `compose.CollectableLambda`.
+  factory Lambda.collectable(
+    FutureOr<O> Function(RunContext ctx, StreamReader<I> input) fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, _NoOption>(
+        options,
+        collect: (ctx, input, _) async => fn(ctx, input),
+      );
+
+  /// A lambda from a function that takes a stream and returns a stream. Port
+  /// of eino `compose.TransformableLambda`.
+  factory Lambda.transformable(
+    FutureOr<StreamReader<O>> Function(RunContext ctx, StreamReader<I> input)
+        fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, _NoOption>(
+        options,
+        transform: (ctx, input, _) async => fn(ctx, input),
+      );
+
+  /// A lambda from any non-empty subset of the four functions. Port of eino
+  /// `compose.AnyLambda`.
+  ///
+  /// Throws [ArgumentError] when none is given.
+  factory Lambda.any({
+    FutureOr<O> Function(RunContext ctx, I input)? invoke,
+    FutureOr<StreamReader<O>> Function(RunContext ctx, I input)? stream,
+    FutureOr<O> Function(RunContext ctx, StreamReader<I> input)? collect,
+    FutureOr<StreamReader<O>> Function(RunContext ctx, StreamReader<I> input)?
+        transform,
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, _NoOption>(
+        options,
+        invoke: invoke == null ? null : (ctx, input, _) async => invoke(ctx, input),
+        stream: stream == null ? null : (ctx, input, _) async => stream(ctx, input),
+        collect:
+            collect == null ? null : (ctx, input, _) async => collect(ctx, input),
+        transform: transform == null
+            ? null
+            : (ctx, input, _) async => transform(ctx, input),
+      );
+
+  /// Like [Lambda.invokable] for a function that also takes the call options
+  /// of type [TOption] aimed at it. Port of eino
+  /// `compose.InvokableLambdaWithOption`.
+  static Lambda<I, O> invokableWithOption<I, O, TOption>(
+    FutureOr<O> Function(RunContext ctx, I input, List<TOption> options) fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, TOption>(
+        options,
+        invoke: (ctx, input, callOptions) async => fn(ctx, input, callOptions),
+      );
+
+  /// Port of eino `compose.StreamableLambdaWithOption`.
+  static Lambda<I, O> streamableWithOption<I, O, TOption>(
+    FutureOr<StreamReader<O>> Function(
+      RunContext ctx,
+      I input,
+      List<TOption> options,
+    ) fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, TOption>(
+        options,
+        stream: (ctx, input, callOptions) async => fn(ctx, input, callOptions),
+      );
+
+  /// Port of eino `compose.CollectableLambdaWithOption`.
+  static Lambda<I, O> collectableWithOption<I, O, TOption>(
+    FutureOr<O> Function(
+      RunContext ctx,
+      StreamReader<I> input,
+      List<TOption> options,
+    ) fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, TOption>(
+        options,
+        collect: (ctx, input, callOptions) async => fn(ctx, input, callOptions),
+      );
+
+  /// Port of eino `compose.TransformableLambdaWithOption`.
+  static Lambda<I, O> transformableWithOption<I, O, TOption>(
+    FutureOr<StreamReader<O>> Function(
+      RunContext ctx,
+      StreamReader<I> input,
+      List<TOption> options,
+    ) fn, {
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, TOption>(
+        options,
+        transform: (ctx, input, callOptions) async =>
+            fn(ctx, input, callOptions),
+      );
+
+  /// Like [Lambda.any] for functions that also take call options of type
+  /// [TOption]. Port of eino `compose.AnyLambda`.
+  static Lambda<I, O> anyWithOption<I, O, TOption>({
+    FutureOr<O> Function(RunContext ctx, I input, List<TOption> options)?
+        invoke,
+    FutureOr<StreamReader<O>> Function(
+      RunContext ctx,
+      I input,
+      List<TOption> options,
+    )? stream,
+    FutureOr<O> Function(
+      RunContext ctx,
+      StreamReader<I> input,
+      List<TOption> options,
+    )? collect,
+    FutureOr<StreamReader<O>> Function(
+      RunContext ctx,
+      StreamReader<I> input,
+      List<TOption> options,
+    )? transform,
+    LambdaOptions? options,
+  }) =>
+      _build<I, O, TOption>(
+        options,
+        invoke: invoke == null
+            ? null
+            : (ctx, input, callOptions) async => invoke(ctx, input, callOptions),
+        stream: stream == null
+            ? null
+            : (ctx, input, callOptions) async => stream(ctx, input, callOptions),
+        collect: collect == null
+            ? null
+            : (ctx, input, callOptions) async =>
+                collect(ctx, input, callOptions),
+        transform: transform == null
+            ? null
+            : (ctx, input, callOptions) async =>
+                transform(ctx, input, callOptions),
+      );
+
+  /// A lambda that wraps its input in a list of one. Port of eino
+  /// `compose.ToList`.
+  ///
+  /// It bridges a node that gives one [I] to a node that takes a list, for
+  /// instance a chat model and the next chat model. In a stream every chunk
+  /// becomes a list of one chunk.
+  static Lambda<I, List<I>> toList<I>({LambdaOptions? options}) =>
+      _build<I, List<I>, _NoOption>(
+        options,
+        invoke: (ctx, input, _) async => [input],
+        transform: (ctx, input, _) async =>
+            input.convert<List<I>>((chunk) => [chunk]),
+      );
+
+  /// A lambda that parses a message into a [T] with [parser]. Port of eino
+  /// `compose.MessageParser`.
+  static Lambda<Message, T> messageParser<T>(
+    MessageParser<T> parser, {
+    LambdaOptions? options,
+  }) =>
+      _build<Message, T, _NoOption>(
+        LambdaOptions(
+          type: options == null || options.type.isEmpty
+              ? 'MessageParse'
+              : options.type,
+          callbacksEnabled: options?.callbacksEnabled ?? false,
+        ),
+        invoke: (ctx, input, _) => parser.parse(ctx, input),
+      );
+
+  /// What a graph runs for this lambda.
+  @internal
+  final ComposableRunnable executor;
+
+  static Lambda<I, O> _build<I, O, TOption>(
+    LambdaOptions? options, {
+    InvokeFn<I, O, TOption>? invoke,
+    StreamFn<I, O, TOption>? stream,
+    CollectFn<I, O, TOption>? collect,
+    TransformFn<I, O, TOption>? transform,
+  }) {
+    final settings = options ?? const LambdaOptions();
+    final executor = RunnablePacker<I, O, TOption>(
+      invoke: invoke,
+      stream: stream,
+      collect: collect,
+      transform: transform,
+      enableCallbacks: !settings.callbacksEnabled,
+    ).toComposableRunnable()
+      ..meta = ExecutorMeta(
+        component: ComponentType.lambda,
+        isComponentCallbackEnabled: settings.callbacksEnabled,
+        componentImplType: settings.type,
+      );
+    return Lambda<I, O>._(executor);
   }
 
   @override
-  Future<O> collect(Stream<I> input, {RunnableOptions? options}) async {
-    if (_collectFunc != null) {
-      return _collectFunc(input, options);
-    }
-
-    // Fallback: if transform is available, take first result
-    if (_transformFunc != null) {
-      return await _transformFunc(input, options).first;
-    }
-
-    // Fallback: if invoke is available, use first input item
-    if (_invokeFunc != null) {
-      final firstInput = await input.first;
-      return await _invokeFunc(firstInput, options);
-    }
-
-    // Fallback: if stream is available, use first input item
-    if (_streamFunc != null) {
-      final firstInput = await input.first;
-      return await _streamFunc(firstInput, options).first;
-    }
-
-    throw RunnableException(
-      'No suitable execution mode available for collect',
-      runnableType: 'Lambda',
-    );
-  }
-
-  @override
-  Stream<O> transform(Stream<I> input, {RunnableOptions? options}) {
-    if (_transformFunc != null) {
-      return _transformFunc(input, options);
-    }
-
-    // Fallback: if collect is available, wrap result in stream
-    if (_collectFunc != null) {
-      return Stream.fromFuture(_collectFunc(input, options));
-    }
-
-    // Fallback: if stream is available, transform each input
-    if (_streamFunc != null) {
-      return input.asyncExpand((item) => _streamFunc(item, options));
-    }
-
-    // Fallback: if invoke is available, transform each input
-    if (_invokeFunc != null) {
-      return input.asyncMap((item) => _invokeFunc(item, options));
-    }
-
-    throw RunnableException(
-      'No suitable execution mode available for transform',
-      runnableType: 'Lambda',
-    );
-  }
-
-  @override
-  Runnable<I, O2> pipe<O2>(Runnable<O, O2> next) {
-    return RunnableSequence<I, O, O2>(first: this, second: next);
-  }
-
-  @override
-  Future<List<O>> batch(List<I> inputs, {RunnableOptions? options}) async {
-    final results = <O>[];
-    for (final input in inputs) {
-      results.add(await invoke(input, options: options));
-    }
-    return results;
-  }
-
-  @override
-  Future<List<O>> batchParallel(
-    List<I> inputs, {
-    RunnableOptions? options,
-  }) async {
-    return Future.wait(
-      inputs.map((input) => invoke(input, options: options)),
-    );
-  }
+  String toString() => 'Lambda<$I, $O>';
 }
 
-/// Internal class for composing two runnables in sequence
-class RunnableSequence<I, M, O> implements Runnable<I, O> {
-  RunnableSequence({
-    required this.first,
-    required this.second,
-  });
-
-  final Runnable<I, M> first;
-  final Runnable<M, O> second;
-
-  @override
-  Future<O> invoke(I input, {RunnableOptions? options}) async {
-    final intermediate = await first.invoke(input, options: options);
-    return await second.invoke(intermediate, options: options);
-  }
-
-  @override
-  Stream<O> stream(I input, {RunnableOptions? options}) {
-    // For streaming, we need to handle the intermediate streaming carefully
-    // We'll use transform mode on second if first produces a stream
-    try {
-      final intermediateStream = first.stream(input, options: options);
-      return second.transform(intermediateStream, options: options);
-    } catch (e) {
-      // Fallback to invoke + stream if transform not available
-      return Stream.fromFuture(first.invoke(input, options: options))
-          .asyncExpand(
-              (intermediate) => second.stream(intermediate, options: options));
-    }
-  }
-
-  @override
-  Future<O> collect(Stream<I> input, {RunnableOptions? options}) async {
-    final intermediate = await first.collect(input, options: options);
-    return await second.invoke(intermediate, options: options);
-  }
-
-  @override
-  Stream<O> transform(Stream<I> input, {RunnableOptions? options}) {
-    final intermediateStream = first.transform(input, options: options);
-    return second.transform(intermediateStream, options: options);
-  }
-
-  @override
-  Runnable<I, O2> pipe<O2>(Runnable<O, O2> next) {
-    return RunnableSequence<I, O, O2>(first: this, second: next);
-  }
-
-  @override
-  Future<List<O>> batch(List<I> inputs, {RunnableOptions? options}) async {
-    final results = <O>[];
-    for (final input in inputs) {
-      results.add(await invoke(input, options: options));
-    }
-    return results;
-  }
-
-  @override
-  Future<List<O>> batchParallel(
-    List<I> inputs, {
-    RunnableOptions? options,
-  }) async {
-    return Future.wait(
-      inputs.map((input) => invoke(input, options: options)),
-    );
-  }
-}
-
-/// Helper function to create a simple Lambda from an invoke function
-Lambda<I, O> lambda<I, O>(
-  Future<O> Function(I input) func,
-) {
-  return Lambda<I, O>(
-    invoke: (input, options) => func(input),
-  );
-}
-
-/// Helper function to create a streaming Lambda
-Lambda<I, O> streamingLambda<I, O>(
-  Stream<O> Function(I input) func,
-) {
-  return Lambda<I, O>(
-    stream: (input, options) => func(input),
-  );
-}
-
-/// Helper function to create a synchronous Lambda
-Lambda<I, O> syncLambda<I, O>(
-  O Function(I input) func,
-) {
-  return Lambda<I, O>(
-    invoke: (input, options) async => func(input),
-  );
+/// The option type of a lambda that takes no options: no call option is a
+/// value of it, so none reaches the lambda.
+final class _NoOption {
+  const _NoOption._();
 }

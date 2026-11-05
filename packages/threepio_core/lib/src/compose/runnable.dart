@@ -1,184 +1,59 @@
-import '../errors.dart';
+/// The contract of everything that can be run: a compiled graph, chain or
+/// workflow, and the tools node.
+library;
 
-/// Core abstraction for composable components in Threepio
+import '../core/run_context.dart';
+import '../streaming/stream_reader.dart';
+import 'call_options.dart';
+
+/// Something that takes an [I] and gives an [O], in four ways.
 ///
-/// Based on Eino's Runnable interface, this provides four execution modes:
-/// - invoke: I → Future<O> (basic async execution)
-/// - stream: I → Stream<O> (streaming output)
-/// - collect: Stream<I> → Future<O> (collect stream input)
-/// - transform: Stream<I> → Stream<O> (stream-to-stream transformation)
+/// Port of eino `compose.Runnable`. The four methods differ in whether the
+/// input and the output are single values or streams:
 ///
-/// This is the foundation for all composable components (chains, graphs, etc.)
-abstract class Runnable<I, O> {
-  /// Execute with single input, return single output
-  ///
-  /// This is the most basic execution mode.
-  ///
-  /// Example:
-  /// ```dart
-  /// final result = await runnable.invoke({'query': 'Hello'});
-  /// ```
-  Future<O> invoke(I input, {RunnableOptions? options});
-
-  /// Execute with single input, stream multiple outputs
-  ///
-  /// Useful for real-time responses from LLMs.
-  ///
-  /// Example:
-  /// ```dart
-  /// await for (final chunk in runnable.stream({'query': 'Hello'})) {
-  ///   print(chunk);
-  /// }
-  /// ```
-  Stream<O> stream(I input, {RunnableOptions? options});
-
-  /// Collect streaming input, return single output
-  ///
-  /// Useful for aggregating streamed data.
-  ///
-  /// Example:
-  /// ```dart
-  /// final result = await runnable.collect(inputStream);
-  /// ```
-  Future<O> collect(Stream<I> input, {RunnableOptions? options});
-
-  /// Transform streaming input to streaming output
-  ///
-  /// Most flexible mode for stream processing.
-  ///
-  /// Example:
-  /// ```dart
-  /// final outputStream = runnable.transform(inputStream);
-  /// await for (final chunk in outputStream) {
-  ///   print(chunk);
-  /// }
-  /// ```
-  Stream<O> transform(Stream<I> input, {RunnableOptions? options});
-
-  /// Compose this runnable with another
-  ///
-  /// Creates a new runnable that pipes output of this into the next.
-  ///
-  /// Example:
-  /// ```dart
-  /// final composed = runnable1.pipe(runnable2).pipe(runnable3);
-  /// final result = await composed.invoke(input);
-  /// ```
-  Runnable<I, O2> pipe<O2>(Runnable<O, O2> next);
-
-  /// Batch process multiple inputs
-  ///
-  /// Default implementation calls invoke for each input.
-  /// Override for optimized batch processing.
-  Future<List<O>> batch(List<I> inputs, {RunnableOptions? options}) async {
-    final results = <O>[];
-    for (final input in inputs) {
-      results.add(await invoke(input, options: options));
-    }
-    return results;
-  }
-
-  /// Batch process multiple inputs in parallel
-  ///
-  /// Default implementation uses Future.wait.
-  /// Override for custom concurrency control.
-  Future<List<O>> batchParallel(
-    List<I> inputs, {
-    RunnableOptions? options,
-  }) async {
-    return Future.wait(
-      inputs.map((input) => invoke(input, options: options)),
-    );
-  }
-}
-
-/// Options for runnable execution
+/// | method      | input    | output   |
+/// |-------------|----------|----------|
+/// | [invoke]    | value    | value    |
+/// | [stream]    | value    | stream   |
+/// | [collect]   | stream   | value    |
+/// | [transform] | stream   | stream   |
 ///
-/// This can be extended by specific runnables to add custom options.
-/// Includes support for callbacks, metadata, and execution context.
-class RunnableOptions {
-  const RunnableOptions({
-    this.metadata,
-    this.tags,
-    this.callbackManager,
-    this.context,
+/// A compiled graph offers all four whatever its nodes implement: a node that
+/// only knows how to answer with a value is given the joined chunks of a
+/// stream, and its answer is passed on as a stream of one chunk.
+///
+/// [options] are the call options of this run: callbacks, options for the
+/// components inside, the step limit. Each can be aimed at single nodes with
+/// [CallOption.designateNode].
+///
+/// A returned stream belongs to the caller, who reads it to its end or closes
+/// it.
+abstract interface class Runnable<I, O> {
+  /// Value in, value out. Port of eino `Runnable.Invoke`.
+  Future<O> invoke(
+    RunContext ctx,
+    I input, {
+    List<CallOption> options = const [],
   });
 
-  /// Arbitrary metadata to pass through execution
-  final Map<String, dynamic>? metadata;
-
-  /// Tags for categorizing/filtering executions
-  final List<String>? tags;
-
-  /// Callback manager for execution lifecycle events
-  ///
-  /// Use this to attach callbacks that track execution, log information,
-  /// collect metrics, or perform other cross-cutting concerns.
-  ///
-  /// Example:
-  /// ```dart
-  /// import 'package:threepio_core/src/callbacks/callback_manager.dart';
-  ///
-  /// final options = RunnableOptions(
-  ///   callbackManager: CallbackManager([
-  ///     LoggingHandler(),
-  ///     MetricsHandler(),
-  ///   ]),
-  /// );
-  /// ```
-  final dynamic
-      callbackManager; // CallbackManager - keeping dynamic to avoid circular import
-
-  /// Execution context that flows through callbacks
-  ///
-  /// This context is threaded through all callback invocations,
-  /// allowing handlers to store and retrieve request-level information.
-  final Map<String, dynamic>? context;
-
-  /// Create a copy with updated fields
-  RunnableOptions copyWith({
-    Map<String, dynamic>? metadata,
-    List<String>? tags,
-    dynamic callbackManager,
-    Map<String, dynamic>? context,
-  }) {
-    return RunnableOptions(
-      metadata: metadata ?? this.metadata,
-      tags: tags ?? this.tags,
-      callbackManager: callbackManager ?? this.callbackManager,
-      context: context ?? this.context,
-    );
-  }
-
-  /// Get the context, creating an empty one if null
-  Map<String, dynamic> getOrCreateContext() {
-    return context ?? {};
-  }
-}
-
-/// Exception thrown by runnables
-class RunnableException implements ThreepioException {
-  RunnableException(
-    this.message, {
-    this.runnableType,
-    this.cause,
+  /// Value in, stream out. Port of eino `Runnable.Stream`.
+  Future<StreamReader<O>> stream(
+    RunContext ctx,
+    I input, {
+    List<CallOption> options = const [],
   });
 
-  @override
-  final String message;
-  final String? runnableType;
-  @override
-  final Object? cause;
+  /// Stream in, value out. Port of eino `Runnable.Collect`.
+  Future<O> collect(
+    RunContext ctx,
+    StreamReader<I> input, {
+    List<CallOption> options = const [],
+  });
 
-  @override
-  String toString() {
-    final buffer = StringBuffer('RunnableException: $message');
-    if (runnableType != null) {
-      buffer.write(' [runnable: $runnableType]');
-    }
-    if (cause != null) {
-      buffer.write('\nCause: $cause');
-    }
-    return buffer.toString();
-  }
+  /// Stream in, stream out. Port of eino `Runnable.Transform`.
+  Future<StreamReader<O>> transform(
+    RunContext ctx,
+    StreamReader<I> input, {
+    List<CallOption> options = const [],
+  });
 }

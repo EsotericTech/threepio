@@ -14,8 +14,10 @@ documents, templates, stream readers, chunk concatenation, the type registry)
 together with the run context every later API takes, and so is the Eino
 `components` package (the contracts of chat models, tools, templates,
 embedders, retrievers, indexers, loaders, parsers and transformers, their call
-options and callback payloads, and the tools made from functions), and the
-Eino `callbacks` package with tracing to Langfuse over OpenTelemetry.
+options and callback payloads, and the tools made from functions), the
+Eino `callbacks` package with tracing to Langfuse over OpenTelemetry, and the
+core of the Eino `compose` package: runnables, lambdas, graphs, chains and the
+tools node.
 
 ### Fixed
 
@@ -248,6 +250,76 @@ Eino `callbacks` package with tracing to Langfuse over OpenTelemetry.
     (`OtlpRetryConfig`), sampling per trace, masking. `OtlpSpan`,
     `OtlpSpanEvent`, `OtlpStatus` and `encodeOtlpTraces` are the data model,
     `SpanExporter` the interface to plug in another transport.
+- **`package:threepio_core/compose.dart`**: the core of the Eino `compose`
+  package, also exported by the umbrella library.
+  - `Runnable<I, O>`: `invoke`, `stream`, `collect` and `transform`, each with
+    the run context first and `List<CallOption>` options. Whatever is
+    compiled offers all four; a part that implements only some is given the
+    joined chunks of a stream where it needs a value, and its value is passed
+    on as a stream of one chunk.
+  - `Lambda<I, O>`: a function as a node. `Lambda.invokable`, `.streamable`,
+    `.collectable`, `.transformable` and `.any`; the static methods
+    `invokableWithOption` (and the three others, and `anyWithOption`) for
+    functions that take call options of their own type; `Lambda.toList` and
+    `Lambda.messageParser`; `LambdaOptions`.
+  - `Graph<I, O>`: `addChatModelNode`, `addChatTemplateNode`, `addToolsNode`,
+    `addRetrieverNode`, `addEmbeddingNode`, `addIndexerNode`,
+    `addLoaderNode`, `addDocumentTransformerNode`, `addLambdaNode`,
+    `addGraphNode` and `addPassthroughNode`, `addEdge`, `addBranch`,
+    `compile`. `Graph.start` and `Graph.end` stand for input and output. The
+    types along every edge are checked when the edge is added; an edge from a
+    wider type to a narrower one is checked when the value is there. A graph
+    runs in steps and may have cycles (`GraphCompileOptions.maxRunSteps`
+    bounds a run), or as a directed acyclic graph
+    (`NodeTriggerMode.allPredecessor`). Graphs nest.
+  - `GraphBranch.single`, `.multi`, `.stream` and `.streamMulti`: conditions
+    that choose the next node or nodes, from a value or from a stream.
+  - `Chain<I, O>` with `append…` for every kind of node, `ChainBranch` and
+    `Parallel`.
+  - `NodeOptions` (name, input and output key, state handlers, compile
+    options of a nested graph; a node key in a chain) and
+    `GraphCompileOptions` (step limit, graph name, trigger mode, compile
+    callbacks, fan-in merge settings, eager execution, and the checkpoint
+    settings that become effective with the checkpoint engine).
+  - Local state: `LocalState.of<S>` gives a graph a state object per run,
+    `StateHandler.pre`, `.post`, `.streamPre` and `.streamPost` read and
+    change it around a node, `processState<S>` from inside one. Access takes
+    turns, so nodes that run side by side can share the state.
+  - `CallOption`: `callbacks`, `chatModel`, `chatTemplate`, `toolsNode`,
+    `tool`, `embedding`, `retriever`, `loader`, `documentTransformer`,
+    `indexer`, `lambda<TOption>`, `runtimeMaxSteps`, and the checkpoint
+    options; `designateNode` and `designateNodeWithPath` (`NodePath`) aim an
+    option at single nodes, also inside nested graphs.
+  - Callbacks: a graph fires the callbacks of its nodes (unless a component
+    fires its own) and of itself, to the handlers of the context, the global
+    ones and those of the call.
+  - `ToolsNode`: runs the tool calls of an assistant message, side by side or
+    in order, as a value or as a stream. Name and argument aliases
+    (`ToolAliasConfig`), an arguments handler, a handler for unknown tools,
+    tools that implement the enhanced contracts, `ToolsNodeOptions` per call,
+    `toolCallIdOf(ctx)`. `ToolMiddleware` wraps every tool call
+    (`ToolCallInput`, `ToolCallOutput`, `StreamToolCallOutput`,
+    `EnhancedToolCallOutput`, `EnhancedStreamToolCallOutput`);
+    `ErrorRemoverMiddleware` turns a failed call into a result the model can
+    read and `JsonFixMiddleware` repairs arguments that are not valid JSON.
+  - `ValuesMerge.register<T>`: how the outputs of several nodes that lead to
+    one node are merged. Maps are merged by default.
+  - `GraphInfo`, `GraphNodeInfo`, `GraphCompileCallback` and
+    `GraphCompileCallbacks.appendGlobal`: the structure of a compiled graph;
+    `toMermaid()` on a graph, a chain and a `GraphInfo`.
+  - `CheckpointStore`, `CheckpointDeleter`, `CheckpointSerializer` and
+    `InMemoryCheckpointStore`: the contracts for the checkpoints of
+    interrupted runs. Nothing writes checkpoints yet: compiling a graph with
+    a checkpoint store or with interrupt nodes throws `UnimplementedError`.
+  - Errors: `GraphBuildException` (with `GraphCompiledException`,
+    `ChainCompiledException`, `DagLoopException`), `GraphRunException` and
+    `NodeExecutionException` (the path to the failed node and its cause),
+    `ExceedMaxStepsException`, `ComposeTypeException`,
+    `StreamReadException`, `ToolsNodeException`.
+- `package:threepio_core/legacy_graph.dart` (the state graph that predates
+  the port, with all its checkpoint classes, and the runnable over Dart
+  streams) and `package:threepio_core/legacy_chains.dart` (`BaseChain`,
+  `LLMChain`, `SequentialChain`, `RetrievalQAChain` and their relatives).
 - `MessageConcatException`, a `ThreepioException`: what the strict concat
   functions throw for chunks that contradict each other (see "Changed").
 - `ToolRegistry.ready` and `ToolRegistry.findTool(name)`.
@@ -339,6 +411,21 @@ Eino `callbacks` package with tracing to Langfuse over OpenTelemetry.
 - `AgentRunEndEvent.tokenUsage` is the schema `TokenUsage`; the look-alike
   class in `agent_event.dart` is gone. Its JSON is the one of the schema
   class; events stored with the old snake_case keys are still read.
+- The umbrella library no longer exports the five checkpoint classes of the
+  state graph whose names the compose port uses for its own contracts:
+  `CheckpointStore`, `CheckpointSerializer`, `JsonCheckpointSerializer`,
+  `InMemoryCheckpointStore` and `FileCheckpointStore`. `CheckpointStore`,
+  `CheckpointSerializer` and `InMemoryCheckpointStore` now name the compose
+  types there. The state graph classes are unchanged and are exported from
+  `package:threepio_core/legacy_graph.dart` (see "Migration notes").
+- The runnable over Dart `Stream`s that `StateGraph.toRunnable()` returns and
+  the chains implement was renamed to free the names for the port of Eino's
+  `Runnable` and `Lambda`: `Runnable` → `LegacyRunnable`, `Lambda` →
+  `LegacyLambda`, `RunnableSequence` → `LegacyRunnableSequence`,
+  `RunnableOptions` → `LegacyRunnableOptions`, `RunnableException` →
+  `LegacyRunnableException`. They moved from `src/compose/` to
+  `src/graph/legacy_runnable.dart` and were never exported; they are now
+  exported from `legacy_graph.dart`.
 - `pipe()` rejects a negative `capacity`.
 - `concatStreamReaders` passes the errors of a source on in place and keeps
   reading that source; it used to skip the rest of a source after its first
@@ -407,6 +494,38 @@ Eino `callbacks` package with tracing to Langfuse over OpenTelemetry.
   `MetricsHandler.printSummary`, `TracingHandler.printTrace` and
   `printTimeline` no longer print. To see their output, listen to the logger:
   `Logger.root.onRecord.listen((r) => print(r.message));`.
+- **The checkpoint classes of `StateGraph`.** Code that names
+  `CheckpointStore<S>`, `CheckpointSerializer<S>`,
+  `JsonCheckpointSerializer<S>`, `InMemoryCheckpointStore<S>` or
+  `FileCheckpointStore<S>` imports
+  `package:threepio_core/legacy_graph.dart`, with a prefix when the umbrella
+  library is imported too (`import '…/legacy_graph.dart' as legacy;` and
+  `legacy.InMemoryCheckpointStore<MyState>()`). Everything else of the state
+  graph (`StateGraph`, `GraphBuilder`, `GraphState`, `GraphNode`,
+  `GraphResult`, `START`, `END`, `CheckpointConfig`, the exceptions) is in
+  the umbrella library as before.
+- **The renamed runnable.** Code that imported `src/compose/runnable.dart` or
+  `src/compose/lambda.dart` imports `package:threepio_core/legacy_graph.dart`
+  and uses the `Legacy…` names. `StateGraph.toRunnable()` and `asNode()` work
+  as before.
+- **Differences from Eino in the compose port.** Mistakes in building a graph
+  throw (`GraphBuildException`) where Go returns an error, and a chain reports
+  its first mistake from `compile`. An edge may lead from any supertype to a
+  subtype, not only from an interface, and is then checked at run time. The
+  default fan-in merge gives a `Map<String, Object?>`; a node that takes a
+  narrower map type behind a fan-in needs `ValuesMerge.register`. A stream of
+  a `ToolsNode` carries empty tool messages where Go has `nil` entries. The
+  order in which nodes of a step are started, and in which map-valued inputs
+  are merged, is the order in which nodes and edges were added. Component
+  options are one object per kind that is merged, not a list of functions,
+  and an option reaches the nodes that take options of the type it was made
+  for (`CallOption.lambda<T>` the lambdas declared with `T`). There is no
+  `Passthrough` component kind; `GraphNodeInfo.isPassthrough` says it. A
+  compile callback that throws is logged (`threepio.compose`) and does not
+  fail `compile`. A node checks for cancellation before it starts, in
+  addition to the check between steps. `JsonFixMiddleware` repairs with a
+  small reader of its own, and a tools node that applies an argument alias
+  writes the arguments anew.
 - A class that `implements` `OpenAIChatModel`, `OpenRouterChatModel` or
   `GeminiChatModel` (instead of extending it) has to add `componentTypeName`
   and `isCallbacksEnabled`.
