@@ -39,9 +39,14 @@
 /// [AgentsMdMiddleware], [ToolReductionMiddleware], [FilesystemMiddleware],
 /// [SkillMiddleware], [PlanTaskMiddleware] ([ToolSearchMiddleware] anywhere).
 ///
+/// The prebuilt agents (port of `adk/prebuilt`): [DeepAgent] (a todo list,
+/// file and shell tools, and sub-agents started through a `task` tool) and
+/// [PlanExecute] (a planner, an executor and a replanner in a loop).
+///
 /// Not ported, because Eino marks it as not recommended: agent transfer
-/// (sub-agents, `TransferToAgentAction`, `ExitTool`, run paths, `OutputKey`)
-/// and the workflow agents; use [AgentTool] instead.
+/// (sub-agents, `TransferToAgentAction`, `ExitTool`, run paths, `OutputKey`),
+/// the workflow agents (plan-execute uses private runners in their place)
+/// and the supervisor; use [AgentTool] or [DeepAgent] instead.
 library;
 
 export 'compose.dart';
@@ -82,7 +87,7 @@ export 'src/adk/eino/language.dart' show AdkLanguage, adkLanguage, setAdkLanguag
 export 'src/adk/eino/message_id.dart'
     show einoMessageIdKey, ensureMessageId, messageIdOf;
 export 'src/adk/eino/middleware.dart';
-export 'src/adk/eino/middleware_context.dart';
+export 'src/adk/eino/middleware_context.dart' hide UnsetToolInfos;
 export 'src/adk/eino/model_failover.dart'
     show FailoverContext, ModelFailoverConfig;
 export 'src/adk/eino/model_retry.dart'
@@ -175,6 +180,18 @@ export 'src/adk/middlewares/summarization/summarization.dart'
         SummaryFinalizer,
         TokenCounterInput;
 export 'src/adk/middlewares/tool_search/tool_search.dart' show ToolSearchMiddleware;
+export 'src/adk/prebuilt/deep/deep_agent.dart' show DeepAgent, DeepAgentConfig;
+export 'src/adk/prebuilt/deep/task_tool.dart' show TaskToolDescriptionGenerator;
+export 'src/adk/prebuilt/deep/write_todos.dart' show Todo;
+export 'src/adk/prebuilt/plan_execute/executor.dart'
+    show ExecutionModelInput, ExecutorConfig;
+export 'src/adk/prebuilt/plan_execute/plan.dart'
+    show ExecutedStep, ExecutionContext, Plan, PlanDecoder, PlanExecuteResponse;
+export 'src/adk/prebuilt/plan_execute/plan_execute.dart'
+    show PlanExecute, PlanExecuteLoopConfig;
+export 'src/adk/prebuilt/plan_execute/planner.dart'
+    show PlannerConfig, PlannerModelInput;
+export 'src/adk/prebuilt/plan_execute/replanner.dart' show ReplannerConfig;
 export 'src/adk/tools/approvable_tool.dart' show ApprovableTool, ApprovalInfo, ApprovalResult;
 export 'src/adk/tools/graph_tool.dart' show GraphTool, GraphToolOptions;
 export 'src/adk/tools/follow_up_tool.dart'

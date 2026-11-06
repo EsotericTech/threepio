@@ -303,6 +303,56 @@ final class Runner {
   }
 }
 
+/// An agent that runs other agents in order: the sequential and loop runners
+/// of the plan-execute port (eino's `workflowAgent`, whose public
+/// constructors are not ported).
+///
+/// [FlowAgent] treats it as eino's `flowAgent` treats a `workflowAgent`: the
+/// runner gets the run's options without the cancel option and without the
+/// callback handlers its wrapper installed (each sub-agent's own wrapper
+/// filters what is meant for it), its events are not renamed, and its
+/// callbacks see the events after the cancel bookkeeping.
+@internal
+abstract interface class WorkflowRunnerAgent implements ResumableAgent {}
+
+/// An agent that is already inside its [FlowAgent], as what eino's workflow
+/// constructors return (a `*flowAgent`): running it runs the wrapper, and a
+/// `Runner` or another [FlowAgent] unwraps it instead of wrapping it twice
+/// (eino's `toFlowAgent` copies a `*flowAgent` rather than nesting it).
+@internal
+final class FlowWrappedAgent implements ResumableAgent {
+  /// [inner] inside its wrapper.
+  FlowWrappedAgent(this.inner);
+
+  /// The agent inside the wrapper.
+  final Agent inner;
+
+  @override
+  String get name => inner.name;
+
+  @override
+  String get description => inner.description;
+
+  @override
+  StreamReader<AgentEvent> run(
+    RunContext ctx,
+    AgentInput input, {
+    List<AgentRunOption> options = const [],
+  }) =>
+      FlowAgent(inner).run(ctx, input, options);
+
+  @override
+  StreamReader<AgentEvent> resume(
+    RunContext ctx,
+    ResumeInfo info, {
+    List<AgentRunOption> options = const [],
+  }) =>
+      FlowAgent(inner).resume(ctx, info, options);
+
+  @override
+  String toString() => 'FlowWrappedAgent($inner)';
+}
+
 /// The wrapper every agent runs in: the run context, the agent's address,
 /// its callbacks and the naming of its events.
 ///
@@ -310,11 +360,21 @@ final class Runner {
 /// rewriting, transfer actions and run paths are not ported).
 @internal
 final class FlowAgent {
-  /// The wrapper of [agent].
-  FlowAgent(this.agent);
+  /// The wrapper of [agent]; an agent that is already wrapped
+  /// ([FlowWrappedAgent]) is unwrapped.
+  FlowAgent(Agent agent)
+      : agent = agent is FlowWrappedAgent ? agent.inner : agent;
 
   /// The agent.
   final Agent agent;
+
+  /// Whether [agent] is a [WorkflowRunnerAgent].
+  bool get _isWorkflow => agent is WorkflowRunnerAgent;
+
+  /// What a [WorkflowRunnerAgent] is given of [options]. Port of eino's
+  /// `filterCancelOption(filterCallbackHandlersForNestedAgents(...))`.
+  List<AgentRunOption> _workflowOptions(List<AgentRunOption> options) =>
+      filterCancelOption(filterCallbackHandlersForNestedAgents(agent.name, options));
 
   /// Runs the agent. Port of `flowAgent.Run`.
   StreamReader<AgentEvent> run(
@@ -330,6 +390,8 @@ final class FlowAgent {
       cancelContext,
     );
     final filtered = filterOptions(name, options);
+    final workflow = _isWorkflow;
+    final agentOptions = workflow ? _workflowOptions(options) : filtered;
     final processed = _inputOf(run, input);
     final callbackCtx =
         initAgentCallbacks(ctx, name, agentTypeOf(agent), filtered);
@@ -337,7 +399,7 @@ final class FlowAgent {
     // once, as in eino, where `flowAgent.Run` calls it synchronously.
     final started = callbackCtx.hasCallbacks
         ? null
-        : _runSafely(callbackCtx, processed, filtered);
+        : _runSafely(callbackCtx, processed, agentOptions);
     final (reader, writer) = pipe<AgentEvent>();
     unawaited(() async {
       try {
@@ -348,18 +410,31 @@ final class FlowAgent {
             callbackCtx,
             AgentCallbackInput(input: processed),
           );
-          events = _runSafely(forwardCtx, processed, filtered);
+          events = _runSafely(forwardCtx, processed, agentOptions);
         }
-        await _forward(forwardCtx, events, writer, agentName: name);
+        // Eino's workflow branch: `wrapIterWithOnEnd(wrapIterWithCancelCtx(…))`,
+        // without naming the events.
+        if (workflow) {
+          await _forward(
+            forwardCtx,
+            wrapEventsWithCancelContext(events, cancelContext),
+            writer,
+          );
+        } else {
+          await _forward(forwardCtx, events, writer, agentName: name);
+        }
         // Whatever escaped is the run's failure.
         // ignore: avoid_catches_without_on_clauses
       } catch (error, stackTrace) {
+        // A workflow runner's events are not wrapped outside: end its cancel
+        // context here when it failed before they were.
+        if (workflow) cancelContext?.markDone();
         writer.send(AgentEvent(error: error, stackTrace: stackTrace));
       } finally {
         await writer.close();
       }
     }());
-    return wrapEventsWithCancelContext(reader, cancelContext);
+    return workflow ? reader : wrapEventsWithCancelContext(reader, cancelContext);
   }
 
   /// Resumes the agent. Port of `flowAgent.Resume`.
@@ -373,6 +448,11 @@ final class FlowAgent {
     final (built, resumeInfo) = buildResumeInfo(context, name, info);
     final ctx = withCancelContext(built, cancelContext);
     final filtered = filterOptions(name, options);
+    final workflow = _isWorkflow;
+    // Eino's workflow branch keeps the cancel bookkeeping inside the end
+    // callback (`wrapIterWithOnEnd(wrapIterWithCancelCtx(…))`).
+    StreamReader<AgentEvent> guarded(StreamReader<AgentEvent> events) =>
+        workflow ? wrapEventsWithCancelContext(events, cancelContext) : events;
     final (reader, writer) = pipe<AgentEvent>();
     unawaited(() async {
       try {
@@ -387,9 +467,11 @@ final class FlowAgent {
             cancelContext?.markDone();
             await _forward(
               callbackCtx,
-              _failed(
-                "failed to resume agent: agent '$name' is an interrupt point "
-                'but is not a ResumableAgent',
+              guarded(
+                _failed(
+                  "failed to resume agent: agent '$name' is an interrupt "
+                  'point but is not a ResumableAgent',
+                ),
               ),
               writer,
             );
@@ -397,9 +479,16 @@ final class FlowAgent {
           }
           await _forward(
             callbackCtx,
-            _resumeSafely(resumable, callbackCtx, resumeInfo, options),
+            guarded(
+              _resumeSafely(
+                resumable,
+                callbackCtx,
+                resumeInfo,
+                workflow ? _workflowOptions(options) : options,
+              ),
+            ),
             writer,
-            agentName: name,
+            agentName: workflow ? null : name,
           );
           return;
         }
@@ -407,17 +496,20 @@ final class FlowAgent {
           nextResumeAgent(ctx);
         } on ThreepioException catch (error) {
           cancelContext?.markDone();
-          await _forward(callbackCtx, _failed(error.message), writer);
+          await _forward(callbackCtx, guarded(_failed(error.message)), writer);
           return;
         }
         if (resumable == null) {
           await _forward(
             callbackCtx,
-            _failed(
-              "failed to resume agent: agent '$name' (type "
-              '${agent.runtimeType}) has no sub-agents and does not implement '
-              'ResumableAgent interface. To support resume, your custom agent '
-              'wrapper must implement the ResumableAgent interface',
+            guarded(
+              _failed(
+                "failed to resume agent: agent '$name' (type "
+                '${agent.runtimeType}) has no sub-agents and does not '
+                'implement ResumableAgent interface. To support resume, your '
+                'custom agent wrapper must implement the ResumableAgent '
+                'interface',
+              ),
             ),
             writer,
           );
@@ -427,23 +519,28 @@ final class FlowAgent {
         // it reaches the run's cancel context through the context.
         await _forward(
           callbackCtx,
-          _resumeSafely(
-            resumable,
-            callbackCtx,
-            resumeInfo,
-            filterCancelOption(options),
+          guarded(
+            _resumeSafely(
+              resumable,
+              callbackCtx,
+              resumeInfo,
+              workflow ? _workflowOptions(options) : filterCancelOption(options),
+            ),
           ),
           writer,
         );
         // Whatever escaped is the run's failure.
         // ignore: avoid_catches_without_on_clauses
       } catch (error, stackTrace) {
+        // A workflow runner's events are not wrapped outside: end its cancel
+        // context here when it failed before they were.
+        if (workflow) cancelContext?.markDone();
         writer.send(AgentEvent(error: error, stackTrace: stackTrace));
       } finally {
         await writer.close();
       }
     }());
-    return wrapEventsWithCancelContext(reader, cancelContext);
+    return workflow ? reader : wrapEventsWithCancelContext(reader, cancelContext);
   }
 
   /// The agent's events, or one error event when its `run` throws.

@@ -347,7 +347,8 @@ final class StateModelWrapper extends BaseChatModel
     }
     await _write(ctx, state);
     final derived = (options ?? const ChatModelOptions()).copyWith(
-      tools: state.toolInfos,
+      // Go: `model.WithTools(nil)` gives the model an empty list.
+      tools: state.hasUnsetToolInfos ? const [] : state.toolInfos,
       deferredTools: state.deferredToolInfos,
       runContext: ctx,
     );
@@ -402,7 +403,10 @@ final class StateModelWrapper extends BaseChatModel
       _processIfAny(ctx, (saved) {
         saved
           ..messages = List.of(state.messages)
-          ..toolInfos = List.of(state.toolInfos)
+          // Go keeps a nil list nil, and fills it with every tool again
+          // before the next call (see `_before`).
+          ..toolInfos =
+              state.hasUnsetToolInfos ? null : List.of(state.toolInfos)
           ..deferredToolInfos = state.deferredToolInfos == null
               ? null
               : List.of(state.deferredToolInfos!);

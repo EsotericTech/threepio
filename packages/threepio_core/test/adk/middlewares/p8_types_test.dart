@@ -149,15 +149,20 @@ void main() {
       expect(ThreepioException.findCause<FileNotFoundException>(ThreepioException('wrap', cause: error)), error);
     });
 
-    test('InMemoryBackend throws FileNotFoundException for a missing file', () async {
+    // Coordinator decision 1 after P8: as eino's in-memory backend, a missing
+    // file is a plain error (it does not wrap os.ErrNotExist).
+    test('InMemoryBackend throws a plain ThreepioException for a missing file', () async {
       final backend = InMemoryBackend();
+      final plainNotFound = isA<ThreepioException>()
+          .having((e) => e.message, 'message', 'file not found: /nope')
+          .having((e) => e is FileNotFoundException, 'is FileNotFoundException', isFalse);
       await expectLater(
         backend.read(ctx, const ReadRequest(filePath: '/nope')),
-        throwsA(isA<FileNotFoundException>().having((e) => e.message, 'message', 'file not found: /nope')),
+        throwsA(plainNotFound),
       );
       await expectLater(
         backend.edit(ctx, const EditRequest(filePath: '/nope', oldString: 'a', newString: 'b')),
-        throwsA(isA<FileNotFoundException>()),
+        throwsA(plainNotFound),
       );
     });
 

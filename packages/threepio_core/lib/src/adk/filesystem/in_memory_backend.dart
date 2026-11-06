@@ -38,6 +38,11 @@ final class _FileEntry {
 /// Globs have eino's (doublestar's) syntax: `*` does not cross `/`; `**` as
 /// a whole path segment crosses directories (`**/` may match none) and
 /// elsewhere is `*`; `?`, `[abc]`, `{a,b}`; `(`, `)` are plain characters.
+///
+/// A missing file is a plain [ThreepioException] (`file not found: <path>`),
+/// as in eino, whose in-memory backend does not wrap `os.ErrNotExist`: the
+/// agents.md middleware therefore fails the run for a missing file on this
+/// backend instead of skipping it (see [FileNotFoundException]).
 final class InMemoryBackend implements FilesystemBackend {
   /// An empty backend.
   InMemoryBackend();
@@ -100,7 +105,9 @@ final class InMemoryBackend implements FilesystemBackend {
     final filePath = normalizePath(request.filePath);
     final entry = _files[filePath];
     if (entry == null) {
-      throw FileNotFoundException(filePath);
+      // Eino's in-memory backend does not wrap os.ErrNotExist: a missing
+      // file is a plain error, which the agents.md middleware does not skip.
+      throw ThreepioException('file not found: $filePath');
     }
 
     // 1-based offset to a 0-based line index; below 1 means the first line.
@@ -202,7 +209,9 @@ final class InMemoryBackend implements FilesystemBackend {
     final filePath = normalizePath(request.filePath);
     final entry = _files[filePath];
     if (entry == null) {
-      throw FileNotFoundException(filePath);
+      // Eino's in-memory backend does not wrap os.ErrNotExist: a missing
+      // file is a plain error, which the agents.md middleware does not skip.
+      throw ThreepioException('file not found: $filePath');
     }
     final old = request.oldString;
     if (old.isEmpty) {

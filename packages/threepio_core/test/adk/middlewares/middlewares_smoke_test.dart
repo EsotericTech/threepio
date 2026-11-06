@@ -71,6 +71,25 @@ final class _Named extends InvokableTool {
   Future<String> run(String argumentsJson) async => '$name done';
 }
 
+/// Reads through [inner] and reports a missing file the way Go's agents.md
+/// tests do (an error wrapping `os.ErrNotExist`), so that it is skipped.
+/// `InMemoryBackend` itself reports a plain error, as eino's does.
+final class _SkipMissingBackend implements FileReadBackend {
+  _SkipMissingBackend(this.inner);
+
+  final InMemoryBackend inner;
+
+  @override
+  Future<FileContent> read(RunContext ctx, ReadRequest request) async {
+    try {
+      return await inner.read(ctx, request);
+    } on ThreepioException catch (error) {
+      if (!error.message.startsWith('file not found')) rethrow;
+      throw FileNotFoundException(request.filePath, cause: error);
+    }
+  }
+}
+
 final class _MapTaskBackend implements PlanTaskBackend {
   final Map<String, String> files = {};
 
@@ -128,7 +147,13 @@ void main() {
     final events = await _run(
       _agent(
         model,
-        [AgentsMdMiddleware(backend: backend, agentsMdFiles: ['/AGENTS.md', '/missing.md'], onLoadWarning: (_, __) {})],
+        [
+          AgentsMdMiddleware(
+            backend: _SkipMissingBackend(backend),
+            agentsMdFiles: ['/AGENTS.md', '/missing.md'],
+            onLoadWarning: (_, __) {},
+          ),
+        ],
         tools: [_Echo()],
         instruction: 'You help.',
       ),

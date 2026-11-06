@@ -14,8 +14,10 @@ import 'requests.dart';
 ///
 /// The Dart counterpart of a Go error that wraps `os.ErrNotExist`: the
 /// agents.md middleware skips a missing file (with a warning) only when its
-/// backend reports it this way, and fails on any other error. Backends
-/// should throw it for a missing file; `InMemoryBackend` does.
+/// backend reports it this way, and fails on any other error. A backend that
+/// wants missing agents.md files skipped throws it. Like eino's backends,
+/// `InMemoryBackend` does not: it reports a missing file with a plain
+/// `ThreepioException`, so a missing agents.md fails the run there.
 final class FileNotFoundException extends ThreepioException {
   /// [path] does not exist; [message] defaults to `file not found: <path>`.
   const FileNotFoundException(this.path, {String? message, super.cause})
@@ -29,8 +31,9 @@ final class FileNotFoundException extends ThreepioException {
 ///
 /// Port of eino `agentsmd.Backend`. Every [FilesystemBackend] is one.
 abstract interface class FileReadBackend {
-  /// The content of a file, or of a range of its lines. A missing file is a
-  /// [FileNotFoundException]. Port of `Backend.Read`.
+  /// The content of a file, or of a range of its lines. Port of
+  /// `Backend.Read`. Throw [FileNotFoundException] for a missing file that
+  /// the agents.md middleware should skip.
   Future<FileContent> read(RunContext ctx, ReadRequest request);
 }
 
@@ -47,7 +50,9 @@ abstract interface class FileWriteBackend {
 ///
 /// Port of eino `filesystem.Backend`. Every method takes a request object, so
 /// that fields can be added later without breaking implementations. Methods
-/// fail by throwing (a [FileNotFoundException] for a missing file).
+/// fail by throwing (`InMemoryBackend`, like eino's backends, throws a plain
+/// `ThreepioException` for a missing file; [FileNotFoundException] marks one
+/// that the agents.md middleware skips).
 abstract interface class FilesystemBackend
     implements FileReadBackend, FileWriteBackend {
   /// The entries directly under [request]'s path. Port of `Backend.LsInfo`.

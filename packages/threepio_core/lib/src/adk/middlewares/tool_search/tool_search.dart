@@ -53,6 +53,11 @@ const String toolSearchReminderExtraKey = '__toolsearch_reminder__';
 ///   go to `ChatModelOptions.deferredTools`, `tool_search` is left out of
 ///   the tools and passed as `ChatModelOptions.toolSearchTool`.
 ///
+/// When stripping leaves no tool at all (model-native mode without static
+/// tools), the list becomes Go's nil list: the first call is told about no
+/// tools, and before the next call the agent fills the list with every tool
+/// again, as eino's state wrapper does.
+///
 /// Changing the tool list between calls defeats a model's prompt cache.
 final class ToolSearchMiddleware extends ChatModelAgentMiddleware {
   ToolSearchMiddleware._({
@@ -134,23 +139,31 @@ final class ToolSearchMiddleware extends ChatModelAgentMiddleware {
     final (found, initialized) = tryRunLocalValue(ctx, _initializedKey);
     if (!(found && initialized == true)) {
       trySetRunLocalValue(ctx, _initializedKey, true);
+      final List<ToolInfo> kept;
       if (useModelToolSearch) {
         final deferred = [
           for (final info in state.toolInfos)
             if (_infos.containsKey(info.name)) info,
         ];
-        state
-          // Go's extractDynamicTools returns nil when there are none.
-          ..deferredToolInfos = deferred.isEmpty ? null : deferred
-          ..toolInfos = [
-            for (final info in state.toolInfos)
-              if (!_infos.containsKey(info.name) && info.name != toolSearchToolName) info,
-          ];
+        // Go's extractDynamicTools returns nil when there are none.
+        state.deferredToolInfos = deferred.isEmpty ? null : deferred;
+        kept = [
+          for (final info in state.toolInfos)
+            if (!_infos.containsKey(info.name) && info.name != toolSearchToolName) info,
+        ];
       } else {
-        state.toolInfos = [
+        kept = [
           for (final info in state.toolInfos)
             if (!_infos.containsKey(info.name)) info,
         ];
+      }
+      // Go's stripDynamicTools and removeTool return a nil slice when nothing
+      // is left; the agent then fills it with every tool again before the
+      // next model call (coordinator decision 2 after P8).
+      if (kept.isEmpty) {
+        state.unsetToolInfos();
+      } else {
+        state.toolInfos = kept;
       }
     }
 

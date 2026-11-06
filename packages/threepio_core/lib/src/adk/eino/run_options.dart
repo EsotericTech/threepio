@@ -213,6 +213,24 @@ List<AgentRunOption> filterCancelOption(List<AgentRunOption> options) => [
         if (option is! _CancelContextOption) option,
     ];
 
+/// [options] without the callback handlers the wrapper of the workflow agent
+/// [currentAgentName] installed already: those for every agent and those
+/// meant for it. Its sub-agents inherit them through the context and must not
+/// add them a second time. Port of eino `filterCallbackHandlersForNestedAgents`.
+@internal
+List<AgentRunOption> filterCallbackHandlersForNestedAgents(
+  String currentAgentName,
+  List<AgentRunOption> options,
+) =>
+    [
+      for (final option in options)
+        if (!(option is _CallbacksOption &&
+            option.handlers.isNotEmpty &&
+            (option.agentNames.isEmpty ||
+                option.agentNames.contains(currentAgentName))))
+          option,
+    ];
+
 /// The run shares the session values of the run it is nested in. Port of
 /// eino `withSharedParentSession`; an `AgentTool` uses it.
 @internal

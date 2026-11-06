@@ -4,6 +4,7 @@
 /// `ChatModelAgentState` in `adk/chatmodel.go`.
 library;
 
+import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 
 import '../../components/tool/invokable_tool.dart';
@@ -53,7 +54,9 @@ final class ChatModelAgentState {
     List<ToolInfo> toolInfos = const [],
     List<ToolInfo>? deferredToolInfos,
   })  : messages = List.of(messages),
-        toolInfos = List.of(toolInfos),
+        toolInfos = toolInfos is UnsetToolInfos && toolInfos.isEmpty
+            ? UnsetToolInfos()
+            : List.of(toolInfos),
         deferredToolInfos =
             deferredToolInfos == null ? null : List.of(deferredToolInfos);
 
@@ -66,6 +69,28 @@ final class ChatModelAgentState {
   /// Tools the model can look up on the server side
   /// (`ChatModelOptions.deferredTools`); `null` when not used.
   List<ToolInfo>? deferredToolInfos;
+
+  /// Sets [toolInfos] to Go's nil list: the model is told about no tools on
+  /// this call, and before its next call the agent fills the list with every
+  /// tool again, as eino's state wrapper backfills a nil `ToolInfos`.
+  /// Appending to the list (or replacing it) makes it an ordinary list.
+  @internal
+  void unsetToolInfos() => toolInfos = UnsetToolInfos();
+
+  /// Whether [toolInfos] is still the nil list of [unsetToolInfos].
+  @internal
+  bool get hasUnsetToolInfos =>
+      toolInfos is UnsetToolInfos && toolInfos.isEmpty;
+}
+
+/// The tool list of a [ChatModelAgentState] that stands for Go's nil
+/// `ToolInfos` (see [ChatModelAgentState.unsetToolInfos]). It is an empty,
+/// growable list; a state built from it gets a nil list of its own rather than
+/// an ordinary empty copy, as a Go state keeps a nil slice.
+@internal
+final class UnsetToolInfos extends DelegatingList<ToolInfo> {
+  /// An empty list.
+  UnsetToolInfos() : super(<ToolInfo>[]);
 }
 
 /// What a model hook knows about the model call.

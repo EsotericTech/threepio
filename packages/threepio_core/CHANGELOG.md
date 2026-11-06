@@ -20,8 +20,9 @@ Eino `compose` package: runnables, lambdas, graphs, chains, workflows and the
 tools node, with interrupt, checkpoint and resume, and the core of the Eino
 `adk` package (agents, the runner, interrupt and resume of agents,
 middlewares, retry and failover of the model), on which the Kortney runtime
-now runs, its run control (cancel, the turn loop, the filesystem backend) and
-its eight built-in middlewares.
+now runs, its run control (cancel, the turn loop, the filesystem backend),
+its eight built-in middlewares and its prebuilt agents (deep agent,
+plan-execute-replan).
 
 ### Fixed
 
@@ -197,10 +198,29 @@ its eight built-in middlewares.
   - `ToolSearchMiddleware.create(dynamicTools:, useModelToolSearch:)`: hides
     tools until the model finds them with `tool_search`, or hands them to a
     model with native tool search.
+- **ADK prebuilt agents** (port of Eino `adk/prebuilt`), in `adk.dart`:
+  - `DeepAgent.create(ctx, DeepAgentConfig(...))`: a `ChatModelAgent` with
+    Eino's instruction, a `write_todos` tool (the todo list, `Todo`, is the
+    session value `DeepAgent.sessionKeyTodos`), the file and shell tools of
+    `FilesystemMiddleware` when there is a backend, and a `task` tool that
+    starts a sub-agent (one of `subAgents` or a general-purpose copy of the
+    agent) on a task with a fresh context (`TaskToolDescriptionGenerator`
+    for a custom description).
+  - `PlanExecute.planner/executor/replanner/create` (`PlannerConfig`,
+    `ExecutorConfig`, `ReplannerConfig`, `PlanExecuteLoopConfig`, `Plan`,
+    `PlanDecoder`, `ExecutionContext`, `ExecutedStep`,
+    `PlanExecuteResponse`, the typedefs `PlannerModelInput` and
+    `ExecutionModelInput`): a planner writes a plan, then, in a loop, an
+    executor (a `ChatModelAgent` with tools) does its first step and a
+    replanner revises the plan or answers; Eino's prompts, plan and respond
+    tools and session keys; an interrupt inside the executor is resumed
+    there.
 - **Filesystem**: `FileReadBackend` and `FileWriteBackend`, the read and write
   halves of `FilesystemBackend` (which implements both), and
-  `FileNotFoundException`, which a backend throws for a missing file
-  (`InMemoryBackend` does).
+  `FileNotFoundException`, which a backend throws for a missing file that the
+  agents.md middleware should skip (Go: an error wrapping `os.ErrNotExist`).
+  `InMemoryBackend`, like eino's in-memory backend, does not: it reports a
+  missing file with a plain `ThreepioException`.
 - **Langfuse**: the observation of an agent ends with the messages and custom
   outputs of its events; retry notifications of its model
   (`WillRetryException`) are kept as `eino_retry_events` metadata instead of
@@ -552,8 +572,20 @@ its eight built-in middlewares.
   returns a nil channel (it was an already completed future). Code that
   awaited it keeps working (`await null` completes); code that passes it on
   as a `Future<void>` adds `!` for a preemptive push.
-- `InMemoryBackend` throws `FileNotFoundException` (a `ThreepioException`
-  with the same message) for a missing file.
+- A missing agents.md file fails the run when the backend reports it with a
+  plain error, as `InMemoryBackend` does (as in Eino, whose in-memory
+  backend does not wrap `os.ErrNotExist`); only a `FileNotFoundException`
+  is skipped with a warning. Earlier builds of this branch skipped it.
+- `ToolSearchMiddleware` in model-native mode without static tools: after
+  the first call (which is told about no tools) the agent is told about
+  every tool again, as Eino's engine fills a nil tool list; earlier builds of
+  this branch kept the list empty. (Go's nil list has no public counterpart
+  in `ChatModelAgentState.toolInfos`; only the built-in middleware can ask
+  for the refill.)
+- `ToolsNode.create` takes an optional `ctx` (Go's `NewToolNode(ctx, …)`),
+  and a tools node asks a tool whose description depends on the run (the
+  skill tool, the deep agent's `task` tool) with the context it is created
+  or called with.
 
 - **Kortney runtime** (`Runner`, `ChatModelAgent`, `AgentHandler`,
   `ContextualTool` of the umbrella library): the loop now runs on the
@@ -854,11 +886,12 @@ its eight built-in middlewares.
     asynchronous because a tool's `info()` is. `SkillMiddleware` builds a
     custom system prompt once, with a background context (Go: the context
     given to `New`).
-  - *Missing files*: the agents.md middleware skips a file whose read throws
-    `FileNotFoundException` (Go: an error wrapping `os.ErrNotExist`); since
-    `InMemoryBackend` throws it, a missing file is a warning with that
-    backend too (Eino's in-memory backend does not wrap `os.ErrNotExist`, so
-    the same setup fails in Go).
+  - *Missing files*: Go's `os.ErrNotExist` is `FileNotFoundException`: the
+    agents.md middleware skips (with a warning) a file whose read throws it
+    and fails on any other error. `InMemoryBackend`, like eino's in-memory
+    backend, reports a missing file with a plain `ThreepioException`
+    (`file not found: <path>`), so a missing agents.md fails the run with
+    that backend, as it does in Go.
   - *Lengths* (budgets, truncation points, token estimates) are UTF-8 byte
     counts, as in Go. The default token estimators measure a tool the way Go
     does (its name and description, not its parameters).
@@ -891,12 +924,54 @@ its eight built-in middlewares.
     caller who feeds the original history to a new run gets it cleared (and
     offloaded) again in Dart. Carry the history forward from the agent's
     final state.
-  - *Tool search, model-native mode without static tools*: the tools the
-    model is told about stay empty on later calls; in Go a nil list makes
-    the engine refill it with every tool.
   - *Summarization events* register `SummarizationAction` with
     `TypeRegistry` when a `SummarizationMiddleware` is created (Go: at
     package initialisation).
+- **Differences from Eino in the prebuilt agents.**
+  - *Not ported*, because Eino marks them as not recommended: the supervisor
+    (`prebuilt/supervisor`), the workflow agents `planexecute.New` is built
+    from (`NewSequentialAgent`, `NewLoopAgent`, `NewBreakLoopAction`,
+    `WorkflowInterruptInfo`; the plan-execute agent uses two private runners
+    instead, exported by no library), the deep agent's `OutputKey` and the
+    executor's (`OutputKey: ExecutedStepSessionKey` is a private middleware
+    that writes the same session value), and the deprecated `Middlewares`.
+    The agentic variants (`NewTyped[*schema.AgenticMessage]`) belong to the
+    agentic port; gob checkpoint compatibility is not ported.
+  - *The end of the loop*: the replanner ends the loop with a private
+    break action; the loop does not pass it on (Eino marks its
+    `BreakLoopAction` done and forwards the event), so the caller sees the
+    replanner's answer as the last event. A custom replanner therefore cannot
+    end the loop through the public API (Eino's way is the not recommended
+    `NewBreakLoopAction`).
+  - *Sub-agent input*: a sub-agent of the plan-execute agent gets the run's
+    input; Eino gives it that input plus the earlier agents' messages
+    rewritten as "For context: …" (the history of agent transfer). The
+    built-in planner, executor and replanner read session values instead and
+    see no difference; a custom part that reads its input does.
+  - *Interrupts*: the plan-execute agent's interrupt reports no `data` (Eino
+    fills the deprecated field with a `WorkflowInterruptInfo`); the interrupt
+    contexts are the same. After a cancel of the whole run (`withCancel`), a
+    resume continues the interrupted part (the executor) from its own
+    checkpoint and in the same round; Eino runs that part again from the
+    start, because its cancel checkpoint drops the `WorkflowInterruptInfo`
+    the workflow agents resume from (behind an `AgentTool`, Eino resumes it
+    too).
+  - *Executor*: the private middleware that writes `ExecutedStep` adds an
+    `AfterAgent` node to the executor's graph, which callback handlers see
+    (Eino's executor has none).
+  - *Plans*: `PlanDecoder` builds a plan from the JSON text (Eino fills an
+    empty plan with `UnmarshalJSON`); `Plan.toJson` returns a JSON object
+    (Go's `MarshalJSON` may write any JSON value); the default plan's and the
+    `task` tool's field names must match exactly (Go also accepts other
+    letter cases). Custom plans need a `TypeRegistry` registration to survive
+    a checkpoint, as in Eino.
+  - *Deep agent*: like Eino's, it does not summarize by itself (add a
+    `SummarizationMiddleware`); its general-purpose sub-agent gets the
+    failover configuration but not the retry configuration, as in Eino. The
+    `task` tool's description is built with the run's context.
+  - *Construction*: the factories are asynchronous and throw
+    `ArgumentError` where Go's return an error or panic on a missing model
+    (`PlannerConfig` with neither model, a shell without a backend).
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

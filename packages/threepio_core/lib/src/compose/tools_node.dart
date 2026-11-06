@@ -13,6 +13,7 @@ import '../callbacks/run_info.dart';
 import '../components/component_type.dart';
 import '../components/tool/enhanced_tool.dart';
 import '../components/tool/invokable_tool.dart';
+import '../components/tool/run_context_tool_info.dart';
 import '../components/tool/tool_options.dart';
 import '../core/interrupt_signal.dart';
 import '../core/run_context.dart';
@@ -181,10 +182,15 @@ final class ToolsNode
   /// Creates a tools node and checks its configuration: every tool must
   /// answer `info()`, be runnable, and the aliases must not conflict.
   ///
-  /// Port of eino `compose.NewToolNode`, which returns such errors.
-  static Future<ToolsNode> create(ToolsNodeConfig config) async {
+  /// Port of eino `compose.NewToolNode(ctx, config)`, which returns such
+  /// errors. A tool whose info depends on the run is asked for it with [ctx]
+  /// (Go's `Info(ctx)`); without one, with a background context.
+  static Future<ToolsNode> create(
+    ToolsNodeConfig config, {
+    RunContext? ctx,
+  }) async {
     final node = ToolsNode(config);
-    await node._defaultTuple();
+    await node._defaultTuple(ctx);
     return node;
   }
 
@@ -196,11 +202,13 @@ final class ToolsNode
   @override
   String get componentTypeName => '';
 
-  Future<_ToolsTuple> _defaultTuple() {
+  /// The tools of the configuration, built once: with the context of
+  /// [create], or of the first call.
+  Future<_ToolsTuple> _defaultTuple([RunContext? ctx]) {
     final cached = _tuple;
     if (cached != null) return cached;
     final built =
-        _ToolsTuple.build(_config.tools, _config.toolAliases, _config);
+        _ToolsTuple.build(_config.tools, _config.toolAliases, _config, ctx);
     _tuple = built;
     // A failed build is not kept: the next call tries again.
     unawaited(
@@ -256,16 +264,20 @@ final class ToolsNode
   }) =>
       _packer.transform(ctx, input, options);
 
-  Future<_ToolsTuple> _tupleFor(ToolsNodeOptions? options) async {
+  Future<_ToolsTuple> _tupleFor(
+    RunContext ctx,
+    ToolsNodeOptions? options,
+  ) async {
     if (options == null ||
         (options.toolList == null && options.toolAliases == null)) {
-      return _defaultTuple();
+      return _defaultTuple(ctx);
     }
     try {
       return await _ToolsTuple.build(
         options.toolList ?? _config.tools,
         options.toolAliases ?? _config.toolAliases,
         _config,
+        ctx,
       );
     } on ToolsNodeException catch (error, stackTrace) {
       Error.throwWithStackTrace(
@@ -287,7 +299,7 @@ final class ToolsNode
     Message input, {
     ToolsNodeOptions? options,
   }) async {
-    final tuple = await _tupleFor(options);
+    final tuple = await _tupleFor(ctx, options);
     final resumed = _resumedFrom(ctx, input);
     final message = resumed.input;
     final tasks =
@@ -343,7 +355,7 @@ final class ToolsNode
     Message input, {
     ToolsNodeOptions? options,
   }) async {
-    final tuple = await _tupleFor(options);
+    final tuple = await _tupleFor(ctx, options);
     final resumed = _resumedFrom(ctx, input);
     final message = resumed.input;
     final tasks =
@@ -978,15 +990,19 @@ final class _ToolsTuple {
   static Future<_ToolsTuple> build(
     List<BaseTool> tools,
     Map<String, ToolAliasConfig> aliases,
-    ToolsNodeConfig config,
-  ) async {
+    ToolsNodeConfig config, [
+    RunContext? ctx,
+  ]) async {
     final tuple = _ToolsTuple._();
     final middlewares = config.toolCallMiddlewares;
 
     for (final (index, tool) in tools.indexed) {
       final ToolInfo info;
       try {
-        info = await tool.info();
+        // Go's convTools asks `Info(ctx)` with the node's context.
+        info = await (ctx != null && tool is RunContextToolInfo
+            ? (tool as RunContextToolInfo).infoWithContext(ctx)
+            : tool.info());
         // ignore: avoid_catches_without_on_clauses
       } catch (error, stackTrace) {
         Error.throwWithStackTrace(

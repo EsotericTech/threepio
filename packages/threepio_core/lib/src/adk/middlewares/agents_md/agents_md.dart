@@ -37,10 +37,13 @@ const String agentsMdExtraKey = '__agentsmd_content__';
 /// must end in `.md`, `.txt`, `.mdx`, `.yaml`, `.yml`, `.json` or `.toml`),
 /// at most five levels deep; each file appears once, in the order met.
 ///
-/// A missing file ([FileNotFoundException]), a circular import and the depth
+/// A missing file that the backend reports as a [FileNotFoundException]
+/// (Go: an error wrapping `os.ErrNotExist`), a circular import and the depth
 /// limit are reported to [onLoadWarning] (logged on
 /// `threepio.adk.agentsmd` by default) and skipped; any other error of the
-/// backend fails the model call.
+/// backend fails the model call. `InMemoryBackend`, like eino's backends,
+/// reports a missing file with a plain error, so with it a missing agents.md
+/// fails the run, as in eino.
 ///
 /// Put this middleware **after** the summarization middleware, so that the
 /// injected text is not summarized.

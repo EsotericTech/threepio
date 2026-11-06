@@ -318,7 +318,7 @@ Future<Graph<ReactInput?, Message>> newReactGraph(
   final model = wrapperConfig == null
       ? config.model
       : buildModelWrappers(config.model, wrapperConfig);
-  final toolsNode = await ToolsNode.create(config.toolsConfig);
+  final toolsNode = await ToolsNode.create(config.toolsConfig, ctx: ctx);
 
   graph.addChatModelNode(
     ReactNodes.chatModel,

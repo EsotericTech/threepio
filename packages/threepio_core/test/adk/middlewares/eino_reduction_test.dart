@@ -750,7 +750,7 @@ void main() {
       final resp = await edp(ctx, '{"value":"asd"}', null);
       expect(resp, _expOrigContent);
 
-      await expectLater(_read(backend, '/tmp/trunc/12345'), throwsA(isA<FileNotFoundException>()));
+      await expectLater(_read(backend, '/tmp/trunc/12345'), throwsA(isA<ThreepioException>()));
     });
 
     test('test TruncExcludeTools with streamable tool', () async {
@@ -775,7 +775,7 @@ void main() {
       await resp.close();
 
       expect(fullOutput.toString(), _expOrigContent);
-      await expectLater(_read(backend, '/tmp/trunc/54321'), throwsA(isA<FileNotFoundException>()));
+      await expectLater(_read(backend, '/tmp/trunc/54321'), throwsA(isA<ThreepioException>()));
     });
 
     test('test mixed tools with TruncExcludeTools', () async {
@@ -1177,7 +1177,7 @@ void main() {
       );
       expect(s.messages[3].content, sunny13);
       expect(s.messages[5].content, important);
-      await expectLater(_read(backend, '/tmp/clear/call_987654321'), throwsA(isA<FileNotFoundException>()));
+      await expectLater(_read(backend, '/tmp/clear/call_987654321'), throwsA(isA<ThreepioException>()));
     });
 
     test('test ClearAtLeastTokens - enough tokens cleared', () async {
