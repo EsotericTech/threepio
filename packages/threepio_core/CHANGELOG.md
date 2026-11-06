@@ -117,6 +117,46 @@ now runs.
   - Human-in-the-loop tools of the Eino examples: `ApprovableTool`
     (`ApprovalInfo`, `ApprovalResult`), `ReviewEditTool` (`ReviewEditInfo`,
     `ReviewEditResult`), `FollowUpTool` (`FollowUpInfo`, `FollowUpState`).
+- **ADK run control** (port of Eino `adk/cancel.go`, `turn_loop.go`,
+  `turn_buffer.go`, `adk/filesystem` and eino-examples `graphtool`), in
+  `package:threepio_core/adk.dart`:
+  - Cancel: `withCancel()` returns an `AgentRunOption` and an
+    `AgentCancelFunc` (`safePoints`, `timeout`, `recursive`). An empty set of
+    `CancelSafePoint`s cancels at once (the agent's graph is interrupted with
+    no wait, model and tool streams end with `StreamCanceledException`);
+    `afterChatModel` / `afterToolCalls` cancel at the next safe point, with an
+    optional timeout that escalates to an immediate cancel; `recursive`
+    reaches the agents behind `AgentTool`s, whose interrupts end up in the
+    checkpoint. The run ends with an event whose error is an
+    `AgentRunCancelledException` (`AgentCancelInfo`, `interruptContexts`); the
+    `Runner` saves a checkpoint of the cancelled run (with a store and a
+    checkpoint id), which `resume`/`resumeWithParams` continue.
+    `CancelHandle.wait()` reports a `CancelOutcome` (`cancelled`, `timedOut`,
+    `executionEnded`); `CancelHandle.contributed` says whether the call took
+    part in the cancel.
+  - `TurnLoop<T>` with `TurnLoopConfig` (`genInput`, `genResume`,
+    `prepareAgent`, `onAgentEvents`, `store`, `checkpointId`),
+    `GenInputResult`, `GenResumeResult`, `TurnContext` (`preempted`,
+    `stopped`, `stopCause`), `TurnLoopExitState` (`takeLateItems()`),
+    `TurnLoopInterruptedException`, `PushOption` (`preempt`,
+    `preemptTimeout`, `preemptDelay`, `strategy`) and `StopOption`
+    (`graceful`, `immediate`, `gracefulTimeout`, `skipCheckpoint`, `cause`,
+    `untilIdleFor`): items pushed while an agent runs are batched into the
+    next turn, a push can preempt the running turn at a safe point, and a
+    stopped, cancelled or interrupted loop writes a checkpoint a new loop
+    continues.
+  - Filesystem: `FilesystemBackend` (`lsInfo`, `read`, `grepRaw`,
+    `globInfo`, `write`, `edit`), `MultiModalReader`, `Shell`,
+    `StreamingShell`, their request and result types (`FileInfo`,
+    `GrepMatch`, `ReadRequest` with a 1-based `offset`, `GrepRequest`,
+    `GlobInfoRequest`, `WriteRequest`, `EditRequest`, `FileContent`,
+    `FileContentPart`, `MultiFileContent`, `ExecuteRequest`,
+    `ExecuteResponse`, ...), and `InMemoryBackend` (regex grep with context
+    lines and multiline mode, globs through `package:glob`, ripgrep file
+    types, exact-match edits).
+  - `GraphTool.invokable<I, O>` / `GraphTool.streamable<I, O>`: a compose
+    graph, chain or workflow as a tool of an agent, with interrupt and resume
+    of the graph inside; `GraphToolOptions` for its call options.
 - **Langfuse**: the observation of an agent ends with the messages and custom
   outputs of its events; retry notifications of its model
   (`WillRetryException`) are kept as `eino_retry_events` metadata instead of
@@ -453,6 +493,15 @@ now runs.
 
 ### Changed
 
+- New dependencies: `clock` (the cancel timeouts and TurnLoop deadlines read
+  `clock.now()`, so that `package:fake_async` drives them), `glob` (2.2 or
+  later, whose `**/` may match no directory, as Eino's doublestar does) and
+  `path` (POSIX paths of the in-memory filesystem backend). All three were
+  already transitive dependencies.
+- The engine's `ChatModelAgent` installs a tool middleware of its own inside
+  the user's tool middlewares; it changes nothing unless the run was started
+  with `withCancel()`.
+
 - **Kortney runtime** (`Runner`, `ChatModelAgent`, `AgentHandler`,
   `ContextualTool` of the umbrella library): the loop now runs on the
   Eino-shaped `ChatModelAgent` and `Runner` of `adk.dart`. The handlers, the
@@ -676,9 +725,7 @@ now runs.
     `shouldRetry` every error is retried, Eino's default), `ModelContext.Tools`,
     `WithHistoryModifier`, the embedded `InterruptInfo` of `ResumeInfo`, the
     deprecated `Info` of the runner's checkpoint, and the agentic message
-    types (later, optional phase). The cancel modes of Eino (`WithCancel`,
-    safe points) and `TurnLoop` come in the next phase; the graph already has
-    the `CancelCheck` nodes.
+    types (later, optional phase).
   - *Checkpoints* are JSON, not `gob`: the runner's checkpoint keeps the
     session values, the input of the run, the streaming flag and the
     interrupt points; there is no event history (it served agent transfer).
@@ -703,6 +750,44 @@ now runs.
     `typedAgentCallbackHandler` gives the typed reports.
   - *Streams*: the agent reads the output stream of its graph to its end
     (Go closes it unread), so that an error inside it is not lost.
+- **Differences from Eino in the run-control port.**
+  - *Cancel results*: `AgentCancelFunc` returns a `CancelHandle` whose
+    `contributed` is Go's second return value, and `wait()` returns a
+    `CancelOutcome` where Go returns `nil`, `ErrCancelTimeout` or
+    `ErrExecutionEnded`.
+  - *An immediate cancel abandons* the running model or tool call: Dart
+    cannot stop a future, so its result is ignored and it runs again on
+    resume. A recursive immediate cancel of a run in which an `AgentTool` has
+    run waits up to 1 s for the nested agents' interrupts before it
+    interrupts the agent's own graph (Go: the same grace period, and the same
+    rule); the `AgentCancelFunc` call itself does not block during it (Go's
+    does).
+  - *Tool middlewares* of a `ChatModelAgent` must let a
+    `StreamCanceledException` through: the agent ends tool streams with it
+    on an immediate cancel (its own middleware sits inside the user's).
+  - *TurnLoop*: checkpoints are JSON, items go through `TypeRegistry` (JSON
+    values or registered types). `push` returns `resolved`, an already
+    completed future for a push that does not preempt (Go returns a nil
+    channel). Push strategies are synchronous. A preempt or stop takes effect
+    through a watcher that runs in a microtask after the push or stop call.
+    A loop whose context is cancelled exits with a `CancelledException`
+    (Go: `context.Canceled` or `context.DeadlineExceeded`). Invalid
+    arguments and misuse throw `ArgumentError` / `StateError` where Go
+    panics.
+  - *Filesystem*: grep patterns are Dart regular expressions (Go: RE2); a
+    leading inline flag group (`(?i)`, `(?m)`, `(?s)`) is understood, inline
+    flags elsewhere are not, nor are RE2-only escapes such as `\A`, `\z`,
+    `\pL` or `[[:alpha:]]`; `.` matches everything but `\n`, as in RE2.
+    Globs keep Eino's doublestar syntax and are matched with `package:glob`
+    after translation; contrived corners still differ: a `**` that only
+    becomes a whole segment through brace expansion (`{a/,b/}**/x`, or
+    `{**}`), classes inside brace options (`{[,]x,y}`), and the classes
+    `[/]` and `[z-a]`, which `package:glob` rejects.
+    `FileInfo.modifiedAt` is UTC ISO 8601 (Go: local RFC 3339 with
+    nanoseconds); sizes are UTF-8 byte lengths, as in Go.
+  - *GraphTool* (an eino-examples package in Go) takes `params` and a
+    `fromJson` function where Go infers the schema from the input struct; the
+    graph's checkpoint in the tool's interrupt state is Base64.
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

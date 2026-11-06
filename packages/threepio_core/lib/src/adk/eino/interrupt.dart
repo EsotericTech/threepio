@@ -23,6 +23,7 @@ import 'agent.dart';
 import 'agent_action.dart';
 import 'agent_context.dart';
 import 'agent_event.dart';
+import 'cancel.dart';
 import 'react_graph.dart';
 
 /// The address segment of an agent. Port of eino `adk.AddressSegmentAgent`.
@@ -263,7 +264,19 @@ final class BridgeStore implements CheckpointStore {
 
   @override
   Future<void> set(String key, Uint8List value) async {
-    _data = {..._data, key: Uint8List.fromList(value)};
+    final payload = Uint8List.fromList(value);
+    _data = {..._data, key: payload};
+    _last = payload;
+  }
+
+  Uint8List? _last;
+
+  /// A copy of what was last written with [set]; `null` when nothing was
+  /// (the data a resume store starts with does not count). Port of eino
+  /// `bridgeStore.LastCheckpoint`.
+  Uint8List? get lastCheckpoint {
+    final last = _last;
+    return last == null ? null : Uint8List.fromList(last);
   }
 }
 
@@ -350,6 +363,20 @@ void ensureAdkTypesRegistered() {
       '_eino_adk_chat_model_agent_interrupt_info',
       fromJson: ChatModelAgentInterruptInfo.fromJson,
       toJson: (info) => info.toJson(),
+    );
+  }
+  if (!TypeRegistry.isRegistered<AgentCancelInfo>()) {
+    TypeRegistry.registerName<AgentCancelInfo>(
+      '_eino_adk_agent_cancel_info',
+      fromJson: AgentCancelInfo.fromJson,
+      toJson: (info) => info.toJson(),
+    );
+  }
+  if (!TypeRegistry.isRegistered<AgentRunCancelledException>()) {
+    TypeRegistry.registerName<AgentRunCancelledException>(
+      '_eino_adk_cancel_error',
+      fromJson: AgentRunCancelledException.fromJson,
+      toJson: (error) => error.toJson(),
     );
   }
   registerReactTypes();

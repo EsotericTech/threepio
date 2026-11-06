@@ -34,6 +34,7 @@ final class ChanCall {
     this.action,
     this.preProcessor,
     this.postProcessor,
+    this.preProcessorTakesStream = false,
   });
 
   /// What the node runs.
@@ -50,6 +51,10 @@ final class ChanCall {
 
   /// The state handler in front of the node.
   final ComposableRunnable? preProcessor;
+
+  /// Whether [preProcessor] was made with `StateHandler.streamPre` (it takes
+  /// the input as a stream and need not read it).
+  final bool preProcessorTakesStream;
 
   /// The state handler behind the node.
   final ComposableRunnable? postProcessor;

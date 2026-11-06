@@ -20,8 +20,16 @@ dependencies:
   json_annotation: ^4.8.0
 
   # Utilities
+  # A clock that package:fake_async can drive: cancel timeouts and TurnLoop
+  # deadlines are absolute times, as in eino.
+  clock: ^1.1.0
   collection: ^1.18.0
+  # Glob patterns of the in-memory filesystem backend (`**/` may match no
+  # directory from 2.2.0 on, as eino's doublestar does).
+  glob: ^2.2.0
   logging: ^1.2.0
+  # POSIX paths of the in-memory filesystem backend, whatever the platform.
+  path: ^1.8.0
   uuid: ^4.2.0
 
   # Templates (Jinja2 for `FormatType.jinja2`)

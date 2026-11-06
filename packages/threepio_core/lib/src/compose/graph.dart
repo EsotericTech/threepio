@@ -541,6 +541,7 @@ final class GraphCore implements GraphEngine {
         writeToBranches: List.of(branches[name] ?? const []),
         preProcessor: node.nodeInfo.preProcessor,
         postProcessor: node.nodeInfo.postProcessor,
+        preProcessorTakesStream: node.preHandler?.isStream ?? false,
       );
     }
 

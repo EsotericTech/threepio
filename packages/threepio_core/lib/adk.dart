@@ -47,6 +47,15 @@ export 'src/adk/eino/agent_context.dart' show AgentContext, sendToolGenAction;
 export 'src/adk/eino/agent_event.dart'
     show AgentEvent, AgentOutput, MessageVariant, getMessageFromEvent;
 export 'src/adk/eino/agent_tool.dart' show AgentTool;
+export 'src/adk/eino/cancel.dart'
+    show
+        AgentCancelFunc,
+        AgentCancelInfo,
+        AgentRunCancelledException,
+        CancelHandle,
+        CancelOutcome,
+        CancelSafePoint,
+        withCancel;
 export 'src/adk/eino/chat_model_agent.dart';
 export 'src/adk/eino/chat_model_agent_config.dart';
 export 'src/adk/eino/event_senders.dart'
@@ -80,7 +89,22 @@ export 'src/adk/eino/model_retry.dart'
 export 'src/adk/eino/react_graph.dart' show ExceedMaxIterationsException;
 export 'src/adk/eino/run_options.dart' show AgentRunOption;
 export 'src/adk/eino/runner.dart' show Runner;
+export 'src/adk/eino/turn_loop.dart'
+    show
+        GenInputResult,
+        GenResumeResult,
+        PushOption,
+        StopOption,
+        TurnContext,
+        TurnLoop,
+        TurnLoopConfig,
+        TurnLoopExitState,
+        TurnLoopInterruptedException;
+export 'src/adk/filesystem/backend.dart';
+export 'src/adk/filesystem/in_memory_backend.dart' show InMemoryBackend;
+export 'src/adk/filesystem/requests.dart';
 export 'src/adk/tools/approvable_tool.dart' show ApprovableTool, ApprovalInfo, ApprovalResult;
+export 'src/adk/tools/graph_tool.dart' show GraphTool, GraphToolOptions;
 export 'src/adk/tools/follow_up_tool.dart'
     show FollowUpInfo, FollowUpState, FollowUpTool;
 export 'src/adk/tools/review_edit_tool.dart'

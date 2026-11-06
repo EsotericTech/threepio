@@ -12,6 +12,7 @@ import '../../callbacks/component_callback_handler.dart';
 import '../../components/model/chat_model_options.dart';
 import '../../components/tool/tool_options.dart';
 import '../../core/run_context.dart';
+import 'cancel.dart';
 
 /// One option of an agent run, by default seen by every agent of the run.
 ///
@@ -187,6 +188,31 @@ final class _CustomOption<T extends Object> extends AgentRunOption {
       _CustomOption<T>(value, names);
 }
 
+final class _CancelContextOption extends AgentRunOption {
+  const _CancelContextOption(this.cancelContext, super.agentNames) : super._();
+
+  final CancelContext cancelContext;
+
+  @override
+  AgentRunOption _withNames(List<String> names) =>
+      _CancelContextOption(cancelContext, names);
+}
+
+/// The option of a cancellable run: `withCancel` returns it. Port of the
+/// option eino's `WithCancel` builds (it sets `options.cancelCtx`).
+@internal
+AgentRunOption cancelContextOption(CancelContext cancelContext) =>
+    _CancelContextOption(cancelContext, const []);
+
+/// [options] without the option of a cancellable run: the agents inside a
+/// run reach its cancel context through the `RunContext`. Port of eino
+/// `filterCancelOption`.
+@internal
+List<AgentRunOption> filterCancelOption(List<AgentRunOption> options) => [
+      for (final option in options)
+        if (option is! _CancelContextOption) option,
+    ];
+
 /// The run shares the session values of the run it is nested in. Port of
 /// eino `withSharedParentSession`; an `AgentTool` uses it.
 @internal
@@ -207,6 +233,8 @@ final class CommonAgentOptions {
           checkpointId = id;
         case _SharedParentSessionOption():
           sharedParentSession = true;
+        case _CancelContextOption(:final cancelContext):
+          this.cancelContext = cancelContext;
         case _ChatModelOptionsOption() ||
               _ToolOptionsOption() ||
               _AgentToolRunOptionsOption() ||
@@ -225,6 +253,9 @@ final class CommonAgentOptions {
   Map<String, Object?> sessionValues = const {};
   String? checkpointId;
   final List<ComponentCallbackHandler> handlers = [];
+
+  /// The cancel context of a run started with `withCancel`.
+  CancelContext? cancelContext;
 }
 
 /// The options a `ChatModelAgent` reads. Port of eino
@@ -246,6 +277,7 @@ final class ChatModelAgentRunOptions {
               _CallbacksOption() ||
               _CheckpointIdOption() ||
               _SharedParentSessionOption() ||
+              _CancelContextOption() ||
               _CustomOption():
           break;
       }

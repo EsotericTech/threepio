@@ -20,6 +20,7 @@ import '../../schema/tool_info.dart';
 import '../../streaming/stream_reader.dart';
 import 'agent.dart';
 import 'agent_event.dart';
+import 'cancel.dart';
 import 'interrupt.dart';
 import 'language.dart';
 import 'react_graph.dart';
@@ -116,16 +117,37 @@ final class AgentTool extends InvokableTool {
     String argumentsJson, {
     ToolOptions? options,
   }) async {
-    // P7 marks the cancel context as having a checkpoint-aware descendant
-    // here (eino `markCheckpointAwareDescendant`) and derives the child's
-    // cancel context for the agent's run options.
+    // A recursive cancel of the caller waits for this agent's interrupt.
+    cancelContextOf(ctx)?.markCheckpointAwareDescendant();
     final sink = options?.extension<AgentToolEventSink>();
     final streaming = options?.extension<AgentToolStreaming>() != null;
-    final agentOptions = [
+    final ownOptions = [
       for (final extension in options?.extensions ?? const <Object>[])
         if (extension is AgentToolRunOptions && extension.agentName == agent.name)
           ...extension.options,
     ];
+    // Port of eino `extractAndDeriveAgentToolCancelCtx`: the agent's run gets
+    // a cancel context of its own that obeys the caller's recursive cancels.
+    final childCancel = deriveCheckpointAwareSubAgentCancelContext(
+      ctx,
+      ownOptions,
+    );
+    final agentOptions = appendCancelContextOption(ownOptions, childCancel);
+    try {
+      return await _run(ctx, argumentsJson, sink, streaming, agentOptions);
+    } finally {
+      // The agent's run marks it done; this covers a failure before the run.
+      childCancel?.markDone();
+    }
+  }
+
+  Future<String> _run(
+    RunContext ctx,
+    String argumentsJson,
+    AgentToolEventSink? sink,
+    bool streaming,
+    List<AgentRunOption> agentOptions,
+  ) async {
 
     final BridgeStore store;
     final Future<StreamReader<AgentEvent>> events;

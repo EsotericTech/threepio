@@ -18,6 +18,7 @@ import '../../streaming/stream_writer.dart';
 import 'agent.dart';
 import 'agent_action.dart';
 import 'agent_event.dart';
+import 'cancel.dart';
 import 'model_retry.dart';
 import 'react_graph.dart';
 
@@ -114,6 +115,7 @@ final class ChatModelAgentExecContext {
   ChatModelAgentExecContext({
     required this.writer,
     this.runtimeReturnDirectly = const {},
+    this.cancelContext,
     this.failoverLastSuccessModel,
     this.afterToolCallsHook,
   });
@@ -123,6 +125,9 @@ final class ChatModelAgentExecContext {
 
   /// The `returnDirectly` tools after the middlewares' `beforeAgent`.
   final Set<String> runtimeReturnDirectly;
+
+  /// The cancel context of the run, if it can be cancelled.
+  final CancelContext? cancelContext;
 
   /// The model of the last successful call, for failover.
   BaseChatModel? failoverLastSuccessModel;
@@ -137,9 +142,13 @@ final class ChatModelAgentExecContext {
   /// The hook of `AgentRunOption.afterToolCallsHook`.
   final FutureOr<void> Function(RunContext ctx)? afterToolCallsHook;
 
-  /// Sends [event] to the agent's caller. Port of
+  /// Sends [event] to the agent's caller; dropped once the run is being torn
+  /// down at once (work that was cut off may still try to report). Port of
   /// `typedChatModelAgentExecCtx.send`.
-  void send(AgentEvent event) => writer.send(event);
+  void send(AgentEvent event) {
+    if (cancelContext?.isImmediateCancelled ?? false) return;
+    writer.send(event);
+  }
 }
 
 final _execKey = ContextKey<ChatModelAgentExecContext>('adk.execContext');

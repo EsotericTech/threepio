@@ -12,6 +12,7 @@ import '../../components/model/base_chat_model.dart';
 import '../../compose/graph.dart';
 import '../../compose/graph_branch.dart';
 import '../../compose/graph_options.dart';
+import '../../compose/interrupt.dart';
 import '../../compose/lambda.dart';
 import '../../compose/local_state.dart';
 import '../../compose/resume.dart';
@@ -21,9 +22,11 @@ import '../../errors.dart';
 import '../../schema/message.dart';
 import '../../schema/tool_info.dart';
 import '../../schema/type_registry.dart';
+import '../../streaming/stream_reader.dart';
 import 'agent_action.dart';
 import 'agent_context.dart';
 import 'agent_event.dart';
+import 'cancel.dart';
 import 'event_senders.dart';
 import 'message_id.dart';
 
@@ -235,6 +238,7 @@ final class ReactConfig {
     this.agentName = '',
     this.maxIterations = 0,
     this.afterAgent,
+    this.cancelContext,
   });
 
   /// The agent's model, before the wrappers.
@@ -259,9 +263,10 @@ final class ReactConfig {
   /// so the state can be reached.
   final Future<Message> Function(RunContext ctx, Message message)? afterAgent;
 
-  // P7 attaches the cancel context here (eino `reactConfig.cancelCtx`): the
-  // `CancelCheck` and `AfterToolCallsCancelCheck` nodes then interrupt at
-  // their safe points.
+  /// The cancel context of the run: the `CancelCheck` and
+  /// `AfterToolCallsCancelCheck` nodes interrupt at their safe points when a
+  /// cancel there is pending.
+  final CancelContext? cancelContext;
 }
 
 /// The names of the nodes of the ReAct graph, as in eino.
@@ -332,12 +337,19 @@ Future<Graph<ReactInput?, Message>> newReactGraph(
     ),
   );
 
-  // The safe point after the model call, on the way to the tools; P7's
-  // cancel interrupts here (`CancelAfterChatModel`). After such an
-  // interrupt the saved model message is used.
+  // The safe point after the model call, on the way to the tools (skipped
+  // when the model answered without tool calls): a pending cancel at
+  // `afterChatModel` interrupts here, keeping the model's message, which a
+  // resumed run uses.
+  final cancelContext = config.cancelContext;
   graph.addLambdaNode(
     ReactNodes.cancelCheck,
     Lambda.invokable((RunContext ctx, Message message) {
+      if (cancelContext != null &&
+          cancelContext.shouldCancel &&
+          cancelContext.mode.contains(CancelSafePoint.afterChatModel)) {
+        throw statefulInterrupt(ctx, 'CancelAfterChatModel', message);
+      }
       final saved = getInterruptState<Message>(ctx);
       return saved.wasInterrupted && saved.hasState ? saved.state! : message;
     }),
@@ -349,8 +361,15 @@ Future<Graph<ReactInput?, Message>> newReactGraph(
     toolsNode,
     options: NodeOptions(
       name: ReactNodes.toolNode,
-      statePreHandler: StateHandler.pre<Message, ReactState>(
-        (ctx, _, state) {
+      // Eino's handler takes the joined input and ignores it: the input is
+      // the last message of the state. It takes the stream here and leaves
+      // it unread, so that it also works when the node runs again after an
+      // interrupt that came out of its output stream, with an empty stream
+      // as input (the checkpoint keeps no input for a node that had
+      // finished).
+      streamStatePreHandler: StateHandler.streamPre<Message, ReactState>(
+        (ctx, ignored, state) async {
+          await ignored.close();
           final input = state.messages.last;
           final runtime = execContextOf(ctx)?.runtimeReturnDirectly;
           final returnDirectly = runtime != null && runtime.isNotEmpty
@@ -363,7 +382,7 @@ Future<Graph<ReactInput?, Message>> newReactGraph(
               }
             }
           }
-          return input;
+          return StreamReader<Message>.fromIterable([input]);
         },
       ),
       streamStatePostHandler:
@@ -404,11 +423,18 @@ Future<Graph<ReactInput?, Message>> newReactGraph(
     options: const NodeOptions(name: ReactNodes.afterToolCalls),
   );
 
-  // The safe point after the tool calls; P7's cancel interrupts here
-  // (`CancelAfterToolCalls`).
+  // The safe point after the tool calls: a pending cancel at
+  // `afterToolCalls` interrupts here.
   graph.addLambdaNode(
     ReactNodes.afterToolCallsCancelCheck,
-    Lambda.invokable((RunContext ctx, List<Message> results) => results),
+    Lambda.invokable((RunContext ctx, List<Message> results) {
+      if (cancelContext != null &&
+          cancelContext.shouldCancel &&
+          cancelContext.mode.contains(CancelSafePoint.afterToolCalls)) {
+        throw interrupt(ctx, 'CancelAfterToolCalls');
+      }
+      return results;
+    }),
     options: const NodeOptions(name: ReactNodes.afterToolCallsCancelCheck),
   );
 

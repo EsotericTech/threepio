@@ -22,6 +22,7 @@ import 'agent_action.dart';
 import 'agent_callbacks.dart';
 import 'agent_context.dart';
 import 'agent_event.dart';
+import 'cancel.dart';
 import 'interrupt.dart';
 import 'run_options.dart';
 
@@ -79,14 +80,14 @@ final class Runner {
     )..addSessionValues(common.sessionValues);
     final events = FlowAgent(agent).run(runCtx, input, options);
     final store = checkpointStore;
-    // P7: a run with a cancel option also goes through the event loop.
-    if (store == null) return events;
+    if (store == null && common.cancelContext == null) return events;
     return _withCheckpoints(
       runCtx,
       events,
       store: store,
       checkpointId: common.checkpointId,
       enableStreaming: enableStreaming,
+      cancelContext: common.cancelContext,
     );
   }
 
@@ -167,17 +168,19 @@ final class Runner {
       store: store,
       checkpointId: checkpointId,
       enableStreaming: info.enableStreaming,
+      cancelContext: common.cancelContext,
     );
   }
 
-  /// Passes [events] on and saves a checkpoint when the run interrupts. Port
-  /// of eino `typedRunnerHandleIterImpl`.
+  /// Passes [events] on and saves a checkpoint when the run interrupts or is
+  /// cancelled. Port of eino `typedRunnerHandleIterImpl`.
   static StreamReader<AgentEvent> _withCheckpoints(
     RunContext ctx,
     StreamReader<AgentEvent> events, {
-    required CheckpointStore store,
+    required CheckpointStore? store,
     required String? checkpointId,
     required bool enableStreaming,
+    CancelContext? cancelContext,
   }) {
     final (reader, writer) = pipe<AgentEvent>();
     unawaited(() async {
@@ -186,8 +189,57 @@ final class Runner {
         for (var event = await events.nextOrNull();
             event != null;
             event = await events.nextOrNull()) {
-          // P7 handles AgentRunCancelledException here: the cancel is marked
-          // as handled and a checkpoint of the cancelled run is saved.
+          final cancelled =
+              ThreepioException.findCause<AgentRunCancelledException>(
+            event.error,
+          );
+          if (cancelled != null) {
+            if (cancelContext != null &&
+                cancelContext.isRoot &&
+                cancelContext.shouldCancel) {
+              cancelContext.markCancelHandled();
+            }
+            var cancelEvent = event;
+            final signal = cancelled.interruptSignal;
+            if (signal != null && checkpointId != null) {
+              final withContexts = cancelled.withInterruptContexts(
+                toInterruptContexts(
+                  signal,
+                  allowedSegmentTypes: allowedAddressSegmentTypes,
+                ),
+              );
+              // The root's cancel wrapper sends the error itself; a wrapped
+              // one (from a custom agent) is passed on as it is.
+              cancelEvent = identical(event.error, cancelled)
+                  ? event.copyWith(error: withContexts)
+                  : event;
+            }
+            if (signal != null && checkpointId != null && store != null) {
+              try {
+                await saveAdkCheckpoint(
+                  enableStreaming: enableStreaming,
+                  store: store,
+                  ctx: ctx,
+                  key: checkpointId,
+                  signal: signal,
+                );
+                // Whatever the store or the encoder throws.
+                // ignore: avoid_catches_without_on_clauses
+              } catch (error, stackTrace) {
+                writer.send(
+                  AgentEvent(
+                    error: ThreepioException(
+                      'failed to save checkpoint on cancel: $error',
+                      cause: error,
+                    ),
+                    stackTrace: stackTrace,
+                  ),
+                );
+              }
+            }
+            writer.send(cancelEvent);
+            break;
+          }
           var current = event;
           final action = event.action;
           final signal = action?.interruptSignal;
@@ -212,7 +264,7 @@ final class Runner {
                 signal,
               ),
             );
-            if (checkpointId != null) {
+            if (checkpointId != null && store != null) {
               try {
                 await saveAdkCheckpoint(
                   enableStreaming: enableStreaming,
@@ -271,8 +323,12 @@ final class FlowAgent {
     List<AgentRunOption> options,
   ) {
     final name = agent.name;
+    final cancelContext = CommonAgentOptions.of(options).cancelContext;
     final (entered, run) = initAdkRunContext(context, name, input);
-    final ctx = appendAddressSegmentTo(entered, addressSegmentAgent, name);
+    final ctx = withCancelContext(
+      appendAddressSegmentTo(entered, addressSegmentAgent, name),
+      cancelContext,
+    );
     final filtered = filterOptions(name, options);
     final processed = _inputOf(run, input);
     final callbackCtx =
@@ -303,7 +359,7 @@ final class FlowAgent {
         await writer.close();
       }
     }());
-    return reader;
+    return wrapEventsWithCancelContext(reader, cancelContext);
   }
 
   /// Resumes the agent. Port of `flowAgent.Resume`.
@@ -313,7 +369,9 @@ final class FlowAgent {
     List<AgentRunOption> options,
   ) {
     final name = agent.name;
-    final (ctx, resumeInfo) = buildResumeInfo(context, name, info);
+    final cancelContext = CommonAgentOptions.of(options).cancelContext;
+    final (built, resumeInfo) = buildResumeInfo(context, name, info);
+    final ctx = withCancelContext(built, cancelContext);
     final filtered = filterOptions(name, options);
     final (reader, writer) = pipe<AgentEvent>();
     unawaited(() async {
@@ -326,6 +384,7 @@ final class FlowAgent {
         final resumable = agent is ResumableAgent ? agent as ResumableAgent : null;
         if (resumeInfo.wasInterrupted) {
           if (resumable == null) {
+            cancelContext?.markDone();
             await _forward(
               callbackCtx,
               _failed(
@@ -347,6 +406,7 @@ final class FlowAgent {
         try {
           nextResumeAgent(ctx);
         } on ThreepioException catch (error) {
+          cancelContext?.markDone();
           await _forward(callbackCtx, _failed(error.message), writer);
           return;
         }
@@ -363,9 +423,16 @@ final class FlowAgent {
           );
           return;
         }
+        // Eino hands the agent the options without the cancel option here:
+        // it reaches the run's cancel context through the context.
         await _forward(
           callbackCtx,
-          _resumeSafely(resumable, callbackCtx, resumeInfo, options),
+          _resumeSafely(
+            resumable,
+            callbackCtx,
+            resumeInfo,
+            filterCancelOption(options),
+          ),
           writer,
         );
         // Whatever escaped is the run's failure.
@@ -376,7 +443,7 @@ final class FlowAgent {
         await writer.close();
       }
     }());
-    return reader;
+    return wrapEventsWithCancelContext(reader, cancelContext);
   }
 
   /// The agent's events, or one error event when its `run` throws.

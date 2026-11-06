@@ -495,6 +495,14 @@ final class GraphRunner {
     // A nested graph goes on from its own checkpoint and does not look at
     // its input.
     if (call.isSubGraph) return isStream ? type.emptyStream() : null;
+    // A node that ran again because an interrupt came out of its output
+    // stream, read by a later node, has no input in the checkpoint (it had
+    // finished). Eino gives it a stream of one zero value; for a type without
+    // one, a node with a stream pre-handler gets an empty stream, from which
+    // the handler can make the input (the ReAct graph's tools node reads it
+    // from the state). A plain pre-handler would have to join an empty
+    // stream, so it gets the explanation below.
+    if (isStream && call.preProcessorTakesStream) return type.emptyStream();
     throw GraphRunException(
       'node[$key] has to run again, but the checkpoint has no input for it '
       'and its input type ${type.name} has no empty value',

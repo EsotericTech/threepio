@@ -9,6 +9,7 @@ import 'package:meta/meta.dart';
 import '../../components/tool/invokable_tool.dart';
 import '../../schema/message.dart';
 import '../../schema/tool_info.dart';
+import 'cancel.dart';
 import 'model_failover.dart';
 import 'model_retry.dart';
 
@@ -74,13 +75,27 @@ final class ChatModelAgentState {
 @immutable
 final class ModelContext {
   /// The context of a model call.
-  const ModelContext({this.modelRetryConfig, this.modelFailoverConfig});
+  const ModelContext({this.modelRetryConfig, this.modelFailoverConfig})
+      : cancelContext = null;
+
+  /// The context of a model call of a run that can be cancelled.
+  @internal
+  const ModelContext.cancellable({
+    this.modelRetryConfig,
+    this.modelFailoverConfig,
+    this.cancelContext,
+  });
 
   /// The retry policy of the agent's model, if any.
   final ModelRetryConfig? modelRetryConfig;
 
   /// The failover policy of the agent's model, if any.
   final ModelFailoverConfig? modelFailoverConfig;
+
+  /// The cancel context of the run; [EventSenderModelWrapper] makes the
+  /// model's streams obey it. Port of eino's unexported `cancelContext`.
+  @internal
+  final CancelContext? cancelContext;
 }
 
 /// The tool call a tool wrapper wraps. Port of eino `adk.ToolContext`.

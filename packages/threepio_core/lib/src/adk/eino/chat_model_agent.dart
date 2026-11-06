@@ -17,6 +17,7 @@ import '../../compose/graph_options.dart';
 import '../../compose/interrupt.dart';
 import '../../compose/lambda.dart';
 import '../../compose/local_state.dart';
+import '../../compose/resume.dart';
 import '../../compose/runnable.dart';
 import '../../compose/stream_conversion.dart';
 import '../../compose/tool_middleware.dart';
@@ -32,6 +33,7 @@ import 'agent_action.dart';
 import 'agent_context.dart';
 import 'agent_event.dart';
 import 'agent_tool.dart';
+import 'cancel.dart';
 import 'chat_model_agent_config.dart';
 import 'event_senders.dart';
 import 'interrupt.dart';
@@ -72,8 +74,10 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
           if (!hasUserEventSenderToolWrapper(config.handlers))
             ...handlersToToolMiddlewares(const [EventSenderToolWrapper()]),
           ...config.toolsConfig.toolsNode.toolCallMiddlewares,
-          // P7 appends the cancel-monitored stream middleware here (eino
-          // `cancelMonitoredToolHandler`, innermost).
+          // Ends tool streams when the run is torn down at once; inside the
+          // user's middlewares, which must let a `StreamCanceledException`
+          // through (eino `cancelMonitoredToolHandler`).
+          cancelMonitoredToolMiddleware,
         ] {
     ensureAdkTypesRegistered();
   }
@@ -99,37 +103,66 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
     RunContext ctx,
     AgentInput input, {
     List<AgentRunOption> options = const [],
-  }) {
-    final (reader, writer) = pipe<AgentEvent>();
-    unawaited(_start(ctx, writer, options, input: input));
-    return reader;
-  }
+  }) =>
+      _startRun(ctx, options, input: input);
 
   @override
   StreamReader<AgentEvent> resume(
     RunContext ctx,
     ResumeInfo info, {
     List<AgentRunOption> options = const [],
+  }) =>
+      _startRun(ctx, options, resumeInfo: info);
+
+  StreamReader<AgentEvent> _startRun(
+    RunContext context,
+    List<AgentRunOption> options, {
+    AgentInput? input,
+    ResumeInfo? resumeInfo,
   }) {
     final (reader, writer) = pipe<AgentEvent>();
-    unawaited(_start(ctx, writer, options, resumeInfo: info));
-    return reader;
+    final (cancelContext, owned) = resolveRunCancelContext(
+      context,
+      CommonAgentOptions.of(options).cancelContext,
+    );
+    var ctx = context;
+    void Function()? abortOnlyCancel;
+    if (owned && cancelContext != null && cancelContext.abortOnly) {
+      (ctx, abortOnlyCancel) = withAbortOnlyCancelContext(ctx, cancelContext);
+    }
+    unawaited(
+      _start(
+        ctx,
+        writer,
+        options,
+        input: input,
+        resumeInfo: resumeInfo,
+        cancel: _RunCancel(cancelContext, owned: owned),
+      ).whenComplete(() => abortOnlyCancel?.call()),
+    );
+    return owned ? wrapEventsWithCancelContext(reader, cancelContext) : reader;
   }
 
   Future<void> _start(
     RunContext context,
     StreamWriter<AgentEvent> writer,
     List<AgentRunOption> options, {
+    required _RunCancel cancel,
     AgentInput? input,
     ResumeInfo? resumeInfo,
   }) async {
+    final cancelContext = cancel.context;
+    void failed(Object error, [StackTrace? stackTrace]) {
+      if (cancel.owned) cancelContext?.markDone();
+      writer.send(AgentEvent(error: error, stackTrace: stackTrace));
+    }
+
     try {
-      // P7 resolves the run's cancel context here (eino
-      // `resolveRunCancelContext`).
       var ctx = withExecContext(
         context,
         ChatModelAgentExecContext(
           writer: writer,
+          cancelContext: cancelContext,
           failoverLastSuccessModel: config.model,
         ),
       );
@@ -140,7 +173,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
         // it is on every run.
         // ignore: avoid_catches_without_on_clauses
       } catch (error, stackTrace) {
-        writer.send(AgentEvent(error: error, stackTrace: stackTrace));
+        failed(error, stackTrace);
         return;
       }
       final _ExecContext exec;
@@ -150,6 +183,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
         // A middleware's failure in beforeAgent.
         // ignore: avoid_catches_without_on_clauses
       } catch (error, stackTrace) {
+        if (cancel.owned) cancelContext?.markDone();
         writer.send(
           AgentEvent(
             error: ThreepioException(
@@ -184,13 +218,11 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
       } else {
         final state = resumeInfo.interruptState;
         if (state is! String) {
-          writer.send(
-            AgentEvent(
-              error: ThreepioException(
-                "ChatModelAgent.resume: agent '$name' was asked to resume but "
-                'has ${state == null ? 'no state' : 'an invalid interrupt '
-                    'state of type ${state.runtimeType}'}',
-              ),
+          failed(
+            ThreepioException(
+              "ChatModelAgent.resume: agent '$name' was asked to resume but "
+              'has ${state == null ? 'no state' : 'an invalid interrupt '
+                  'state of type ${state.runtimeType}'}',
             ),
           );
           return;
@@ -199,12 +231,10 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
         runInput = AgentInput(enableStreaming: resumeInfo.enableStreaming);
         final resumeData = resumeInfo.resumeData;
         if (resumeData != null && resumeData is! ChatModelAgentResumeData) {
-          writer.send(
-            AgentEvent(
-              error: ThreepioException(
-                "ChatModelAgent.resume: agent '$name' was asked to resume but "
-                'has invalid resume data of type ${resumeData.runtimeType}',
-              ),
+          failed(
+            ThreepioException(
+              "ChatModelAgent.resume: agent '$name' was asked to resume but "
+              'has invalid resume data of type ${resumeData.runtimeType}',
             ),
           );
           return;
@@ -223,11 +253,13 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
         }
       }
 
+      ctx = withCancelContext(ctx, cancelContext);
       await _runGraph(
         ctx,
         graphExec.tools.isEmpty
-            ? _buildNoTools(ctx, store)
-            : _buildReact(ctx, graphExec, store),
+            ? _buildNoTools(ctx, store, cancelContext)
+            : _buildReact(ctx, graphExec, store, cancelContext),
+        cancel: cancel,
         writer: writer,
         store: store,
         input: runInput,
@@ -240,7 +272,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
       // Whatever escaped is the run's failure.
       // ignore: avoid_catches_without_on_clauses
     } catch (error, stackTrace) {
-      writer.send(AgentEvent(error: error, stackTrace: stackTrace));
+      failed(error, stackTrace);
     } finally {
       await writer.close();
     }
@@ -364,6 +396,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
     RunContext ctx,
     _ExecContext exec,
     BridgeStore store,
+    CancelContext? cancelContext,
   ) async {
     final react = await newReactGraph(
       ctx,
@@ -375,10 +408,12 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
           retryConfig: config.modelRetryConfig,
           failoverConfig: config.modelFailoverConfig,
           toolInfos: exec.toolInfos,
+          cancelContext: cancelContext,
         ),
         toolsReturnDirectly: exec.returnDirectly,
         agentName: name,
         maxIterations: config.maxIterations,
+        cancelContext: cancelContext,
         afterAgent: config.handlers.isEmpty
             ? null
             : (ctx, message) async {
@@ -419,6 +454,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
   Future<Runnable<_RunInput, Message>> _buildNoTools(
     RunContext ctx,
     BridgeStore store,
+    CancelContext? cancelContext,
   ) {
     final model = buildModelWrappers(
       config.model,
@@ -426,6 +462,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
         handlers: config.handlers,
         retryConfig: config.modelRetryConfig,
         failoverConfig: config.modelFailoverConfig,
+        cancelContext: cancelContext,
       ),
     );
     final genModelInput = config.genModelInput ?? defaultGenModelInput;
@@ -465,6 +502,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
   Future<void> _runGraph(
     RunContext context,
     Future<Runnable<_RunInput, Message>> build, {
+    required _RunCancel cancel,
     required StreamWriter<AgentEvent> writer,
     required BridgeStore store,
     required AgentInput input,
@@ -474,26 +512,36 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
     required FutureOr<void> Function(RunContext ctx)? afterToolCallsHook,
     required bool emitToolEvents,
   }) async {
+    final cancelContext = cancel.context;
     final Runnable<_RunInput, Message> runnable;
     try {
       runnable = await build;
       // A failure to build or compile the graph.
       // ignore: avoid_catches_without_on_clauses
     } catch (error, stackTrace) {
+      if (cancel.owned) cancelContext?.markDone();
       writer.send(AgentEvent(error: error, stackTrace: stackTrace));
       return;
     }
+    var graphCtx = context;
+    if (cancelContext != null) {
+      // An immediate cancel interrupts the graph with no wait.
+      final (interruptible, interrupter) = graphCtx.withGraphInterrupt();
+      graphCtx = interruptible;
+      cancelContext.addGraphInterrupter(interrupter);
+    }
     final ctx = withExecContext(
-      context,
+      graphCtx,
       ChatModelAgentExecContext(
         writer: writer,
         runtimeReturnDirectly: returnDirectly,
+        cancelContext: cancelContext,
         failoverLastSuccessModel: config.model,
         afterToolCallsHook: afterToolCallsHook,
       ),
     );
-    // P7: a run cancelled before it started ends here (eino
-    // `checkPreExecCancel`).
+    // A run cancelled before its graph started ends here.
+    if (checkPreExecCancel(cancelContext, writer.send)) return;
     final runInput = _RunInput(input, instruction);
     final options = [
       ...composeOptions,
@@ -514,7 +562,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
       // The graph's failure (or interrupt) becomes the run's last event.
       // ignore: avoid_catches_without_on_clauses
     } catch (error, stackTrace) {
-      await _handleRunError(ctx, error, stackTrace, store, writer);
+      await _handleRunError(ctx, error, stackTrace, store, writer, cancel);
     }
   }
 
@@ -525,11 +573,24 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
     StackTrace stackTrace,
     BridgeStore store,
     StreamWriter<AgentEvent> writer,
+    _RunCancel cancel,
   ) async {
+    final cancelContext = cancel.context;
+    // An abort-only run that was torn down ends silently.
+    if (isAbortOnlyCancelled(cancelContext)) {
+      if (cancel.owned) cancelContext!.markDone();
+      return;
+    }
     final info = extractInterruptInfo(error);
     if (info == null) {
+      if (cancel.owned) cancelContext?.markDone();
       writer.send(AgentEvent(error: error, stackTrace: stackTrace));
       return;
+    }
+    // A business interrupt while no cancel is pending ends the run; with a
+    // cancel pending the interrupt becomes its error further out.
+    if (cancelContext != null && !cancelContext.shouldCancel) {
+      cancelContext.markDone();
     }
     final data = await store.get(bridgeCheckpointId);
     if (data == null) {
@@ -586,6 +647,15 @@ List<CallOption> _composeOptionsOf(ChatModelAgentRunOptions options) {
 Future<List<ToolInfo>> _toolInfosOf(List<BaseTool> tools) async => [
       for (final tool in tools) await tool.info(),
     ];
+
+/// The cancel context of a run and whether the agent owns it (marks it done
+/// and turns interrupts into cancels) or an agent around it does.
+final class _RunCancel {
+  const _RunCancel(this.context, {required this.owned});
+
+  final CancelContext? context;
+  final bool owned;
+}
 
 /// The setup of a run. Port of eino `execContext`.
 final class _ExecContext {

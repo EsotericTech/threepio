@@ -27,6 +27,7 @@ import '../../streaming/stream_reader.dart';
 import 'agent_action.dart';
 import 'agent_context.dart';
 import 'agent_event.dart';
+import 'cancel.dart';
 import 'message_id.dart';
 import 'message_variant.dart';
 import 'middleware.dart';
@@ -141,6 +142,7 @@ final class ModelWrapperConfig {
     this.retryConfig,
     this.failoverConfig,
     this.toolInfos = const [],
+    this.cancelContext,
   });
 
   final List<ChatModelAgentMiddleware> handlers;
@@ -148,8 +150,9 @@ final class ModelWrapperConfig {
   final ModelFailoverConfig? failoverConfig;
   final List<ToolInfo> toolInfos;
 
-  // P7 attaches the cancel context here (eino `cancelContext`), which the
-  // event sender passes to a cancel-monitored model.
+  /// The cancel context of the run, which the event sender passes to a
+  /// cancel-monitored model.
+  final CancelContext? cancelContext;
 }
 
 /// [model] behind the wrappers of [config]. Port of eino
@@ -166,6 +169,7 @@ BaseChatModel buildModelWrappers(BaseChatModel model, ModelWrapperConfig config)
     toolInfos: config.toolInfos,
     retryConfig: config.retryConfig,
     failoverConfig: config.failoverConfig,
+    cancelContext: config.cancelContext,
   );
 }
 
@@ -196,6 +200,7 @@ final class StateModelWrapper extends BaseChatModel
     this.toolInfos = const [],
     this.retryConfig,
     this.failoverConfig,
+    this.cancelContext,
   });
 
   final BaseChatModel inner;
@@ -204,6 +209,7 @@ final class StateModelWrapper extends BaseChatModel
   final List<ToolInfo> toolInfos;
   final ModelRetryConfig? retryConfig;
   final ModelFailoverConfig? failoverConfig;
+  final CancelContext? cancelContext;
 
   @override
   bool get isCallbacksEnabled => true;
@@ -215,7 +221,16 @@ final class StateModelWrapper extends BaseChatModel
   bool get _hasUserEventSender =>
       handlers.any((handler) => handler is EventSenderModelWrapper);
 
-  ModelContext get _handlerContext => ModelContext(modelRetryConfig: retryConfig);
+  ModelContext get _handlerContext => ModelContext.cancellable(
+        modelRetryConfig: retryConfig,
+        cancelContext: cancelContext,
+      );
+
+  ModelContext get _eventSenderContext => ModelContext.cancellable(
+        modelRetryConfig: retryConfig,
+        modelFailoverConfig: failoverConfig,
+        cancelContext: cancelContext,
+      );
 
   _Generate _wrapGenerate(_Generate endpoint) {
     final model = endpoint;
@@ -238,11 +253,9 @@ final class StateModelWrapper extends BaseChatModel
       wrapped = (input, options) {
         final ctx = _ctxOf(options);
         if (execContextOf(ctx) == null) return next(input, options);
-        return EventSenderModel(
-          EndpointModel(onGenerate: next),
-          retryConfig: retryConfig,
-          failoverConfig: failoverConfig,
-        ).generate(input, options: options);
+        return const EventSenderModelWrapper()
+            .wrapModel(ctx, EndpointModel(onGenerate: next), _eventSenderContext)
+            .generate(input, options: options);
       };
     }
     final retry = retryConfig;
@@ -288,11 +301,9 @@ final class StateModelWrapper extends BaseChatModel
       wrapped = (input, options) {
         final ctx = _ctxOf(options);
         if (execContextOf(ctx) == null) return next(input, options);
-        return EventSenderModel(
-          EndpointModel(onStream: next),
-          retryConfig: retryConfig,
-          failoverConfig: failoverConfig,
-        ).stream(input, options: options);
+        return const EventSenderModelWrapper()
+            .wrapModel(ctx, EndpointModel(onStream: next), _eventSenderContext)
+            .stream(input, options: options);
       };
     }
     final retry = retryConfig;
@@ -445,14 +456,15 @@ final class EventSenderModelWrapper extends ChatModelAgentMiddleware {
     RunContext ctx,
     BaseChatModel model,
     ModelContext context,
-  ) =>
-      // P7 wraps `model` in a cancel-monitored model here when the run has a
-      // cancel context (eino `typedCancelMonitoredModel`).
-      EventSenderModel(
-        model,
-        retryConfig: context.modelRetryConfig,
-        failoverConfig: context.modelFailoverConfig,
-      );
+  ) {
+    final cancelContext = context.cancelContext;
+    return EventSenderModel(
+      // A run torn down at once ends the model's streams.
+      cancelContext == null ? model : CancelMonitoredModel(model, cancelContext),
+      retryConfig: context.modelRetryConfig,
+      failoverConfig: context.modelFailoverConfig,
+    );
+  }
 }
 
 /// The model of [EventSenderModelWrapper]. Port of eino
