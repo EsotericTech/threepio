@@ -1,5 +1,33 @@
 // ignore_for_file: avoid_print
 
+/// Checkpoints of the legacy `StateGraph`.
+///
+/// **Legacy API (before 0.9).** `StateGraph` and its checkpoint stores
+/// predate the port of Eino's `compose` package; they stay for the code that
+/// uses them. New code uses the checkpoints of
+/// `package:threepio_core/compose.dart`: a `CheckpointStore` in
+/// `GraphCompileOptions(checkpointStore: …)`, interrupts with
+/// `GraphCompileOptions(interruptBeforeNodes: …)` or
+/// `throw interrupt(ctx, info)` in a node, and resume by running the graph
+/// again with `CallOption.checkpointId(…)` (Go: `compose.WithCheckPointStore`,
+/// `WithInterruptBeforeNodes`, `compose.Interrupt`, `WithCheckPointID`); see
+/// doc/GRAPHS.md.
+///
+/// The example shows:
+/// 1. A graph that saves a checkpoint after every node
+/// 2. Human in the loop: a `HumanInputNode` pauses the run, and
+///    `resumeWithHumanInput` continues it from the saved checkpoint with the
+///    human's answer
+/// 3. Managing the checkpoints of a thread: list, latest, history, count,
+///    delete, clear
+///
+/// To run this example (no API key needed):
+///
+/// ```bash
+/// dart run example/checkpoint_example.dart
+/// ```
+library;
+
 import 'dart:async';
 
 // The checkpoint stores of the state graph share their names with the
@@ -7,15 +35,6 @@ import 'dart:async';
 import 'package:threepio_core/legacy_graph.dart' as legacy;
 import 'package:threepio_core/threepio_core.dart';
 
-/// Checkpoint & Resume example demonstrating:
-/// 1. Creating a checkpointable graph
-/// 2. Interrupt before/after nodes
-/// 3. Human-in-the-loop pattern
-/// 4. Resuming from checkpoints
-/// 5. Checkpoint history management
-///
-/// To run this example:
-/// 1. Run: dart run example/checkpoint_example.dart
 Future<void> main() async {
   print('=== Checkpoint & Resume System Example ===\n');
 
@@ -31,39 +50,34 @@ Future<void> basicCheckpointExample() async {
   // Create checkpoint store
   final store = legacy.InMemoryCheckpointStore<WorkflowState>();
 
-  // Create graph with checkpointing enabled
+  // Create graph with checkpointing enabled, then add the nodes and edges
   final graph = StateGraph<WorkflowState>(
-    checkpointConfig: CheckpointConfig(
-      checkpointEveryNode: true,  // Save after each node
+    checkpointConfig: const CheckpointConfig(
+      checkpointEveryNode: true, // Save after each node
       autoSave: true,
     ),
     checkpointStore: store,
-  );
-
-  // Add nodes
-  graph.addNode('fetch_data', (state) async {
-    print('   [Node] Fetching data...');
-    await Future.delayed(const Duration(milliseconds: 100));
-    return state.copyWith(data: 'Raw data from source');
-  });
-
-  graph.addNode('process_data', (state) async {
-    print('   [Node] Processing data...');
-    await Future.delayed(const Duration(milliseconds: 100));
-    return state.copyWith(processedData: 'Processed: ${state.data}');
-  });
-
-  graph.addNode('save_results', (state) async {
-    print('   [Node] Saving results...');
-    await Future.delayed(const Duration(milliseconds: 100));
-    return state.copyWith(saved: true);
-  });
-
-  // Define flow
-  graph.addEdge('fetch_data', 'process_data');
-  graph.addEdge('process_data', 'save_results');
-  graph.addEdge('save_results', END);
-  graph.setEntryPoint('fetch_data');
+  )
+    ..addNode('fetch_data', (state) async {
+      print('   [Node] Fetching data...');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      return state.copyWith(data: 'Raw data from source');
+    })
+    ..addNode('process_data', (state) async {
+      print('   [Node] Processing data...');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      return state.copyWith(processedData: 'Processed: ${state.data}');
+    })
+    ..addNode('save_results', (state) async {
+      print('   [Node] Saving results...');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      return state.copyWith(saved: true);
+    })
+    // Define flow
+    ..addEdge('fetch_data', 'process_data')
+    ..addEdge('process_data', 'save_results')
+    ..addEdge('save_results', END)
+    ..setEntryPoint('fetch_data');
 
   // Run graph
   final result = await graph.invoke(
@@ -84,50 +98,41 @@ Future<void> humanInTheLoopExample() async {
 
   final store = legacy.InMemoryCheckpointStore<ApprovalState>();
 
-  final graph = StateGraph<ApprovalState>(
-    checkpointConfig: CheckpointConfig(
-      interruptBefore: ['human_review'],  // Pause before this node
-      autoSave: true,
-    ),
-    checkpointStore: store,
+  // The review step: the run stops here until a human answers. The answer
+  // (a bool) is turned into state by processInput when the run resumes.
+  final review = HumanInputNode<ApprovalState, bool>(
+    name: 'human_review',
+    prompt: (state) => 'Approve "${state.content}"?',
+    processInput: (state, approved) => state.copyWith(approved: approved),
   );
 
-  // Add nodes
-  graph.addNode('generate_content', (state) async {
-    print('   [Node] Generating content...');
-    return state.copyWith(content: 'AI-generated content that needs review');
-  });
-
-  graph.addNode('human_review', (state) async {
-    print('   [Node] Human review completed');
-    // This node uses the approval that was set when resuming
-    return state;
-  });
-
-  graph.addNode('publish', (state) async {
-    if (state.approved) {
+  final graph = StateGraph<ApprovalState>(
+    // autoSave stores the checkpoint the human input resumes from.
+    checkpointConfig: const CheckpointConfig(autoSave: true),
+    checkpointStore: store,
+  )
+    ..addNode('generate_content', (state) async {
+      print('   [Node] Generating content...');
+      return state.copyWith(content: 'AI-generated content that needs review');
+    })
+    ..addHumanInputNode(review)
+    ..addNode('publish', (state) async {
       print('   [Node] Publishing content...');
       return state.copyWith(published: true);
-    } else {
-      print('   [Node] Content rejected, not publishing');
-      return state.copyWith(published: false);
-    }
-  });
-
-  graph.addNode('revise', (state) async {
-    print('   [Node] Revising content...');
-    return state.copyWith(content: 'Revised: ${state.content}');
-  });
-
-  // Define flow
-  graph.addEdge('generate_content', 'human_review');
-  graph.addConditionalEdge(
-    'human_review',
-    (state) => state.approved ? 'publish' : 'revise',
-  );
-  graph.addEdge('revise', 'human_review');
-  graph.addEdge('publish', END);
-  graph.setEntryPoint('generate_content');
+    })
+    ..addNode('revise', (state) async {
+      print('   [Node] Revising content...');
+      return state.copyWith(content: 'Revised: ${state.content}');
+    })
+    // Define flow
+    ..addEdge('generate_content', 'human_review')
+    ..addConditionalEdge(
+      'human_review',
+      (state) => state.approved ? 'publish' : 'revise',
+    )
+    ..addEdge('revise', 'human_review')
+    ..addEdge('publish', END)
+    ..setEntryPoint('generate_content');
 
   const threadId = 'approval-workflow-1';
 
@@ -135,23 +140,25 @@ Future<void> humanInTheLoopExample() async {
   print('   Starting workflow (will pause at human_review)...\n');
 
   try {
-    await graph.invoke(
-      ApprovalState(),
+    await graph.invoke(ApprovalState(), threadId: threadId);
+    print('   The workflow finished without asking for review.');
+  } on HumanInputRequired<ApprovalState, dynamic> catch (e) {
+    // The graph rethrows the request with a dynamic input type, so catch it
+    // as HumanInputRequired<ApprovalState, dynamic>.
+    print('   [Interrupt] Paused at: ${e.nodeName}');
+    print('   [Interrupt] Checkpoint ID: ${e.checkpoint.id}');
+    print('   [Interrupt] Question: ${e.prompt}');
+
+    // A real app shows the question and waits for the answer; here the
+    // human approves.
+    print('\n   Simulating human approval...\n');
+    final result = await graph.resumeWithHumanInput<bool>(
+      e.checkpoint.id!,
+      input: true,
       threadId: threadId,
     );
-  } on GraphInterruptException<ApprovalState> catch (e) {
-    print('   [Interrupt] Paused at: ${e.checkpoint.currentNode}');
-    print('   [Interrupt] Checkpoint ID: ${e.checkpoint.id}');
-    print('   [Interrupt] Content for review: "${e.checkpoint.state.content}"');
-    print('   [Interrupt] Reason: ${e.reason}');
-
-    // Simulate human approval - save the modified state to checkpoint store
-    print('\n   Simulating human approval...\n');
-
-    // To resume with modified state, save a new checkpoint with the approval
-    // and resume from that. For this demo, we just show the interrupt worked.
-    print('   Note: Resume with state modification requires using HumanInputNode');
-    print('   See the graph module documentation for the full HITL pattern.');
+    print('\n   Final state: approved=${result.state.approved}, '
+        'published=${result.state.published}');
   }
 
   print('');
@@ -194,9 +201,9 @@ Future<void> checkpointManagementExample() async {
   final count = await store.count(threadId: 'thread-1');
   print('   Count for thread-1: $count');
 
-  // Delete one
+  // Delete the oldest one (list() returns the newest first)
   if (checkpoints.isNotEmpty) {
-    await store.delete(checkpoints.first.id, threadId: 'thread-1');
+    await store.delete(checkpoints.last.id, threadId: 'thread-1');
     print('   Deleted oldest checkpoint');
   }
 
@@ -208,15 +215,21 @@ Future<void> checkpointManagementExample() async {
 
 /// Simple workflow state
 class WorkflowState extends GraphState {
-  final String? data;
-  final String? processedData;
-  final bool saved;
-
   WorkflowState({
     this.data,
     this.processedData,
     this.saved = false,
   });
+
+  factory WorkflowState.fromMap(Map<String, dynamic> map) => WorkflowState(
+        data: map['data'] as String?,
+        processedData: map['processedData'] as String?,
+        saved: map['saved'] as bool? ?? false,
+      );
+
+  final String? data;
+  final String? processedData;
+  final bool saved;
 
   @override
   WorkflowState copyWith({
@@ -235,25 +248,25 @@ class WorkflowState extends GraphState {
         'processedData': processedData,
         'saved': saved,
       };
-
-  static WorkflowState fromMap(Map<String, dynamic> map) => WorkflowState(
-        data: map['data'] as String?,
-        processedData: map['processedData'] as String?,
-        saved: map['saved'] as bool? ?? false,
-      );
 }
 
 /// Approval workflow state
 class ApprovalState extends GraphState {
-  final String? content;
-  final bool approved;
-  final bool published;
-
   ApprovalState({
     this.content,
     this.approved = false,
     this.published = false,
   });
+
+  factory ApprovalState.fromMap(Map<String, dynamic> map) => ApprovalState(
+        content: map['content'] as String?,
+        approved: map['approved'] as bool? ?? false,
+        published: map['published'] as bool? ?? false,
+      );
+
+  final String? content;
+  final bool approved;
+  final bool published;
 
   @override
   ApprovalState copyWith({
@@ -272,10 +285,4 @@ class ApprovalState extends GraphState {
         'approved': approved,
         'published': published,
       };
-
-  static ApprovalState fromMap(Map<String, dynamic> map) => ApprovalState(
-        content: map['content'] as String?,
-        approved: map['approved'] as bool? ?? false,
-        published: map['published'] as bool? ?? false,
-      );
 }

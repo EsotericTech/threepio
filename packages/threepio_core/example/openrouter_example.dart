@@ -1,44 +1,65 @@
 // ignore_for_file: avoid_print
 
-/// Example demonstrating how to use OpenRouter with Threepio
+/// Example of the OpenRouter chat model.
 ///
-/// OpenRouter (https://openrouter.ai) provides access to 100+ LLM models
-/// through a single API, including:
-/// - Text models: Gemini, Claude, GPT-4, Llama, Mistral, and more
-/// - Image generation: DALL-E, Stable Diffusion, Gemini 2.5 Flash Image
+/// OpenRouter (https://openrouter.ai) serves models of many providers
+/// (Gemini, Claude, GPT, Llama, Mistral, ...) through one OpenAI-compatible
+/// API. The example shows:
+/// 1. Text generation with several models, picked per call with
+///    `ChatModelOptions.model`
+/// 2. Image generation with Gemini 2.5 Flash Image (the image arrives in
+///    `assistantGenMultiContent`)
+/// 3. Streaming a response chunk by chunk
 ///
-/// Get your API key at: https://openrouter.ai/keys
+/// eino-ext has an OpenRouter chat model too (`components/model/openrouter`);
+/// threepio's `OpenRouterChatModel` keeps its own parser.
+///
+/// To run this example (get a key at https://openrouter.ai/keys):
+///
+/// ```bash
+/// OPENROUTER_API_KEY=... dart run example/openrouter_example.dart
+/// ```
 library;
+
+import 'dart:io';
 
 import 'package:threepio_core/threepio_core.dart';
 
-void main() async {
-  // Replace with your OpenRouter API key
-  const apiKey = 'your-openrouter-api-key';
+Future<void> main() async {
+  final apiKey = Platform.environment['OPENROUTER_API_KEY'];
+  if (apiKey == null || apiKey.isEmpty) {
+    stderr.writeln('Set OPENROUTER_API_KEY to run this example.');
+    return;
+  }
+
+  // One model for every example; each call picks the model it wants.
+  // siteName and siteUrl are OpenRouter's optional attribution headers.
+  final model = OpenRouterChatModel(
+    config: OpenRouterConfig(
+      apiKey: apiKey,
+      siteName: 'Threepio Example',
+      siteUrl: 'https://github.com/your-org/threepio',
+    ),
+  );
 
   print('=== Threepio OpenRouter Examples ===\n');
+  try {
+    // Example 1: Text generation with different models
+    await textGenerationExample(model);
 
-  // Example 1: Text generation with different models
-  await textGenerationExample(apiKey);
+    // Example 2: Image generation
+    await imageGenerationExample(model);
 
-  // Example 2: Image generation
-  await imageGenerationExample(apiKey);
-
-  // Example 3: Streaming responses
-  await streamingExample(apiKey);
+    // Example 3: Streaming responses
+    await streamingExample(model);
+  } finally {
+    model.dispose();
+  }
 }
 
 /// Example 1: Generate text with different LLM models
-Future<void> textGenerationExample(String apiKey) async {
+Future<void> textGenerationExample(OpenRouterChatModel model) async {
   print('--- Example 1: Text Generation ---');
-
-  final config = OpenRouterConfig(
-    apiKey: apiKey,
-    siteName: 'Threepio Example',
-    siteUrl: 'https://github.com/your-org/threepio',
-  );
-
-  final model = OpenRouterChatModel(config: config);
 
   final prompt = Message.user(
     'Explain quantum computing in exactly one sentence.',
@@ -56,19 +77,19 @@ Future<void> textGenerationExample(String apiKey) async {
   print(response.content);
   print('Tokens used: ${response.responseMeta?.usage?.totalTokens ?? 'N/A'}');
 
-  // Try Claude 3.5 Sonnet (excellent reasoning)
-  print('\n🟣 Claude 3.5 Sonnet:');
+  // Try Claude Haiku 4.5 (fast Anthropic model)
+  print('\n🟣 Claude Haiku 4.5:');
   response = await model.generate(
     [prompt],
     options: const ChatModelOptions(
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-haiku-4.5',
       maxTokens: 100,
     ),
   );
   print(response.content);
   print('Tokens used: ${response.responseMeta?.usage?.totalTokens ?? 'N/A'}');
 
-  // Try Llama 3.1 70B (open-source powerhouse)
+  // Try Llama 3.1 70B (open-weight model)
   print('\n🦙 Llama 3.1 70B:');
   response = await model.generate(
     [prompt],
@@ -84,23 +105,23 @@ Future<void> textGenerationExample(String apiKey) async {
 }
 
 /// Example 2: Generate images with Gemini 2.5 Flash Image
-Future<void> imageGenerationExample(String apiKey) async {
+Future<void> imageGenerationExample(OpenRouterChatModel model) async {
   print('--- Example 2: Image Generation ---');
 
-  final config = OpenRouterConfig(apiKey: apiKey);
-  final model = OpenRouterChatModel(config: config);
-
   final messages = [
-    Message.user('Generate a minimalist icon of a robot made of geometric shapes'),
+    Message.user(
+      'Generate a minimalist icon of a robot made of geometric shapes',
+    ),
   ];
 
   print('🎨 Generating image with Gemini 2.5 Flash Image...');
+  // An image model answers with an image only when the request asks for the
+  // image modality (OpenRouter `modalities: ["image", "text"]`).
   final response = await model.generate(
     messages,
-    options: const ChatModelOptions(
-      model: 'google/gemini-2.5-flash-image',
-      maxTokens: 4096,
-    ),
+    options: const OpenRouterRequestOptions(
+      modalities: [OutputModality.image, OutputModality.text],
+    ).toOptions(model: 'google/gemini-2.5-flash-image', maxTokens: 4096),
   );
 
   // Text response (if any)
@@ -109,30 +130,26 @@ Future<void> imageGenerationExample(String apiKey) async {
   }
 
   // Extract generated image
-  if (response.assistantGenMultiContent != null &&
-      response.assistantGenMultiContent!.isNotEmpty) {
-    final imagePart = response.assistantGenMultiContent!.firstWhere(
-      (part) => part.type == ChatMessagePartType.imageUrl,
-      orElse: () => throw Exception('No image in response'),
-    );
+  final imagePart = response.assistantGenMultiContent
+      ?.where((part) => part.type == ChatMessagePartType.imageUrl)
+      .firstOrNull;
+  final imageUrl = imagePart?.image?.url;
+  if (imageUrl != null) {
+    // Data URL format: data:image/png;base64,iVBORw0KGgo...
+    print('✅ Image generated successfully!');
+    print('Format: ${imagePart!.image!.mimeType ?? 'image/png'}');
+    print('Size: ${imageUrl.length} characters');
+    final preview =
+        imageUrl.length > 50 ? '${imageUrl.substring(0, 50)}...' : imageUrl;
+    print('Preview: $preview');
 
-    if (imagePart.image?.url != null) {
-      final imageUrl = imagePart.image!.url!;
-
-      // Data URL format: data:image/png;base64,iVBORw0KGgo...
-      print('✅ Image generated successfully!');
-      print('Format: ${imagePart.image!.mimeType ?? 'image/png'}');
-      print('Size: ${imageUrl.length} characters');
-      print('Preview: ${imageUrl.substring(0, 50)}...');
-
-      // In Flutter, display with:
-      // import 'dart:convert';
-      // import 'package:flutter/widgets.dart';
-      //
-      // final base64Data = imageUrl.split(',')[1];
-      // final imageBytes = base64Decode(base64Data);
-      // Image.memory(imageBytes)
-    }
+    // In Flutter, display with:
+    // import 'dart:convert';
+    // import 'package:flutter/widgets.dart';
+    //
+    // final base64Data = imageUrl.split(',')[1];
+    // final imageBytes = base64Decode(base64Data);
+    // Image.memory(imageBytes)
   } else {
     print('⚠️ No image content in response');
   }
@@ -142,11 +159,8 @@ Future<void> imageGenerationExample(String apiKey) async {
 }
 
 /// Example 3: Stream responses in real-time
-Future<void> streamingExample(String apiKey) async {
+Future<void> streamingExample(OpenRouterChatModel model) async {
   print('--- Example 3: Streaming ---');
-
-  final config = OpenRouterConfig(apiKey: apiKey);
-  final model = OpenRouterChatModel(config: config);
 
   final messages = [
     Message.user('Write a haiku about programming'),
@@ -168,7 +182,7 @@ Future<void> streamingExample(String apiKey) async {
 
       // Print each chunk as it arrives
       if (chunk.content.isNotEmpty) {
-        print(chunk.content);
+        stdout.write(chunk.content);
       }
 
       // Check for completion

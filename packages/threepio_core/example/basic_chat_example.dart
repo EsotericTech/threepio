@@ -1,18 +1,36 @@
 // ignore_for_file: avoid_print
 
-import 'package:threepio_core/src/components/model/providers/openai/openai_config.dart';
-import 'package:threepio_core/threepio_core.dart';
-
-/// Basic example showing how to use Threepio Core with OpenAI
+/// Basic example: one request to an OpenAI chat model.
+///
+/// Builds an `OpenAIChatModel`, sends a system and a user message with
+/// `generate`, and prints the answer and its token usage. Eino counterpart:
+/// eino-ext `components/model/openai` (`openai.NewChatModel`, `Generate`).
 ///
 /// To run this example:
-/// 1. Create a .env file with OPENAI_API_KEY=your-key
-/// 2. Run: dart run basic_chat_example.dart
+///
+/// ```bash
+/// OPENAI_API_KEY=... dart run example/basic_chat_example.dart
+/// # Optional: OPENAI_MODEL (default gpt-4o-mini), OPENAI_BASE_URL.
+/// ```
+library;
+
+import 'dart:io';
+
+import 'package:threepio_core/threepio_core.dart';
+
 Future<void> main() async {
+  final env = Platform.environment;
+  final apiKey = env['OPENAI_API_KEY'];
+  if (apiKey == null || apiKey.isEmpty) {
+    stderr.writeln('Set OPENAI_API_KEY to run this example.');
+    return;
+  }
+
   // Configure OpenAI
-  const config = OpenAIConfig(
-    apiKey: 'your-api-key-here', // Replace with your actual API key
-    defaultModel: 'gpt-4o-mini',
+  final config = OpenAIConfig(
+    apiKey: apiKey,
+    baseUrl: env['OPENAI_BASE_URL'] ?? 'https://api.openai.com/v1',
+    defaultModel: env['OPENAI_MODEL'] ?? 'gpt-4o-mini',
   );
 
   // Create chat model
@@ -32,9 +50,13 @@ Future<void> main() async {
     print('Response: ${response.content}');
     print('\nToken usage:');
     print('  Prompt tokens: ${response.responseMeta?.usage?.promptTokens}');
-    print('  Completion tokens: ${response.responseMeta?.usage?.completionTokens}');
+    print(
+      '  Completion tokens: ${response.responseMeta?.usage?.completionTokens}',
+    );
     print('  Total tokens: ${response.responseMeta?.usage?.totalTokens}');
   } catch (e) {
     print('Error: $e');
+  } finally {
+    model.dispose();
   }
 }

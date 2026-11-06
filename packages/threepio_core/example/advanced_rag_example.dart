@@ -1,19 +1,32 @@
 // ignore_for_file: avoid_print
 
+/// Advanced RAG example demonstrating:
+/// 1. Document ingestion: Markdown-aware splitting, embedding, storing
+/// 2. Vector retrieval
+/// 3. Hybrid retrieval (vector + keyword)
+/// 4. MMR reranking for diversity
+/// 5. Multi-query retrieval (a chat model writes alternative queries)
+/// 6. Result fusion (reciprocal rank fusion)
+/// 7. Deduplication strategies
+///
+/// These are threepio's own retrieval components. The ports of Eino's
+/// `flow/retriever` (multiquery, parent, router) and `flow/indexer/parent`
+/// are `MultiQueryRetriever.fromConfig`, `ParentRetriever.fromConfig`,
+/// `RouterRetriever.fromConfig` and `ParentIndexer` in
+/// `package:threepio_core/flow.dart`; see doc/RAG.md.
+///
+/// To run this example (OpenAI for the embeddings, Gemini for the
+/// multi-query step):
+///
+/// ```bash
+/// OPENAI_API_KEY=... GEMINI_API_KEY=... dart run example/advanced_rag_example.dart
+/// ```
+library;
+
 import 'dart:io';
 
 import 'package:threepio_core/threepio_core.dart';
 
-/// Advanced RAG example demonstrating:
-/// 1. Document ingestion pipeline
-/// 2. Hybrid retrieval (vector + keyword)
-/// 3. Result fusion and deduplication
-/// 4. MMR reranking for diversity
-/// 5. Parent document retrieval
-///
-/// To run this example:
-/// 1. Set GEMINI_API_KEY and OPENAI_API_KEY environment variables
-/// 2. Run: dart run example/advanced_rag_example.dart
 Future<void> main() async {
   print('=== Advanced RAG Pipeline Example ===\n');
 
@@ -21,19 +34,35 @@ Future<void> main() async {
   final geminiKey = Platform.environment['GEMINI_API_KEY'];
   final openaiKey = Platform.environment['OPENAI_API_KEY'];
 
-  if (geminiKey == null || openaiKey == null) {
-    print('Error: GEMINI_API_KEY and OPENAI_API_KEY must be set');
-    exit(1);
+  if (geminiKey == null ||
+      geminiKey.isEmpty ||
+      openaiKey == null ||
+      openaiKey.isEmpty) {
+    stderr.writeln('Set GEMINI_API_KEY and OPENAI_API_KEY to run this example.');
+    return;
   }
 
   // Create components
   final embedder = OpenAIEmbedder(
     config: OpenAIConfig(apiKey: openaiKey),
   );
+  final geminiModel = GeminiChatModel(
+    config: GeminiConfig(apiKey: geminiKey),
+  );
+  try {
+    await runPipeline(embedder, geminiModel);
+  } finally {
+    embedder.dispose();
+    geminiModel.dispose();
+  }
+}
+
+/// Indexes three documents and queries them in several ways.
+Future<void> runPipeline(Embedder embedder, BaseChatModel chatModel) async {
   final vectorStore = InMemoryVectorStore();
 
   // Sample documents to index
-  final sampleDocs = [
+  const sampleDocs = [
     Document(
       id: 'doc1',
       content: '''
@@ -104,10 +133,9 @@ achieving state-of-the-art results on many benchmarks.
   // === 1. Document Ingestion Pipeline ===
   print('1. Running Ingestion Pipeline...\n');
 
-  final splitter = MarkdownRAGSplitter(
-    includeHeadersInChunks: true,
-    addHeaderBreadcrumbs: true,
-  );
+  // Each chunk starts with its header and the header breadcrumbs (both on
+  // by default).
+  final splitter = MarkdownRAGSplitter();
 
   // Split documents with options
   final chunks = await splitter.splitDocuments(
@@ -137,7 +165,7 @@ achieving state-of-the-art results on many benchmarks.
     defaultTopK: 5,
   );
 
-  final query = 'What are the different types of neural networks?';
+  const query = 'What are the different types of neural networks?';
   print('   Query: "$query"\n');
 
   final vectorResults = await vectorRetriever.retrieve(query);
@@ -160,7 +188,8 @@ achieving state-of-the-art results on many benchmarks.
     keywordSearcher: keywordSearcher,
     vectorWeight: 0.7,
     keywordWeight: 0.3,
-    normalizeScores: true,
+    // The scores of both sides are normalized before they are combined (the
+    // default, normalizeScores: true).
   );
 
   final hybridResults = await hybridRetriever.retrieve(query);
@@ -194,15 +223,11 @@ achieving state-of-the-art results on many benchmarks.
   // === 5. Multi-Query Retrieval ===
   print('\n5. Multi-Query Retrieval...\n');
 
-  final geminiModel = GeminiChatModel(
-    config: GeminiConfig(apiKey: geminiKey),
-  );
-
+  // The chat model writes three alternative queries; the original query is
+  // searched too (the defaults numQueries: 3, includeOriginalQuery: true).
   final multiQueryRetriever = MultiQueryRetriever(
     baseRetriever: vectorRetriever,
-    chatModel: geminiModel,
-    numQueries: 3,
-    includeOriginalQuery: true,
+    chatModel: chatModel,
   );
 
   print('   Original query: "$query"');
@@ -214,8 +239,8 @@ achieving state-of-the-art results on many benchmarks.
   // === 6. Result Fusion Strategies ===
   print('6. Result Fusion Strategies...\n');
 
-  // Reciprocal Rank Fusion
-  final rrfFusion = const ReciprocalRankFusion(k: 60.0);
+  // Reciprocal Rank Fusion (k: 60, the default)
+  const rrfFusion = ReciprocalRankFusion();
 
   // Simulate two result sets
   final resultSet1 = vectorResults.take(5).toList();
@@ -236,16 +261,14 @@ achieving state-of-the-art results on many benchmarks.
   // === 7. Deduplication Strategies ===
   print('7. Deduplication Strategies...\n');
 
-  // By document ID
-  final idDedup = const IdDeduplication(useContentHashAsFallback: true);
+  // By document ID, with a content hash for documents without one (the
+  // default, useContentHashAsFallback: true)
+  const idDedup = IdDeduplication();
   final dedupedById = await idDedup.deduplicate(fusedResults);
   print('   ID deduplication: ${fusedResults.length} -> ${dedupedById.length}');
 
-  // By content
-  final contentDedup = const ContentDeduplication(
-    normalizeWhitespace: true,
-    caseSensitive: false,
-  );
+  // By content, whitespace normalized (the default) and case ignored
+  const contentDedup = ContentDeduplication(caseSensitive: false);
   final dedupedByContent = await contentDedup.deduplicate(fusedResults);
   print('   Content deduplication: ${fusedResults.length} -> ${dedupedByContent.length}');
 

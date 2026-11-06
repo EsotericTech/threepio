@@ -5,35 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-11-06
 
-Work towards parity with Eino v0.9 (`feat/eino-parity`). So far: the test
-suite is safe to run, bugs found while auditing the code are fixed, the Eino
-`schema` package is ported (messages, tool definitions and results,
-documents, templates, stream readers, chunk concatenation, the type registry)
-together with the run context every later API takes, and so is the Eino
-`components` package (the contracts of chat models, tools, templates,
-embedders, retrievers, indexers, loaders, parsers and transformers, their call
-options and callback payloads, and the tools made from functions), the
-Eino `callbacks` package with tracing to Langfuse over OpenTelemetry, and the
-Eino `compose` package: runnables, lambdas, graphs, chains, workflows and the
-tools node, with interrupt, checkpoint and resume, and the core of the Eino
-`adk` package (agents, the runner, interrupt and resume of agents,
-middlewares, retry and failover of the model), on which the Kortney runtime
-now runs, its run control (cancel, the turn loop, the filesystem backend),
-its eight built-in middlewares and its prebuilt agents (deep agent,
-plan-execute-replan), and the retrieval flows of the Eino package `flow`
-(multi-query, parent and router retrievers, the parent indexer), and the first
-wave of eino-ext: the chat model providers (OpenAI, OpenRouter, Claude,
-Gemini, Ollama, OpenAI-compatible endpoints), embedders and an embedding
-cache, the MCP client with its tools and prompt template, and the local
-filesystem backend; and from its second wave: document loaders, parsers and
-transformers, the HTTP request, search, Wikipedia, sequential-thinking and
-command-line tools, the Qdrant indexer and retriever, and tracing to
-LangSmith; and the agentic path, which upstream labels beta: agentic
-messages of typed content blocks, the agentic model, template and tools
-node, the agentic chat model agent and runner, and the OpenAI Responses and
-Claude agentic models.
+Parity with Eino v0.9.22 and the eino-ext components that make sense in Dart.
+The version tracks Eino's minor version; the package stays 0.x until the
+names that collide between the two API generations are settled (see the
+README, "Which API do I use?").
+
+This release ports the Eino packages `schema` (messages, tool definitions and
+results, documents, templates, pull-based streams, chunk concatenation, the
+type registry) with the run context every API takes; `components` (the
+contracts of chat models, tools, templates, embedders, retrievers, indexers,
+loaders, parsers and transformers, their options and callback payloads, tools
+made from functions); `callbacks` and `utils/callbacks`, with tracing to
+Langfuse over OpenTelemetry and to LangSmith; `compose` (runnables, lambdas,
+graphs, chains, workflows, the tools node, interrupt, checkpoint and resume);
+`adk` (agents, the runner, interrupt and resume, middlewares, retry and
+failover of the model, cancel, the turn loop, the filesystem backend, the
+eight built-in middlewares, the deep agent and plan-execute-replan), on which
+the Kortney runtime now runs; and the retrieval flows of `flow`. From
+eino-ext: the chat model providers (OpenAI, OpenRouter, Claude, Gemini,
+Ollama, OpenAI-compatible endpoints), embedders and an embedding cache, the
+MCP client with its tools and prompt template, the local filesystem backend,
+document loaders, parsers and transformers, the HTTP request, search,
+Wikipedia, sequential-thinking and command-line tools, and the Qdrant indexer
+and retriever. The agentic path, which upstream labels beta, is ported as
+beta: agentic messages of typed content blocks, the agentic model, template
+and tools node, the agentic chat model agent and runner, and the OpenAI
+Responses and Claude agentic models.
+
+The older API stays exported with its names, signatures and behaviour (see
+"Migration notes" and `doc/MIGRATION.md`); the few intentional breaks are
+listed there. The entries below were written phase by phase on the branch, so
+some describe a change against an earlier pre-release build of 0.9 rather
+than against 0.1.0; `doc/MIGRATION.md` lists only what changed against 0.1.x.
 
 ### Fixed
 
@@ -76,6 +81,40 @@ Claude agentic models.
 
 ### Added
 
+- **Documentation and examples for 0.9.** The README is rewritten around the
+  Eino shape: quick start (template → model chain, `adk.ChatModelAgent` with
+  `adk.Runner`, interrupt and resume, a graph with state), the mapping from
+  Eino's Go names to the Dart ones, "Which API do I use?", and the legacy
+  API. `doc/GRAPHS.md`, `doc/CALLBACKS.md`, `doc/RAG.md` and
+  `doc/LANGFUSE_DESIGN.md` describe the Eino-shaped API, each with a section
+  on the older one; `doc/MIGRATION.md` is new; `doc/NEW_FEATURES.md` is
+  brought up to date; `doc/eino_feature_parity_plan.md` is marked superseded.
+  New examples: `graph_react_example.dart`, `workflow_example.dart`,
+  `hitl_approval_example.dart`, `deep_agent_example.dart`,
+  `mcp_tools_example.dart`, `turn_loop_example.dart`,
+  `agentic_agent_example.dart`, and ports of the eino-examples
+  `quickstart/chat`, `quickstart/todoagent`, `compose/graph/state` and
+  `adk/human-in-the-loop/1_approval` in `example/eino_examples/`. The
+  new examples read their model from the environment (`example/support/`; the
+  agentic example builds its own `OpenAIResponsesModel`) and are run offline,
+  with `checkpoint_example.dart`, by `test/unit/examples/`; no example imports
+  `src/` any more. Every ```` ```dart ```` block of the README and of `doc/`
+  (except the superseded plan) is mirrored in a file
+  the analyzer checks (`test/doc_snippets/`, `example/`), and
+  `test/unit/docs/doc_snippets_test.dart` fails when a block has no mirror.
+- **Live smoke test of the agentic providers through OpenRouter**
+  (`test/integration/openrouter_agentic_smoke_test.dart`, tagged
+  `integration`): `OpenAIResponsesModel` against OpenRouter's
+  `/api/v1/responses` and `ClaudeAgenticModel` against `/api/v1/messages`
+  (bearer authentication, no library change needed): generate, stream and a
+  function-tool round trip through `AgenticChatModelAgent` and
+  `AgenticRunner`. With `OPENROUTER_SERVER_TOOLS=1` it also asks for the
+  server tools whose wire names could not be checked against the SDK
+  sources (Responses web search, shell and deferred tool search; Claude's
+  2026 web search, web fetch and code execution). It runs only with
+  `THREEPIO_INTEGRATION=1` and `OPENROUTER_API_KEY`, never prints the key,
+  and logs the item, block and usage field names it sees, marking those the
+  converters do not know. It has not been run yet.
 - **ADK** (port of the classic half of Eino `adk`), in the new library
   `package:threepio_core/adk.dart`, which the umbrella library does not export
   (several of its names are also names of the Kortney runtime; import it with
@@ -1225,8 +1264,11 @@ Claude agentic models.
   `RunContext ctx` where the hook took the `Map<String, dynamic> context`
   (keep what the handler remembers in the context with a private
   `ContextKey`, and return the context), and take the payload as `Object?`
-  where it was a `CallbackInput` or `CallbackOutput` (`input` itself is what
-  `input.data` was). Give a run its handlers with
+  where it was a `CallbackInput` or `CallbackOutput`. The payload is what
+  the component reports to the new API, which is not always what
+  `input.data` was: the components ported from Eino report typed payloads
+  (a chat model reports a `ModelCallbackInput`, not the list of messages;
+  `ModelCallbackInput.from` reads either form). Give a run its handlers with
   `RunContext.background().withHandlers([...])` in place of
   `CallbackManager([...])`.
 - **Firing callbacks from your own component.** `onStart`, `onEnd`, `onError`,
@@ -1776,7 +1818,8 @@ Claude agentic models.
     passes to `statefulInterrupt`, the inputs and outputs of nodes that can
     be in flight when the run stops. Messages, documents and the other schema
     types are registered. A value that cannot be written fails the run with a
-    `CheckpointEncodeException` that names it, instead of leaving a
+    `GraphRunException` caused by a `CheckpointEncodeException` that names
+    it, instead of leaving a
     checkpoint that could not be resumed. Lists and maps lose their element
     types in JSON; the engine gives the inputs and outputs of nodes, and the
     states `getInterruptState` returns, the types the nodes declare, as wide
@@ -1826,7 +1869,8 @@ Claude agentic models.
     as in Eino. It is measured in real time; a test on fake time that
     interrupts before the run has started gets the timeout from the start of
     the run.
-  - Interrupt ids are UUIDs; node and task order is the order of insertion.
+  - Node and task order is the order of insertion. (Interrupt ids are
+    UUIDs, as in Eino.)
 - A class that `implements` `OpenAIChatModel`, `OpenRouterChatModel` or
   `GeminiChatModel` (instead of extending it) has to add `componentTypeName`
   and `isCallbacksEnabled`.
@@ -1847,7 +1891,8 @@ Claude agentic models.
   exception types of this package, or `ChatModelException`, has to add
   `Object? get cause` (and `String get message` where the type had none).
 - A `switch` over `ComponentType` without a `default` needs cases for the
-  seven new values.
+  eleven new values (seven for the compose and component kinds, four for the
+  agentic path).
 - `ToolRegistry.register` used to add the tool some time after it returned.
   Code that waited for that (for example with `Future.delayed`) keeps working.
   Code that looked a tool up by name in the same synchronous block still

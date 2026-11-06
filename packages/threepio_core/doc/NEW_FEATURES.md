@@ -1,6 +1,15 @@
-# Threepio Core - New Features Documentation
+# Threepio Core: features added before 0.9
 
-This documentation covers the new features added to Threepio Core, providing comprehensive examples and usage patterns for each component.
+> **Before the Eino port.** This page describes features threepio gained
+> before the 0.9 port of Eino: the Gemini provider, the older ADK agents,
+> checkpoint and resume of `StateGraph`, the advanced retrievers, the
+> ingestion pipeline, the rerankers and the text splitters. They still exist,
+> and every code block on this page compiles against 0.9. For new code, start
+> with the Eino-shaped replacements: the agents of
+> `package:threepio_core/adk.dart`, the checkpoints of a compose `Graph`
+> ([GRAPHS.md](GRAPHS.md)), the retrieval flows of `flow.dart` and the
+> splitters built from eino-ext configurations ([RAG.md](RAG.md)). [MIGRATION.md](MIGRATION.md)
+> shows how to move; each section below names its Eino-shaped equivalent.
 
 ## Table of Contents
 
@@ -11,12 +20,17 @@ This documentation covers the new features added to Threepio Core, providing com
 5. [Document Processing Pipeline](#5-document-processing-pipeline)
 6. [Reranking System](#6-reranking-system)
 7. [Advanced Text Splitters](#7-advanced-text-splitters)
+8. [Complete RAG Application Example](#complete-rag-application-example)
+9. [Migration Guide](#migration-guide)
+10. [Best Practices](#best-practices)
 
 ---
 
 ## 1. Gemini Chat Model Provider
 
-The Gemini provider enables integration with Google's Gemini API, supporting text generation, multimodal input/output, streaming, and tool calling.
+The Gemini provider talks to Google's Gemini REST API: text generation, multimodal input and output, streaming, tool calling, thinking, server tools (code execution, Google Search, URL context, file search, Google Maps, computer use), prefix caches and Imagen image generation.
+
+> **Eino-shaped equivalent:** `GeminiChatModel` is itself the port of eino-ext `components/model/gemini` (`GeminiRequestOptions` holds Go's `With…` options). As a `ToolCallingChatModel` it works in `adk.ChatModelAgent`, in a compose `Graph` (`addChatModelNode`) or `Chain` (`appendChatModel`), and in `RetryingChatModel`/`FailoverChatModel`; the legacy `Agent` near the end of this section is replaced by the ADK agent ([MIGRATION.md](MIGRATION.md)).
 
 ### Configuration
 
@@ -24,18 +38,22 @@ The Gemini provider enables integration with Google's Gemini API, supporting tex
 import 'package:threepio_core/threepio_core.dart';
 
 // Basic configuration
-final config = GeminiConfig(
+const config = GeminiConfig(
   apiKey: 'your-api-key',
-  defaultModel: 'gemini-2.5-flash', // Default model
-  timeout: const Duration(seconds: 120),
+  defaultModel: 'gemini-2.5-pro', // default: gemini-2.5-flash
+  timeout: Duration(seconds: 60), // default: 120 seconds
 );
 
-// Or load from environment variables (GEMINI_API_KEY or GOOGLE_API_KEY)
+// Or from the environment: GEMINI_API_KEY or GOOGLE_API_KEY (required),
+// GEMINI_BASE_URL and GEMINI_MODEL (optional). Throws a
+// GeminiConfigException when neither key is set.
 final configFromEnv = GeminiConfig.fromEnvironment();
 
 // Create the chat model
 final model = GeminiChatModel(config: config);
 ```
+
+`GeminiConfig` also holds the defaults of every call (`maxTokens`, `temperature`, `topP`, `topK`, `responseJsonSchema`, `thinkingConfig`, `imageConfig`, `responseModalities`, `mediaResolution`, `safetySettings`, `responseLogprobs`, `logprobs`) and the server tools the model may use (`enableCodeExecution`, `enableGoogleSearch`, `enableUrlContext`, `enableFileSearch`, `enableGoogleMaps`, `enableComputerUse`). A model created without an `httpClient` creates one client and keeps it; call `model.dispose()` when you no longer need the model (its `withTools` copies share the client).
 
 ### Available Models
 
@@ -73,104 +91,131 @@ print(response2.content); // "Paris"
 
 ### Generation Options
 
+The common settings are fields of `ChatModelOptions`; the Gemini-specific ones are a `GeminiRequestOptions` (Go: `gemini.WithTopK`, `WithThinkingConfig`, …), which `toOptions` puts into `ChatModelOptions.extensions`. Defaults for every call, and the safety filter, go into `GeminiConfig`.
+
 ```dart
 final response = await model.generate(
   messages,
-  options: ChatModelOptions(
-    model: 'gemini-2.5-pro',    // Override default model
-    temperature: 0.7,           // Creativity (0.0 - 2.0)
-    maxTokens: 1024,            // Maximum output tokens
-    topP: 0.95,                 // Nucleus sampling
-    stop: ['END'],              // Stop sequences
-    extra: {
-      'topK': 40,               // Top-K sampling
-      'safetySettings': [       // Content filtering
-        {
-          'category': 'HARM_CATEGORY_HARASSMENT',
-          'threshold': 'BLOCK_MEDIUM_AND_ABOVE',
-        },
-      ],
-    },
+  options: GeminiRequestOptions(
+    topK: 40, // Top-K sampling
+  ).toOptions(
+    model: 'gemini-2.5-pro', // Override the default model
+    temperature: 0.7, // Creativity (0.0 - 2.0)
+    maxTokens: 1024, // Maximum output tokens
+    topP: 0.95, // Nucleus sampling
+    stop: ['END'], // Stop sequences
   ),
 );
 
-// Access token usage
-print('Prompt tokens: ${response.responseMeta?.usage?.promptTokens}');
-print('Completion tokens: ${response.responseMeta?.usage?.completionTokens}');
+// Token usage
+final usage = response.responseMeta?.usage;
+print('Prompt tokens: ${usage?.promptTokens}');
+print('Completion tokens: ${usage?.completionTokens}');
+
+// Defaults of every call, the safety filter and thinking
+const tunedConfig = GeminiConfig(
+  apiKey: 'your-api-key',
+  temperature: 0.2,
+  topK: 40,
+  safetySettings: [
+    GeminiSafetySetting(
+      category: GeminiHarmCategory.harassment,
+      threshold: GeminiHarmBlockThreshold.blockMediumAndAbove,
+    ),
+  ],
+  // The thought summaries come back in Message.reasoningContent
+  thinkingConfig: GeminiThinkingConfig(includeThoughts: true),
+);
 ```
+
+`GeminiRequestOptions` also carries `responseJsonSchema`, `thinkingConfig`, `responseModalities`, `imageConfig`, `cachedContentName`, `extraFields`, `customHeaders`, `responseLogprobs` and `logprobs`. The older `ChatModelOptions.extra` keys (`topK`, `candidateCount`, `responseMimeType`, `responseSchema`, `responseModalities`, `safetySettings`) are still read: `GeminiRequestOptions` wins over them, and they win over `GeminiConfig` (except `responseMimeType`, which `GeminiConfig.responseJsonSchema` sets to `application/json`).
 
 ### Streaming Responses
 
 ```dart
+import 'dart:io';
+
 final reader = await model.stream([
   Message.user('Write a short story about a robot.'),
 ]);
 
-// Process chunks as they arrive
-try {
-  while (true) {
-    final chunk = await reader.recv();
-    stdout.write(chunk.content); // Print each chunk
-  }
-} on StreamEOFException {
-  // Stream complete
+// asStream() hands the chunks to `await for` and closes the reader at the end
+await for (final chunk in reader.asStream()) {
+  stdout.write(chunk.content);
 }
-await reader.close();
+
+// Or pull the chunks one by one, as Go's Recv loop does
+final reader2 = await model.stream([Message.user('Count to five.')]);
+try {
+  for (var chunk = await reader2.nextOrNull();
+      chunk != null;
+      chunk = await reader2.nextOrNull()) {
+    stdout.write(chunk.content);
+  }
+} finally {
+  await reader2.close();
+}
 ```
+
+`recv()` is the other way to pull: it throws `StreamEOFException` after the last chunk. Close a reader you stop reading early.
 
 ### Multimodal Input (Images, Audio, Video)
 
+Base64 data, data URLs included, is sent inline (`inline_data`). Any other URL, and a file id, is sent as `file_data`, so it must be a URI the Gemini API accepts there, such as a file uploaded with its Files API; the MIME type is guessed from the URL unless you give one.
+
 ```dart
-// Image from base64
+import 'dart:convert';
+
+// Image as a data URL (sent inline)
 final response = await model.generate([
   Message(
     role: RoleType.user,
     userInputMultiContent: [
       MessageInputPart.text('What is in this image?'),
       MessageInputPart.imageUrl(
-        'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+        'data:image/jpeg;base64,${base64Encode(imageBytes)}',
       ),
     ],
   ),
 ]);
+print(response.content);
 
-// Image from URL
-final response2 = await model.generate([
-  Message(
-    role: RoleType.user,
-    userInputMultiContent: [
-      MessageInputPart.text('Describe this image'),
-      MessageInputPart.imageUrl('https://example.com/image.jpg'),
-    ],
-  ),
-]);
-
-// Audio input
+// Audio as base64 data
 final audioResponse = await model.generate([
   Message(
     role: RoleType.user,
     userInputMultiContent: [
       MessageInputPart.text('Transcribe this audio'),
-      MessageInputPart.audioUrl('data:audio/mp3;base64,...'),
+      MessageInputPart.audio(
+        base64Data: base64Encode(audioBytes),
+        mimeType: 'audio/mp3',
+      ),
     ],
   ),
 ]);
+print(audioResponse.content);
 
-// Video input
+// Video uploaded with the Gemini Files API
 final videoResponse = await model.generate([
   Message(
     role: RoleType.user,
     userInputMultiContent: [
       MessageInputPart.text('What happens in this video?'),
-      MessageInputPart.videoUrl('https://example.com/video.mp4'),
+      MessageInputPart.video(fileId: uploadedVideoUri, mimeType: 'video/mp4'),
     ],
   ),
 ]);
+print(videoResponse.content);
 ```
+
+`MessageInputPart.file(...)` sends other documents (a PDF, for example) the same way.
 
 ### Image Generation
 
 ```dart
+import 'dart:convert';
+import 'dart:io';
+
 // Use an image generation model
 final imageModel = GeminiChatModel(
   config: GeminiConfig(
@@ -181,32 +226,33 @@ final imageModel = GeminiChatModel(
 
 final response = await imageModel.generate(
   [Message.user('Generate an image of a red circle on white background')],
-  options: const ChatModelOptions(
-    extra: {
-      'responseModalities': ['TEXT', 'IMAGE'], // Enable image output
-    },
-  ),
+  options: GeminiRequestOptions(
+    responseModalities: const [
+      GeminiResponseModality.text,
+      GeminiResponseModality.image, // Enable image output
+    ],
+    imageConfig: const GeminiImageConfig(aspectRatio: '1:1'),
+  ).toOptions(),
 );
 
-// Access generated image
-if (response.assistantGenMultiContent != null) {
-  for (final part in response.assistantGenMultiContent!) {
-    if (part.type == ChatMessagePartType.imageUrl) {
-      final dataUrl = part.image?.url; // data:image/png;base64,...
-      // Decode and save the image
-      final base64Data = dataUrl!.split(',')[1];
-      final bytes = base64Decode(base64Data);
-      await File('output.png').writeAsBytes(bytes);
-    }
+// Generated images are output parts holding a data:image/png;base64 URL
+for (final part in response.assistantGenMultiContent ?? <MessageOutputPart>[]) {
+  if (part.type == ChatMessagePartType.imageUrl) {
+    final dataUrl = part.image!.url!;
+    final bytes = base64Decode(dataUrl.substring(dataUrl.indexOf(',') + 1));
+    await File('output.png').writeAsBytes(bytes);
   }
 }
 ```
 
 ### Imagen Image Generation
 
-For dedicated image generation, use Google's Imagen models which provide higher quality and more control.
+For dedicated image generation, use Google's Imagen models. A model name starting with `imagen-` sends the text of the last user message to the `:predict` endpoint. Its settings are read from `ChatModelOptions.extra` (`GeminiRequestOptions` and the sampling settings do not apply), and only `generate` supports it.
 
 ```dart
+import 'dart:convert';
+import 'dart:io';
+
 // Available Imagen models:
 // - imagen-4.0-generate-001 (Standard)
 // - imagen-4.0-ultra-generate-001 (Ultra - higher quality)
@@ -223,47 +269,50 @@ final imagenModel = GeminiChatModel(
 final response = await imagenModel.generate([
   Message.user('A serene mountain landscape at sunset with snow-capped peaks'),
 ]);
+print(response.content); // Generated <n> image(s) for: "<prompt>"
 
 // With options
 final response2 = await imagenModel.generate(
   [Message.user('A cute robot playing with a kitten')],
   options: const ChatModelOptions(
     extra: {
-      'numberOfImages': 2,          // 1-4 images
-      'aspectRatio': '16:9',        // '1:1', '3:4', '4:3', '9:16', '16:9'
+      'numberOfImages': 2, // 1-4 images (sent as sampleCount)
+      'aspectRatio': '16:9', // '1:1', '3:4', '4:3', '9:16', '16:9'
       'personGeneration': 'dont_allow', // 'dont_allow', 'allow_adult', 'allow_all'
-      'imageSize': '2K',            // '1K', '2K' (Standard/Ultra only)
+      'imageSize': '2K', // '1K', '2K' (Standard/Ultra only)
     },
   ),
 );
 
-// Access generated images
-if (response.assistantGenMultiContent != null) {
-  for (final part in response.assistantGenMultiContent!) {
-    if (part.type == ChatMessagePartType.imageUrl) {
-      final dataUrl = part.image?.url; // data:image/png;base64,...
-      final base64Data = dataUrl!.split(',')[1];
-      final bytes = base64Decode(base64Data);
-      await File('generated_image.png').writeAsBytes(bytes);
-    }
+// Generated images are output parts holding a data:image/png;base64 URL
+var index = 0;
+for (final part in response2.assistantGenMultiContent ?? <MessageOutputPart>[]) {
+  if (part.type == ChatMessagePartType.imageUrl) {
+    final dataUrl = part.image!.url!;
+    final bytes = base64Decode(dataUrl.substring(dataUrl.indexOf(',') + 1));
+    await File('generated_image_${index++}.png').writeAsBytes(bytes);
   }
 }
 ```
 
+The Imagen path also passes on `safetyFilterLevel` and `addWatermark` from `extra`.
+
 **Imagen vs Gemini Image Generation:**
 
-| Feature | Gemini (gemini-*-image) | Imagen (imagen-*) |
-|---------|------------------------|-------------------|
-| API Endpoint | :generateContent | :predict |
-| Conversation | Yes (chat context) | No (single prompt) |
-| Image Count | 1 | 1-4 |
-| Aspect Ratios | Limited | 5 options |
-| Quality Control | Basic | Advanced |
-| Person Generation | No control | Configurable |
+| Feature | Gemini (`gemini-*-image`) | Imagen (`imagen-*`) |
+|---------|---------------------------|---------------------|
+| API endpoint | `:generateContent` (and `:streamGenerateContent`) | `:predict`, `generate` only |
+| Conversation | Yes (chat context) | No (the last user message is the prompt) |
+| Settings | `GeminiRequestOptions` / `GeminiConfig` (`responseModalities`, `imageConfig`) | `ChatModelOptions.extra` |
+| Images per call | As the model answers | `numberOfImages`, 1-4 |
+| Aspect ratios | `GeminiImageConfig.aspectRatio`: `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `9:16`, `16:9`, `21:9` | `1:1`, `3:4`, `4:3`, `9:16`, `16:9` |
+| Person generation | No control | `personGeneration` |
 
 ### Tool/Function Calling
 
 ```dart
+import 'dart:convert';
+
 // Define tools
 final weatherTool = ToolInfo.simple(
   name: 'get_weather',
@@ -280,117 +329,157 @@ final weatherTool = ToolInfo.simple(
   required: ['location'],
 );
 
-// Bind tools to model
+// Bind tools to model (the tool choice becomes ToolChoice.allowed)
 final modelWithTools = model.withTools([weatherTool]);
 
 // Generate - model may request tool calls
-final response = await modelWithTools.generate([
-  Message.user('What is the weather in Tokyo?'),
-]);
+final question = Message.user('What is the weather in Tokyo?');
+final response = await modelWithTools.generate([question]);
 
 // Check if model wants to call tools
-if (response.toolCalls != null && response.toolCalls!.isNotEmpty) {
-  for (final toolCall in response.toolCalls!) {
+final toolCalls = response.toolCalls ?? <ToolCall>[];
+if (toolCalls.isNotEmpty) {
+  final toolResults = <Message>[];
+  for (final toolCall in toolCalls) {
     print('Tool: ${toolCall.function.name}');
     print('Arguments: ${toolCall.function.arguments}');
 
-    // Execute the tool (your implementation)
-    final result = await executeWeatherTool(
-      jsonDecode(toolCall.function.arguments),
-    );
+    // Execute the tool (call your weather service here)
+    final args =
+        jsonDecode(toolCall.function.arguments) as Map<String, Object?>;
+    final result = {'location': args['location'], 'temperature': 18};
 
-    // Continue conversation with tool result
-    final finalResponse = await modelWithTools.generate([
-      Message.user('What is the weather in Tokyo?'),
-      response, // Assistant message with tool calls
-      Message(
-        role: RoleType.tool,
+    toolResults.add(
+      Message.tool(
         content: jsonEncode(result),
         toolCallId: toolCall.id,
-        toolName: toolCall.function.name,
+        toolName: toolCall.function.name, // Gemini matches results by name
       ),
-    ]);
-
-    print(finalResponse.content);
+    );
   }
+
+  // Continue the conversation with one result per tool call
+  final finalResponse = await modelWithTools.generate([
+    question,
+    response, // Assistant message with tool calls
+    ...toolResults,
+  ]);
+
+  print(finalResponse.content);
 }
 ```
 
+To run the tools automatically, give them to a `ToolsNode` (compose) or to the ADK `ChatModelAgent`.
+
 ### Tool Choice Control
+
+`ToolChoice` has three values: `forbidden` (Gemini `NONE`), `allowed` (`AUTO`) and `forced` (`ANY`). `allowedToolNames` narrows the tools the model may call (with `allowed` the mode becomes `VALIDATED`; with `forced` it stays `ANY`).
 
 ```dart
 // Force tool use
 final response = await modelWithTools.generate(
   messages,
-  options: ChatModelOptions(
-    toolChoice: ToolChoice.forced, // Must use a tool
+  options: const ChatModelOptions(
+    toolChoice: ToolChoice.forced, // ANY - must use a tool
   ),
 );
 
-// Allow but don't require tools
+// Force one particular tool
 final response2 = await modelWithTools.generate(
   messages,
-  options: ChatModelOptions(
+  options: const ChatModelOptions(
+    toolChoice: ToolChoice.forced,
+    allowedToolNames: ['get_weather'], // must be a bound tool
+  ),
+);
+
+// Allow but don't require tools (the default with bound tools)
+final response3 = await modelWithTools.generate(
+  messages,
+  options: const ChatModelOptions(
     toolChoice: ToolChoice.allowed, // AUTO - model decides
   ),
 );
 
 // Disable tools
-final response3 = await modelWithTools.generate(
+final response4 = await modelWithTools.generate(
   messages,
-  options: ChatModelOptions(
+  options: const ChatModelOptions(
     toolChoice: ToolChoice.forbidden, // NONE - no tool use
   ),
 );
 ```
 
-### Using with Agent (ReAct Pattern)
+### Using with the legacy `Agent` (ReAct loop)
+
+`Agent` and `AgentConfig` of the umbrella library are the ReAct loop threepio had before the Eino port; they still work. Its Eino-shaped replacement is `ChatModelAgent` with `Runner` from `package:threepio_core/adk.dart` (see [MIGRATION.md](MIGRATION.md)), which takes the same tools.
 
 ```dart
-// Create a tool that can be executed
+import 'dart:convert';
+
+import 'package:threepio_core/threepio_core.dart';
+
+// A tool the model can call
 class CalculatorTool extends InvokableTool {
   @override
   Future<ToolInfo> info() async => ToolInfo.simple(
-    name: 'calculate',
-    description: 'Perform arithmetic calculations',
-    properties: {
-      'expression': JSONSchemaProperty.string(
-        description: 'Math expression like "5 + 3"',
-      ),
-    },
-    required: ['expression'],
-  );
+        name: 'calculate',
+        description: 'Perform arithmetic calculations',
+        properties: {
+          'expression': JSONSchemaProperty.string(
+            description: 'Math expression like "5 + 3"',
+          ),
+        },
+        required: ['expression'],
+      );
 
   @override
-  Future<String> run(String argumentsJson) async {
-    final args = jsonDecode(argumentsJson) as Map<String, dynamic>;
-    final expr = args['expression'] as String;
-    // Parse and evaluate expression
-    final result = evaluateExpression(expr);
+  Future<String> invokableRun(
+    RunContext ctx,
+    String argumentsJson, {
+    ToolOptions? options,
+  }) async {
+    final args = jsonDecode(argumentsJson) as Map<String, Object?>;
+    final expression = args['expression']! as String;
+    // Two operands and one operator are enough for this example
+    final match = RegExp(r'^\s*(-?[\d.]+)\s*([-+*/])\s*(-?[\d.]+)\s*$')
+        .firstMatch(expression);
+    if (match == null) return 'Cannot evaluate "$expression"';
+    final a = double.parse(match.group(1)!);
+    final b = double.parse(match.group(3)!);
+    final result = switch (match.group(2)) {
+      '+' => a + b,
+      '-' => a - b,
+      '*' => a * b,
+      _ => a / b,
+    };
     return result.toString();
   }
 }
 
-// Create agent
-final registry = ToolRegistry();
-registry.register(CalculatorTool());
+Future<void> runCalculatorAgent(ToolCallingChatModel model) async {
+  // register takes effect at once (await registry.findTool(name) to look
+  // a tool up by name)
+  final registry = ToolRegistry();
+  registry.register(CalculatorTool());
 
-final agent = Agent(
-  model: model,
-  toolRegistry: registry,
-  config: AgentConfig(
-    maxIterations: 10,
-    maxToolCalls: 20,
-  ),
-);
+  final agent = Agent(
+    model: model,
+    toolRegistry: registry,
+    config: const AgentConfig(
+      maxIterations: 5, // model calls (default 10)
+      maxToolCalls: 10, // tool calls in all (default 20)
+    ),
+  );
 
-// Run agent
-final response = await agent.run([
-  Message.system('You are a helpful assistant with a calculator.'),
-  Message.user('What is 25 * 4?'),
-]);
+  // Run agent
+  final response = await agent.run([
+    Message.system('You are a helpful assistant with a calculator.'),
+    Message.user('What is 25 * 4?'),
+  ]);
 
-print(response.content); // "25 multiplied by 4 is 100."
+  print(response.content); // "25 multiplied by 4 is 100."
+}
 ```
 
 ### Error Handling
@@ -398,162 +487,179 @@ print(response.content); // "25 multiplied by 4 is 100."
 ```dart
 try {
   final response = await model.generate(messages);
+  print(response.content);
 } on GeminiException catch (e) {
   print('API Error: ${e.message}');
   print('Status Code: ${e.statusCode}');
   print('Error Code: ${e.code}');
   print('Status: ${e.status}');
 
-  // Handle rate limiting
-  if (e.statusCode == 429) {
-    // Wait and retry
+  // 408, 429, 5xx, RESOURCE_EXHAUSTED, UNAVAILABLE, DEADLINE_EXCEEDED,
+  // timeouts and transport failures (not on the Imagen path)
+  if (e.isRetryable) {
+    print('Worth retrying');
   }
-} on GeminiParseException catch (e) {
-  // Response parsing error
-  if (e.blockReason != null) {
-    print('Content blocked: ${e.blockReason}');
-  }
+} on CancelledException {
+  print('The call was cancelled');
+} on ThreepioException catch (e) {
+  // A prompt the safety filter blocked: "Content blocked: <reason>"
+  print('No answer: ${e.message}');
 }
+
+// Or let RetryingChatModel retry the retryable failures with back-off
+final resilient = RetryingChatModel(model, maxAttempts: 5);
+final reply = await resilient.generate(messages);
+print(reply.content);
 ```
+
+`GeminiException` implements `ChatModelException` (`isRetryable`, `isModelUnavailable`), which `RetryingChatModel` reads: it retries `isRetryable` errors unless they are `isModelUnavailable`. `FailoverChatModel` switches to its fallback on any error except a cancellation, unless you pass a `shouldFailover`. A stream throws HTTP and transport failures from `stream()` itself; an error chunk, a blocked prompt or a malformed chunk ends the reader with the exception.
 
 ---
 
 ## 2. Agent Development Kit (ADK)
 
-The ADK provides a framework for building sophisticated AI agents with different architectures: ReAct, Plan-Execute, Supervisor, and Workflow patterns.
+This section describes the umbrella library's older agents: the event-streaming ReAct agent `LegacyChatModelAgent`, `PlanExecuteAgent`, `SupervisorAgent` and `WorkflowAgent`. They implement `BaseAgent`: `run` returns a `StreamReader<AgentEvent>` at once and runs the agent in the background, `invoke` waits for the final message. They still work in 0.9; new code should not start with them.
 
-### ChatModelAgent (ReAct Pattern)
+> **Eino-shaped equivalent:** `package:threepio_core/adk.dart`, imported `as adk` next to the umbrella: `adk.ChatModelAgent` with `adk.Runner` for the ReAct agent, `adk.PlanExecute` for plan-execute-replan, `adk.DeepAgent` (which delegates to sub-agents) in place of the supervisor, `adk.AgentTool` for an agent used as a tool. Eino's workflow agents are not ported (Eino marks them not recommended), so `WorkflowAgent` has no direct replacement: run agents from the nodes of a compose `Graph` or `Workflow`, or keep it. See [MIGRATION.md](MIGRATION.md).
 
-The simplest agent type that reasons and acts in a loop.
+The ReAct agent that earlier versions of this page called `ChatModelAgent` is `LegacyChatModelAgent`, configured with `LegacyChatModelAgentConfig`: in the umbrella library, `ChatModelAgent` and `ChatModelAgentConfig` are the Kortney runtime, which runs through its `Runner`.
+
+### LegacyChatModelAgent (ReAct Pattern)
+
+The simplest agent type: it calls the model, runs the tools the model asks for, and repeats until the model answers without tool calls.
 
 ```dart
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:threepio_core/threepio_core.dart';
 
-// Create a tool class
+// A tool the agent can call.
 class SearchTool extends InvokableTool {
   @override
   Future<ToolInfo> info() async => ToolInfo.simple(
-    name: 'search',
-    description: 'Search the web for information',
-    properties: {
-      'query': JSONSchemaProperty.string(description: 'Search query'),
-    },
-    required: ['query'],
-  );
+        name: 'search',
+        description: 'Search the web for information',
+        properties: {
+          'query': JSONSchemaProperty.string(description: 'Search query'),
+        },
+        required: ['query'],
+      );
 
   @override
   Future<String> run(String argumentsJson) async {
     final args = jsonDecode(argumentsJson) as Map<String, dynamic>;
     final query = args['query'] as String;
-    return await performSearch(query);
+    return performSearch(query); // your search backend
   }
 }
 
-// Create tool registry and register tools
-final registry = ToolRegistry();
-registry.register(SearchTool());
+Future<void> runResearchAgent(ToolCallingChatModel geminiModel) async {
+  final registry = ToolRegistry();
+  registry.register(SearchTool());
 
-// Create agent
-final agent = ChatModelAgent(
-  name: 'research-agent',
-  description: 'An agent that researches topics',
-  model: geminiModel,
-  toolRegistry: registry,
-  systemPrompt: 'You are a helpful research assistant.',
-  config: const ChatModelAgentConfig(
-    maxIterations: 10,
-    maxToolCalls: 50,
-    emitPartialOutputs: true,
-  ),
-);
+  final agent = LegacyChatModelAgent(
+    name: 'research-agent',
+    description: 'An agent that researches topics',
+    model: geminiModel,
+    toolRegistry: registry,
+    systemPrompt: 'You are a helpful research assistant.',
+    // Defaults: 10 iterations, 50 tool calls, partial outputs on
+    config: const LegacyChatModelAgentConfig(
+      maxIterations: 5,
+      maxToolCalls: 20,
+    ),
+  );
 
-// Run with event streaming
-final reader = await agent.run([
-  Message.user('Research the latest developments in quantum computing'),
-]);
+  // Run with event streaming
+  final reader = await agent.run([
+    Message.user('Research the latest developments in quantum computing'),
+  ]);
 
-try {
-  while (true) {
-    final event = await reader.recv();
-    switch (event) {
-      case AgentRunStartEvent():
-        print('Agent started');
-      case AgentActionEvent(action: final action):
-        if (action is ToolCallAction) {
-          print('Calling tool: ${action.toolName}');
-        }
-      case ToolResultEvent(result: final result):
-        print('Tool result: $result');
-      case AgentOutputEvent(message: final message, isPartial: final isPartial):
-        if (!isPartial) {
+  try {
+    while (true) {
+      final event = await reader.recv();
+      switch (event) {
+        case AgentRunStartEvent():
+          print('Agent started');
+        case AgentActionEvent(action: ToolCallAction(:final toolName)):
+          print('Calling tool: $toolName');
+        case ToolResultEvent(:final result):
+          print('Tool result: $result');
+        case AgentOutputEvent(:final message, isPartial: true):
+          stdout.write(message.content); // partial output
+        case AgentOutputEvent(:final message):
           print('Final answer: ${message.content}');
-        } else {
-          stdout.write(message.content); // Partial output
-        }
-      case AgentErrorEvent(error: final error):
-        print('Error: $error');
-      case AgentRunEndEvent():
-        print('Agent completed');
+        case AgentErrorEvent(:final error):
+          print('Error: $error');
+        case AgentRunEndEvent():
+          print('Agent completed');
+        case _:
+          break;
+      }
     }
+  } on StreamEOFException {
+    // Stream complete
+  } finally {
+    await reader.close();
   }
-} on StreamEOFException {
-  // Stream complete
-}
-await reader.close();
 
-// Or get final result directly
-final result = await agent.invoke([
-  Message.user('What is 2 + 2?'),
-]);
-print(result.content);
+  // Or get the final result directly
+  final result = await agent.invoke([
+    Message.user('What is 2 + 2?'),
+  ]);
+  print(result.content);
+}
 ```
+
+`AgentEvent` is a sealed class with more subclasses than the agent emits, so a `switch` over it needs the `case _` line.
 
 ### PlanExecuteAgent
 
-Creates a plan first, then executes each step.
+Asks a planner model for a plan, then runs each step with the executor agent the step names, and replans when a step fails. A step fails only when its executor's `invoke` throws (no executor found, a cancellation, an agent of your own); the agents on this page never throw from `invoke` (see [Error Handling](#error-handling-1)), so their failures come back as an empty step result, not as a replan.
 
 ```dart
 final planAgent = PlanExecuteAgent(
   name: 'plan-execute-agent',
-  model: geminiModel,
-  plannerModel: geminiModel, // Can use a different model for planning
+  description: 'Plans a task, then runs each step with an executor',
+  plannerModel: geminiModel, // any BaseChatModel
   executors: {
     'search': searchAgent,
     'analyze': analyzeAgent,
     'summarize': summaryAgent,
   },
-  plannerSystemPrompt: '''
-You are a planning agent. Create step-by-step plans to accomplish tasks.
-Available executors: search, analyze, summarize
-''',
-  config: PlanExecuteConfig(
-    maxReplanAttempts: 3,
-    replanOnError: true,
-    replanOnFeedback: true,
-    maxStepsPerPlan: 10,
+  // Replans after a failed step by default (replanOnError)
+  config: const PlanExecuteConfig(
+    maxReplanAttempts: 2,
+    maxStepsPerPlan: 5,
   ),
 );
 
-final events = planAgent.run([
+final reader = await planAgent.run([
   Message.user('Research and summarize the top 3 AI trends of 2024'),
 ]);
 
-await for (final event in events) {
-  if (event is AgentStateUpdateEvent) {
-    final plan = event.state['currentPlan'] as ExecutionPlan?;
-    if (plan != null) {
-      print('Plan created with ${plan.steps.length} steps:');
-      for (final step in plan.steps) {
-        print('  - ${step.description} (executor: ${step.executorName})');
-      }
-    }
+await for (final event in reader.asStream()) {
+  switch (event) {
+    case AgentStateUpdateEvent(:final stateName, :final newValue):
+      print('$stateName: $newValue'); // phase: planning, current_step: step_1, …
+    case AgentActionEvent(action: ThinkAction(:final thought)):
+      print(thought); // "Created plan with 3 steps: …"
+    case AgentOutputEvent(:final message):
+      print('Step result: ${message.content}');
+    case AgentRunEndEvent(:final outputMessage):
+      print('Result: ${outputMessage.content}');
+    case _:
+      break;
   }
 }
 ```
 
+Without `plannerSystemPrompt`, the planner is told the executor names and asked for a JSON plan whose steps name their executor (`"agent"`). A custom `plannerSystemPrompt` replaces that text, so to route steps to executors it has to ask for the same JSON (any other reply becomes steps from its numbered lines, or one step of the whole reply, all sent to `defaultExecutor`); a step that names no known executor goes to `defaultExecutor`, and fails (which makes the agent replan) when there is none. `maxStepsPerPlan` is only stated in the default prompt, not enforced, and `replanOnFeedback` is not read in 0.9.
+
 ### SupervisorAgent
 
-Delegates tasks to worker agents.
+Delegates tasks to worker agents. The supervisor's model gets one tool per worker and a tool to finish; `maxDelegations` bounds the number of worker calls (checked before each model call); reaching it ends the run with an `AgentErrorEvent`.
 
 ```dart
 // Create tool registries for workers
@@ -563,7 +669,7 @@ researchRegistry.register(SearchTool());
 final emptyRegistry = ToolRegistry(); // For agents without tools
 
 // Create worker agents
-final researchWorker = ChatModelAgent(
+final researchWorker = LegacyChatModelAgent(
   name: 'researcher',
   description: 'A research specialist',
   model: geminiModel,
@@ -571,7 +677,7 @@ final researchWorker = ChatModelAgent(
   systemPrompt: 'You are a research specialist.',
 );
 
-final writerWorker = ChatModelAgent(
+final writerWorker = LegacyChatModelAgent(
   name: 'writer',
   description: 'A professional writer',
   model: geminiModel,
@@ -582,6 +688,7 @@ final writerWorker = ChatModelAgent(
 // Create supervisor
 final supervisor = SupervisorAgent(
   name: 'project-manager',
+  description: 'Coordinates research and writing',
   model: geminiModel,
   workers: {
     'researcher': researchWorker,
@@ -592,25 +699,26 @@ You are a project manager. Delegate tasks to your team:
 - researcher: for finding information
 - writer: for creating content
 ''',
-  config: SupervisorConfig(
-    maxDelegations: 10,
-    allowDirectResponse: true,
-    trackHistory: true,
+  // allowDirectResponse and trackHistory are on by default
+  config: const SupervisorConfig(
+    maxDelegations: 5,
   ),
 );
 
 final result = await supervisor.invoke([
   Message.user('Create a blog post about renewable energy'),
 ]);
+print(result.content);
 ```
 
 ### WorkflowAgent
 
-Orchestrates a fixed sequence of steps.
+Runs a fixed sequence of agents.
 
 ```dart
 final workflow = WorkflowAgent(
   name: 'content-pipeline',
+  description: 'Research, outline, write and review an article',
   steps: [
     WorkflowStep(
       name: 'research',
@@ -629,47 +737,56 @@ final workflow = WorkflowAgent(
     WorkflowStep(
       name: 'write',
       agent: writerAgent,
-      condition: (state) => state['outline'] != null,
+      // Skipped when the outline step produced no text
+      condition: (messages) => messages.last.content.isNotEmpty,
     ),
     WorkflowStep(
       name: 'review',
       agent: reviewAgent,
     ),
   ],
-  config: WorkflowConfig(
-    mode: WorkflowMode.sequential,
-    stopOnFirstError: false,
-  ),
+  // WorkflowConfig(mode: WorkflowMode.sequential) is the default
 );
 
 // Execute workflow
-final events = workflow.run([
+final result = await workflow.invoke([
   Message.user('Write an article about climate change'),
 ]);
+print(result.content);
 ```
+
+Each step gets the messages so far (the input followed by the earlier steps' outputs), or what its `inputTransform` makes of them; `condition` sees the same list. `outputTransform` replaces that list with what it returns. The workflow's result is the last step's output.
 
 ### Parallel Workflow
 
 ```dart
 final parallelWorkflow = WorkflowAgent(
   name: 'parallel-research',
+  description: 'Searches three sources at once',
   steps: [
     WorkflowStep(name: 'search-web', agent: webSearchAgent),
     WorkflowStep(name: 'search-papers', agent: paperSearchAgent),
     WorkflowStep(name: 'search-news', agent: newsSearchAgent),
   ],
-  config: WorkflowConfig(
+  config: const WorkflowConfig(
     mode: WorkflowMode.parallel,
-    parallelLimit: 3, // Max concurrent executions
   ),
 );
+
+final combined = await parallelWorkflow.invoke([
+  Message.user('Recent results on solid-state batteries'),
+]);
+print(combined.content); // "## search-web\n…\n\n## search-papers\n…"
 ```
+
+Every step gets the workflow's input; the result is one assistant message with a `## <step name>` section per step. In 0.9 `WorkflowConfig.parallelLimit` does not limit how many steps run at once (all start together), and `stopOnFirstError` has no effect: a failing step fails the run either way, once the steps running with it have ended. A step fails only when its agent's `invoke` throws, which the agents on this page do not do: their failures come back as an empty section.
 
 ### Loop Workflow
 
 ```dart
 final iterativeWorkflow = WorkflowAgent(
   name: 'refinement-loop',
+  description: 'Generates, evaluates and refines a draft',
   steps: [
     WorkflowStep(name: 'generate', agent: generatorAgent),
     WorkflowStep(name: 'evaluate', agent: evaluatorAgent),
@@ -678,122 +795,108 @@ final iterativeWorkflow = WorkflowAgent(
   config: WorkflowConfig(
     mode: WorkflowMode.loop,
     maxLoopIterations: 5,
-    loopCondition: (state) {
-      final score = state['quality_score'] as double?;
-      return score == null || score < 0.9; // Continue if score < 90%
-    },
+    // Called after each pass with the last step's output; true runs another pass.
+    loopCondition: (result, iteration) =>
+        !result.content.contains('APPROVED'),
   ),
 );
 ```
+
+Without a `loopCondition` the steps run once.
 
 ### Wrapping Agents as Tools
 
 ```dart
 // Create a specialized agent
-final factChecker = ChatModelAgent(
+final factChecker = LegacyChatModelAgent(
   name: 'fact-checker',
+  description: 'Verifies statements',
   model: geminiModel,
+  toolRegistry: ToolRegistry(),
   systemPrompt: 'You verify facts and return true/false with explanation.',
 );
 
 // Wrap as a tool
 final factCheckTool = factChecker.asTool(
-  name: 'verify_fact',
-  description: 'Verify if a statement is factually correct',
+  toolName: 'verify_fact',
+  toolDescription: 'Verify if a statement is factually correct',
   inputParameter: 'statement',
 );
 
 // Use in another agent
-final mainAgent = ChatModelAgent(
+final mainAgent = LegacyChatModelAgent(
   name: 'assistant',
+  description: 'A general assistant',
   model: geminiModel,
-  tools: [factCheckTool, searchTool],
+  toolRegistry: ToolRegistry(tools: [factCheckTool, searchTool]),
 );
+
+final answer = await mainAgent.invoke([
+  Message.user('Is the Great Wall of China visible from space?'),
+]);
+print(answer.content);
 ```
+
+`asTool` returns the umbrella's `AgentTool` (`AgentTool(agent: factChecker, toolName: …, toolDescription: …)` does the same). The tool's one argument is `inputParameter` (default `query`); the agent receives it as a user message, and the tool returns the agent's final text.
 
 ### Agent Run Context
 
 ```dart
 final context = AgentRunContext(
   runId: 'run-123',
-  maxIterations: 20,
-  timeout: Duration(minutes: 5),
   metadata: {'user_id': 'user-456'},
   onEvent: (event) {
-    // Log all events
+    // LegacyChatModelAgent reports its start and end events here
     print('Event: ${event.eventType}');
   },
   shouldCancel: () {
-    // Check for cancellation
+    // Polled between steps; when and how often depends on the agent
     return userCancelledRequest;
   },
 );
 
-final events = agent.run(messages, context: context);
+final result = await agent.invoke(messages, context: context);
+print(result.content);
 ```
+
+Steps of a workflow, plan or supervisor get a child of the context (`context.child(...)`) with the same `shouldCancel`. `AgentRunContext` also has `maxIterations` and `timeout`; no agent reads them in 0.9, so set limits in the agent's own configuration.
 
 ### Error Handling
 
+These agents do not throw what goes wrong during a run. They send an `AgentErrorEvent` and end the stream; `invoke` then returns the last complete output, or an empty assistant message. Read the events to find out:
+
 ```dart
-try {
-  final result = await agent.invoke(messages);
-} on MaxIterationsExceededException catch (e) {
-  print('Agent hit iteration limit: ${e.maxIterations}');
-} on ToolExecutionException catch (e) {
-  print('Tool "${e.toolName}" failed: ${e.message}');
-} on AgentTimeoutException catch (e) {
-  print('Agent timed out after ${e.timeout}');
-} on AgentCancelledException {
-  print('Agent was cancelled');
-} on PlanningException catch (e) {
-  print('Planning failed: ${e.message}');
+final reader = await agent.run(messages);
+
+await for (final event in reader.asStream()) {
+  if (event is AgentErrorEvent) {
+    // isRecoverable: the agent goes on (a plan-execute agent replans)
+    final outcome = event.isRecoverable ? 'Recovered' : 'Failed';
+    print('$outcome: ${event.error}');
+  }
 }
 ```
+
+`error` is the text of the exception, for example `PlanningException: No executor found for agent: default (agent: …) [run: …]`; a cancellation through `shouldCancel` reads `AgentCancelledException: …`. The exception classes (`ToolExecutionException`, `PlanningException`, `WorkflowException`, `AgentCancelledException`, …) are exported, but no agent rethrows them out of `run` or `invoke`.
 
 ---
 
 ## 3. Checkpoint & Resume System
 
-The checkpoint system enables saving and resuming graph execution state, supporting human-in-the-loop workflows and error recovery.
+This section is about the state graph that predates the 0.9 port (`StateGraph`, `GraphState`, `CheckpointConfig`). It still works.
 
-### Basic Checkpoint Configuration
+> **Eino-shaped equivalent:** a compose `Graph` compiled with a `CheckpointStore` (`compose.dart`; `FileCheckpointStore` is in `io.dart`): a node stops the run with `interrupt` or `statefulInterrupt`, the run ends with a `GraphInterruptedException`, and invoking the graph again with the same checkpoint id resumes it. See [GRAPHS.md](GRAPHS.md) and [MIGRATION.md](MIGRATION.md).
+
+Since 0.9 the umbrella library no longer exports the five checkpoint classes of the state graph whose names the compose port uses: `CheckpointStore`, `CheckpointSerializer`, `JsonCheckpointSerializer`, `InMemoryCheckpointStore` and `FileCheckpointStore`. Import them from `package:threepio_core/legacy_graph.dart`, with a prefix when the umbrella is imported too. Everything else used below (`StateGraph`, `GraphState`, `CheckpointConfig`, `CheckpointStoreConfig`, `Checkpoint`, `GraphInterruptException`, `HumanInputNode`, `HumanInputRequired`, `END`) is in the umbrella as before.
+
+### Defining the State
+
+The examples of this section share this state.
 
 ```dart
 import 'package:threepio_core/threepio_core.dart';
 
-// Configure checkpointing
-final checkpointConfig = CheckpointConfig(
-  interruptBefore: ['human_review'],  // Pause before these nodes
-  interruptAfter: ['generate_report'], // Pause after these nodes
-  checkpointEveryNode: true,          // Save after each step
-  checkpointOnError: true,            // Save on errors
-  autoSave: true,                     // Auto-save to store
-);
-
-// Create checkpoint store
-final store = InMemoryCheckpointStore<MyState>();
-
-// Or use file-based persistence
-final fileStore = FileCheckpointStore<MyState>(
-  directory: '/path/to/checkpoints',
-  config: CheckpointStoreConfig(
-    maxCheckpointsPerThread: 100,
-    ttl: Duration(days: 7),
-    compressData: true,
-  ),
-);
-```
-
-### Creating a Checkpointable Graph
-
-```dart
-// Define your state
 class WorkflowState extends GraphState {
-  final String? document;
-  final String? analysis;
-  final String? review;
-  final bool approved;
-
   WorkflowState({
     this.document,
     this.analysis,
@@ -801,159 +904,189 @@ class WorkflowState extends GraphState {
     this.approved = false,
   });
 
+  factory WorkflowState.fromMap(Map<String, dynamic> map) => WorkflowState(
+        document: map['document'] as String?,
+        analysis: map['analysis'] as String?,
+        review: map['review'] as String?,
+        approved: map['approved'] as bool? ?? false,
+      );
+
+  final String? document;
+  final String? analysis;
+  final String? review;
+  final bool approved;
+
   @override
   WorkflowState copyWith({
     String? document,
     String? analysis,
     String? review,
     bool? approved,
-  }) => WorkflowState(
-    document: document ?? this.document,
-    analysis: analysis ?? this.analysis,
-    review: review ?? this.review,
-    approved: approved ?? this.approved,
-  );
+  }) =>
+      WorkflowState(
+        document: document ?? this.document,
+        analysis: analysis ?? this.analysis,
+        review: review ?? this.review,
+        approved: approved ?? this.approved,
+      );
 
-  @override
   Map<String, dynamic> toMap() => {
-    'document': document,
-    'analysis': analysis,
-    'review': review,
-    'approved': approved,
-  };
-
-  static WorkflowState fromMap(Map<String, dynamic> map) => WorkflowState(
-    document: map['document'],
-    analysis: map['analysis'],
-    review: map['review'],
-    approved: map['approved'] ?? false,
-  );
+        'document': document,
+        'analysis': analysis,
+        'review': review,
+        'approved': approved,
+      };
 }
+```
 
-// Create graph with checkpointing
-final graph = StateGraph<WorkflowState>(
-  checkpointConfig: CheckpointConfig(
-    interruptBefore: ['human_review'],
-    autoSave: true,
+### Basic Checkpoint Configuration
+
+```dart
+import 'package:threepio_core/legacy_graph.dart' as legacy;
+import 'package:threepio_core/threepio_core.dart';
+
+// Configure checkpointing
+const checkpointConfig = CheckpointConfig(
+  interruptAfter: ['analyze'], // Pause after these nodes
+  checkpointEveryNode: true,   // Save after each step
+  autoSave: true,              // Save interrupt checkpoints to the store
+  // checkpointOnError (save when a node throws) is on by default
+);
+
+// Create checkpoint store
+final store = legacy.InMemoryCheckpointStore<WorkflowState>();
+
+// Or use file-based persistence
+final fileStore = legacy.FileCheckpointStore<WorkflowState>(
+  directory: '/path/to/checkpoints',
+  serializer: legacy.JsonCheckpointSerializer<WorkflowState>(
+    stateToJson: (state) => state.toMap(),
+    stateFromJson: WorkflowState.fromMap,
   ),
-  checkpointStore: store,
+  config: const CheckpointStoreConfig(
+    maxCheckpointsPerThread: 50, // oldest are dropped; default 100
+    compressData: true, // gzip; FileCheckpointStore only
+  ),
 );
+```
 
-// Add nodes
-graph.addNode('generate', (state) async {
-  final doc = await generateDocument();
-  return state.copyWith(document: doc);
-});
+`CheckpointConfig` also takes `interruptBefore`. In 0.9 a checkpoint taken by `interruptBefore` cannot be resumed with `invoke(checkpointId: …)`: the resumed run stops before the same node again. Pause with `interruptAfter` on the node before it, or use a human input node (below). `CheckpointStoreConfig.ttl` is not applied by either store.
 
-graph.addNode('analyze', (state) async {
-  final analysis = await analyzeDocument(state.document!);
-  return state.copyWith(analysis: analysis);
-});
+### Creating a Checkpointable Graph
 
-graph.addNode('human_review', (state) async {
-  // This node will pause for human input
-  return state;
-});
+```dart
+import 'package:threepio_core/legacy_graph.dart' as legacy;
+import 'package:threepio_core/threepio_core.dart';
 
-graph.addNode('finalize', (state) async {
-  if (state.approved) {
+StateGraph<WorkflowState> buildReviewGraph(
+  legacy.CheckpointStore<WorkflowState> store,
+) {
+  final graph = StateGraph<WorkflowState>(
+    checkpointConfig: const CheckpointConfig(
+      interruptAfter: ['analyze'], // pause once the analysis is ready
+      autoSave: true,
+    ),
+    checkpointStore: store,
+  );
+
+  graph.addNode('generate', (state) async {
+    final doc = await generateDocument();
+    return state.copyWith(document: doc);
+  });
+
+  graph.addNode('analyze', (state) async {
+    final analysis = await analyzeDocument(state.document!);
+    return state.copyWith(analysis: analysis);
+  });
+
+  // Stops the run until someone approves or rejects (see below)
+  graph.addHumanInputNode(
+    HumanInputNode<WorkflowState, bool>(
+      name: 'human_review',
+      prompt: (state) => 'Approve this analysis? ${state.analysis}',
+      processInput: (state, approved) => state.copyWith(approved: approved),
+    ),
+  );
+
+  graph.addNode('finalize', (state) async {
     return state.copyWith(review: 'Approved and finalized');
-  }
-  return state.copyWith(review: 'Rejected');
-});
+  });
 
-// Add edges
-graph.addEdge('generate', 'analyze');
-graph.addEdge('analyze', 'human_review');
-graph.addConditionalEdge(
-  'human_review',
-  (state) => state.approved ? 'finalize' : 'generate',
-);
-graph.addEdge('finalize', END); // Use END constant
+  graph.addEdge('generate', 'analyze');
+  graph.addEdge('analyze', 'human_review');
+  graph.addConditionalEdge(
+    'human_review',
+    (state) => state.approved ? 'finalize' : 'generate',
+  );
+  graph.addEdge('finalize', END); // Use END constant
 
-graph.setEntryPoint('generate');
+  graph.setEntryPoint('generate');
+  return graph;
+}
 ```
 
 ### Executing with Checkpoints
 
 ```dart
-// Start execution
-final initialState = WorkflowState();
-final threadId = 'user-123-workflow-1';
+final store = legacy.InMemoryCheckpointStore<WorkflowState>();
+final graph = buildReviewGraph(store);
+const threadId = 'user-123-workflow-1';
 
 try {
-  final result = await graph.invoke(
-    initialState,
-    threadId: threadId,
-  );
+  await graph.invoke(WorkflowState(), threadId: threadId);
 } on GraphInterruptException<WorkflowState> catch (e) {
-  // Execution paused at checkpoint
+  // Execution paused after 'analyze'; the checkpoint is in the store
   print('Paused at: ${e.checkpoint.currentNode}');
   print('Checkpoint ID: ${e.checkpoint.id}');
   print('Reason: ${e.reason}');
-
-  // Save checkpoint ID for later
-  await saveCheckpointForUser(e.checkpoint.id!, threadId);
 }
 ```
 
 ### Resuming from Checkpoint
 
 ```dart
-// Load checkpoint
+// Later: load the thread's latest checkpoint and go on from there
 final checkpoint = await store.loadLatest(threadId: threadId);
 
 if (checkpoint != null) {
-  // Resume execution using the checkpoint ID
-  // Note: State modification during resume requires using HumanInputNode
-  final result = await graph.invoke(
-    initialState, // State is loaded from checkpoint
-    threadId: threadId,
-    checkpointId: checkpoint.id,
-  );
-
-  print('Workflow completed: ${result.state.review}');
+  try {
+    final result = await graph.invoke(
+      WorkflowState(), // ignored: the state comes from the checkpoint
+      threadId: threadId,
+      checkpointId: checkpoint.id,
+    );
+    print('Workflow completed: ${result.state.review}');
+  } on HumanInputRequired<WorkflowState, Object?> catch (e) {
+    // The run reached 'human_review' and waits for a decision
+    print(e.prompt);
+    await notifyUserForApproval(threadId, e.checkpoint.id!);
+  }
 }
 ```
+
+A run resumed from a checkpoint taken after a node (`interruptAfter`, or `autoSave` between nodes) goes on with the next node. A checkpoint taken before a node (`interruptBefore`) cannot be resumed at present: the resumed run stops in front of the same node again (a known bug of the legacy graph), so interrupt after the previous node instead. `invoke(checkpointId:)` throws `CheckpointIncompatibleException` for a human-input checkpoint (use `resumeWithHumanInput`), and a checkpoint saved because a node threw resumes after that node, with the state from before it, so the failed node does not run again. Catch `HumanInputRequired` with `Object?` (or `dynamic`) as its second type argument: the graph rethrows it as `HumanInputRequired<S, dynamic>`, which `on HumanInputRequired<WorkflowState, bool>` does not match. For the same reason a human input node with a `validator` makes the run fail with a `TypeError` instead of `HumanInputRequired` (a known bug of the legacy graph): validate the answer before `resumeWithHumanInput` instead.
 
 ### Human-in-the-Loop Pattern
 
+A human input node stops the run with `HumanInputRequired` and saves a checkpoint (with `autoSave`). `resumeWithHumanInput` hands the answer to the node's `processInput` and runs the rest of the graph:
+
 ```dart
-// Define a human input node
-graph.addNode('get_approval', (state) async {
-  // This will be interrupted, and the state will be updated
-  // with human input when resumed
-  return state;
-});
-
-// Configure interrupt
-final config = CheckpointConfig(
-  interruptBefore: ['get_approval'],
-);
-
-// In your API handler
-Future<void> handleWorkflowStart(String userId) async {
-  try {
-    await graph.invoke(initialState, threadId: userId);
-  } on GraphInterruptException<WorkflowState> catch (e) {
-    // Send notification to user for approval
-    await notifyUserForApproval(userId, e.checkpoint.id!);
-  }
-}
-
-Future<void> handleUserApproval(String userId, bool approved) async {
-  // For state modification during resume, use the HumanInputNode pattern
-  // or manually update the checkpoint state before resuming
-  final checkpoint = await store.loadLatest(threadId: userId);
-
-  // Resume from checkpoint
-  final result = await graph.invoke(
-    initialState,
-    threadId: userId,
-    checkpointId: checkpoint!.id,
+Future<void> handleUserApproval(
+  StateGraph<WorkflowState> graph,
+  String checkpointId,
+  String threadId, {
+  required bool approved,
+}) async {
+  final result = await graph.resumeWithHumanInput<bool>(
+    checkpointId,
+    input: approved,
+    threadId: threadId,
   );
+  print('Review: ${result.state.review}');
 }
 ```
+
+A rejection (`approved: false`) leads back to `generate` through the conditional edge, so `resumeWithHumanInput` ends with a `GraphInterruptException` after `analyze` again; catch it as in [Executing with Checkpoints](#executing-with-checkpoints).
 
 ### Checkpoint History and Management
 
@@ -964,12 +1097,15 @@ for (final metadata in checkpoints) {
   print('${metadata.id}: ${metadata.currentNode} at ${metadata.timestamp}');
 }
 
-// Get checkpoint history
+// Get checkpoint history (newest first)
 final history = await store.getHistory(
   threadId: 'user-123',
   limit: 10,
-  after: DateTime.now().subtract(Duration(hours: 1)),
+  after: DateTime.now().subtract(const Duration(hours: 1)),
 );
+for (final checkpoint in history) {
+  print('${checkpoint.currentNode} (step ${checkpoint.iteration})');
+}
 
 // Delete old checkpoints
 await store.delete(oldCheckpointId, threadId: 'user-123');
@@ -979,68 +1115,52 @@ await store.clear(threadId: 'user-123');
 
 // Count checkpoints
 final count = await store.count(threadId: 'user-123');
+print('Checkpoints left: $count');
 ```
 
 ### Custom State Serialization
 
-```dart
-// For complex states, implement custom serialization
-class CheckpointSerializer<S extends GraphState> {
-  Map<String, dynamic> serialize(Checkpoint<S> checkpoint) {
-    return {
-      'id': checkpoint.id,
-      'threadId': checkpoint.threadId,
-      'state': checkpoint.state.toMap(),
-      'currentNode': checkpoint.currentNode,
-      'path': checkpoint.path,
-      'iteration': checkpoint.iteration,
-      'timestamp': checkpoint.timestamp.toIso8601String(),
-      'metadata': checkpoint.metadata,
-    };
-  }
+`FileCheckpointStore` writes checkpoints through a `legacy.CheckpointSerializer`. `legacy.JsonCheckpointSerializer` writes the checkpoint as JSON and needs the two state conversions:
 
-  Checkpoint<S> deserialize(
-    Map<String, dynamic> data,
-    S Function(Map<String, dynamic>) stateFromMap,
-  ) {
-    return Checkpoint(
-      id: data['id'],
-      threadId: data['threadId'],
-      state: stateFromMap(data['state']),
-      currentNode: data['currentNode'],
-      path: List<String>.from(data['path']),
-      iteration: data['iteration'],
-      timestamp: DateTime.parse(data['timestamp']),
-      metadata: Map<String, dynamic>.from(data['metadata'] ?? {}),
-    );
-  }
-}
+```dart
+final serializer = legacy.JsonCheckpointSerializer<WorkflowState>(
+  stateToJson: (state) => state.toMap(),
+  stateFromJson: WorkflowState.fromMap,
+);
+
+final bytes = await serializer.serialize(checkpoint);
+final restored = await serializer.deserialize(bytes);
+print(restored.state.document);
 ```
+
+For another format, implement `legacy.CheckpointSerializer<S>` (`serialize`, `deserialize` and `contentType`). Earlier versions of this page declared a class of that name of their own; it would now hide the real one.
 
 ---
 
 ## 4. Advanced Retrieval Patterns
 
+> **Eino-shaped equivalent:** Eino's `flow` retrievers are static `fromConfig` methods of the same classes, each returning a plain `Retriever` (`MultiQueryRetriever.fromConfig`, asynchronous; `ParentRetriever.fromConfig`; `RouterRetriever.fromConfig`), with `ParentIndexer` and `concurrentRetrieve` (`flow.dart`). `HybridRetriever` and the fusion and deduplication strategies have no Eino counterpart. See [RAG.md](RAG.md).
+
+The classes of this section are threepio's own retrievers, exported by the umbrella library.
+
 ### HybridRetriever
 
-Combines semantic (vector) and keyword (BM25) search.
+Combines semantic (vector) and keyword (BM25) search. The two result lists are fused (by default with `WeightedScoreFusion`) and deduplicated by document id, so both sides must know a document by the same id.
 
 ```dart
 import 'package:threepio_core/threepio_core.dart';
 
-// Create vector retriever
+// Vector side: `vectorStore` already holds `documents` with their embeddings
 final vectorRetriever = VectorRetriever(
   embedder: openAIEmbedder,
   vectorStore: vectorStore,
 );
 
-// Create keyword searcher
+// Keyword side: BM25 over the same documents
 final keywordSearcher = InMemoryBM25Searcher(
   k1: 1.5,  // Term frequency saturation
   b: 0.75,  // Length normalization
 );
-
-// Index documents for keyword search
 await keywordSearcher.addDocuments(documents);
 
 // Create hybrid retriever
@@ -1050,27 +1170,29 @@ final hybridRetriever = HybridRetriever(
   vectorWeight: 0.7,    // 70% semantic
   keywordWeight: 0.3,   // 30% keyword
   normalizeScores: true,
-  deduplicationStrategy: IdDeduplication(),
+  deduplicationStrategy: const IdDeduplication(),
 );
 
 // Retrieve
 final results = await hybridRetriever.retrieve(
   'machine learning algorithms',
-  options: RetrieverOptions(topK: 10),
+  options: const RetrieverOptions(topK: 10),
 );
+print('${results.length} documents');
 
-// With detailed scores
+// With the fused scores
 final scoredResults = await hybridRetriever.retrieveWithScores(
   'machine learning algorithms',
 );
 
 for (final result in scoredResults) {
-  print('${result.document.content}');
-  print('  Vector score: ${result.metadata['vector_score']}');
-  print('  Keyword score: ${result.metadata['keyword_score']}');
-  print('  Combined: ${result.score}');
+  print(result.document.content);
+  print('  Found by: ${result.metadata['sources']}'); // e.g. [vector, keyword]
+  print('  Combined score: ${result.score}');
 }
 ```
+
+A fused result's `ScoredDocument.metadata` holds `fusion_method`, `source_count` and `sources`; there are no separate vector and keyword scores.
 
 ### MultiQueryRetriever
 
@@ -1099,13 +1221,20 @@ Alternative queries:
 
 final results = await multiQueryRetriever.retrieve(
   'What are the benefits of renewable energy?',
-  options: RetrieverOptions(topK: 10),
+  options: const RetrieverOptions(topK: 10),
 );
+print('${results.length} documents');
 
-// Access generated queries
-final metadata = await multiQueryRetriever.retrieveWithScores(query);
-print('Generated queries: ${metadata.first.metadata['generated_queries']}');
+// With the fusion details: how many of the queries found each document
+final scored = await multiQueryRetriever.retrieveWithScores(
+  'What are the benefits of renewable energy?',
+);
+for (final result in scored) {
+  print('${result.document.id}: found by ${result.metadata['source_count']} queries');
+}
 ```
+
+The generated queries themselves are not returned; no retriever writes a `generated_queries` entry.
 
 ### ParentRetriever
 
@@ -1115,25 +1244,31 @@ Searches chunks but returns full parent documents.
 // Create parent document store
 final parentStore = InMemoryParentDocumentStore();
 
+// Embeds the chunks and writes them to the vector store
+final indexer = VectorStoreIndexer(vectorStore: vectorStore, embedder: embedder);
+
 // Index documents with their chunks
 for (final document in documents) {
-  // Split into chunks
-  final chunks = await splitter.splitDocuments([document]);
+  // Split into chunks with the ids '<parent id>_chunk_<n>' and record
+  // the parent of each chunk
+  final chunks = await parentStore.indexDocument(
+    document,
+    (text) => splitter.splitText(
+      text,
+      options: const TextSplitterOptions(chunkSize: 400, chunkOverlap: 40),
+    ),
+  );
 
-  // Store parent-child relationship
-  await parentStore.storeWithChildren(document, chunks);
-
-  // Add chunks to vector store (for searching)
-  await vectorStore.addDocuments(chunks);
+  // Add chunks to the vector store (for searching)
+  await indexer.store(RunContext.background(), chunks);
 }
 
 // Create parent retriever
 final parentRetriever = ParentRetriever(
-  baseRetriever: vectorRetriever,
+  baseRetriever: VectorRetriever(embedder: embedder, vectorStore: vectorStore),
   parentStore: parentStore,
   returnChunks: false,           // Return parents, not chunks
   includeChunkMetadata: true,    // Add chunk info to parent
-  deduplicateParents: true,      // Remove duplicate parents
   parentScoreStrategy: ParentScoreStrategy.maxChildScore,
 );
 
@@ -1146,6 +1281,8 @@ for (final doc in results) {
   print('Matched chunks: ${doc.metadata['matched_chunks_count']}');
 }
 ```
+
+The parent store finds a chunk's parent by the chunk's id, so chunks need their ids before they reach the vector store: `indexDocument` (an extension on `ParentDocumentStore`) gives them ids and records the relation. A chunk stored without an id gets a new one (from `VectorStoreIndexer` or the store) and then comes back as itself instead of its parent. Each parent is returned once (the `deduplicateParents` setting has no effect).
 
 ### RouterRetriever
 
@@ -1168,8 +1305,8 @@ final legalRetriever = VectorRetriever(
   embedder: embedder,
 );
 
-// Create routing strategy
-final routingStrategy = KeywordRoutingStrategy(
+// Route by keywords
+final keywordRoutingStrategy = KeywordRoutingStrategy(
   routeKeywords: {
     'technical': ['code', 'api', 'programming', 'bug', 'feature'],
     'hr': ['vacation', 'salary', 'benefits', 'leave', 'policy'],
@@ -1178,7 +1315,7 @@ final routingStrategy = KeywordRoutingStrategy(
   matchThreshold: 1,
 );
 
-// Or use LLM-based routing
+// Or let the LLM route
 final llmRoutingStrategy = LLMRoutingStrategy(
   chatModel: geminiModel,
   routeDescriptions: {
@@ -1196,8 +1333,8 @@ final routerRetriever = RouterRetriever(
     'hr': hrRetriever,
     'legal': legalRetriever,
   },
-  routingStrategy: llmRoutingStrategy,
-  fallbackRetriever: generalRetriever,
+  routingStrategy: llmRoutingStrategy, // or keywordRoutingStrategy
+  fallbackRetriever: generalRetriever, // when no route is selected
   allowMultipleRoutes: true,
   maxRoutes: 2,
 );
@@ -1206,23 +1343,25 @@ final results = await routerRetriever.retrieve(
   'What is the vacation policy for engineering contractors?',
 );
 
-// Query routed to both 'hr' and potentially 'technical'
+// Query routed to 'hr' and possibly 'legal'; results of several routes
+// are fused with Reciprocal Rank Fusion
+print('${results.length} documents');
 ```
 
 ### Result Fusion Strategies
 
 ```dart
-// Reciprocal Rank Fusion (default)
-final rrfFusion = ReciprocalRankFusion(k: 60.0);
+// Reciprocal Rank Fusion (default of the multi-query and router retrievers)
+const rrfFusion = ReciprocalRankFusion(k: 60.0);
 
-// Weighted Score Fusion
-final weightedFusion = WeightedScoreFusion(
+// Weighted Score Fusion (default of the hybrid retriever)
+const weightedFusion = WeightedScoreFusion(
   weights: [0.6, 0.4],  // Weights for each result set
   normalizeScores: true,
 );
 
 // Union Fusion (combine all unique documents)
-final unionFusion = UnionFusion(
+const unionFusion = UnionFusion(
   keepHighestScore: true,
 );
 
@@ -1232,74 +1371,74 @@ final retriever = HybridRetriever(
   keywordSearcher: keywordSearcher,
   fusionStrategy: rrfFusion,
 );
+
+// Or fuse result sets of your own
+final fused = unionFusion.fuse([firstResults, secondResults]);
 ```
 
 ### Deduplication Strategies
 
 ```dart
 // By document ID
-final idDedup = IdDeduplication(
+const idDedup = IdDeduplication(
   useContentHashAsFallback: true,
 );
 
 // By content
-final contentDedup = ContentDeduplication(
+const contentDedup = ContentDeduplication(
   normalizeWhitespace: true,
   caseSensitive: false,
 );
 
-// By custom key
+// By custom key (the extractor gets the scored document)
 final keyDedup = KeyDeduplication<String>(
-  keyExtractor: (doc) => doc.metadata['source'] as String?,
+  keyExtractor: (scored) => scored.document.metadata['source'] as String?,
 );
 
 // Composite (apply multiple strategies)
-final compositeDedup = CompositeDeduplication([
+const compositeDedup = CompositeDeduplication([
   IdDeduplication(),
   ContentDeduplication(),
 ]);
+
+// Use one with a retriever, or on scored documents directly
+final retriever = HybridRetriever(
+  vectorRetriever: vectorRetriever,
+  keywordSearcher: keywordSearcher,
+  deduplicationStrategy: compositeDedup,
+);
+final unique = await keyDedup.deduplicate(scoredResults);
 ```
+
+`SemanticDeduplication(embedder: embedder, similarityThreshold: 0.95)` also drops near-duplicates by embedding similarity.
 
 ---
 
 ## 5. Document Processing Pipeline
 
+> **Eino-shaped equivalent:** the Eino document contracts of `components.dart`: `Loader` (`UrlContentLoader`; `FileLoader` in `io.dart`), `Parser` (`TextParser`, `ExtParser`, `HtmlContentParser`, `PdfParser`, `DocxParser`, `XlsxParser`), `DocumentTransformer` and `Indexer` (`VectorStoreIndexer`, `QdrantIndexer`), composed in a `Graph` or `Chain`; `LoaderAdapter` and `DocumentParser.asParser()` adapt the loaders and parsers of this section. See [RAG.md](RAG.md).
+
 ### Ingestion Pipeline
 
-End-to-end document processing from loading to vector storage.
+End-to-end document processing from loading to vector storage: `ingest` loads (unless you pass `documents:`), applies the transformers in order, splits, embeds in batches and stores.
 
 ```dart
 import 'package:threepio_core/threepio_core.dart';
 
 // Create pipeline components
 final loader = DirectoryLoader(
-  path: '/path/to/documents',
+  dirPath: '/path/to/documents',
+  glob: '**/*.md', // understood: '*.txt', '*.md' and '*.*' patterns
   recursive: true,
-  extensions: ['.html', '.md', '.txt'],
 );
 
-final htmlParser = HtmlParser(
-  removeScripts: true,
-  removeStyles: true,
-  preserveLinks: true,
-);
+final splitter = RecursiveCharacterTextSplitter();
 
-final markdownParser = MarkdownParser(
-  parseFrontmatter: true,
-  extractCodeBlocks: true,
-);
-
-final splitter = RecursiveCharacterTextSplitter(
-  chunkSize: 1000,
-  chunkOverlap: 200,
-);
-
-// Create pipeline
+// Create pipeline: load, transform, split, embed, store
 final pipeline = IngestionPipeline(
   loader: loader,
-  parser: htmlParser,  // Or use a parser registry
   splitter: splitter,
-  embedder: geminiEmbedder,
+  embedder: embedder,
   vectorStore: vectorStore,
   transformers: [
     // Clean content
@@ -1311,7 +1450,7 @@ final pipeline = IngestionPipeline(
     // Add metadata
     MetadataTransformer(metadata: {
       'ingested_at': DateTime.now().toIso8601String(),
-      'source': 'documentation',
+      'source_kind': 'documentation',
     }),
     // Filter documents
     FilterTransformer(
@@ -1322,8 +1461,9 @@ final pipeline = IngestionPipeline(
 
 // Run ingestion
 final result = await pipeline.ingest(
-  options: IngestionOptions(
+  options: const IngestionOptions(
     batchSize: 100,
+    splitterOptions: TextSplitterOptions(chunkSize: 1000, chunkOverlap: 200),
     continueOnError: true,
     deduplicateByContent: true,
     maxDocuments: 1000,
@@ -1337,29 +1477,36 @@ print('Duration: ${result.duration}');
 
 if (result.errors.isNotEmpty) {
   for (final error in result.errors) {
-    print('Error in ${error.stage}: ${error.message}');
+    print('Error in ${error.stage.name}: ${error.message}');
   }
 }
 ```
+
+Things to know:
+
+* The pipeline does not parse. `IngestionPipeline` accepts a `parser`, but neither `ingest` nor `ingestStream` calls it. Parse first (see [Document Parsers](#document-parsers)) and pass the result with `pipeline.ingest(documents: parsedDocuments)`.
+* `DirectoryLoader` understands only the patterns `*.txt`, `*.md` and `*.*` in its `glob`; anything else loads `.txt` files.
+* `MetadataTransformer`, `ContentCleanerTransformer` and `IngestionOptions.metadata` rebuild each document without its `id` and embedding. Give documents their ids after those steps.
 
 ### Streaming Ingestion with Progress
 
 ```dart
 final progressStream = pipeline.ingestStream(
-  options: IngestionOptions(batchSize: 50),
+  options: const IngestionOptions(batchSize: 50),
 );
 
 await for (final progress in progressStream) {
-  print('${progress.stage}: ${progress.current}/${progress.total}');
+  print('${progress.stage.name}: ${progress.current}/${progress.total}');
   print('  ${progress.message}');
   print('  Progress: ${progress.percentage.toStringAsFixed(1)}%');
 
   if (progress.stage == IngestionStage.complete) {
-    final result = progress.metadata['result'] as IngestionResult;
     print('Ingestion complete!');
   }
 }
 ```
+
+The progress events carry no `IngestionResult`; call `ingest` when you need the counts and the errors. `ingestStream` ignores `continueOnError`: the first failure ends the stream with its exception, so wrap the `await for` in a `try`.
 
 ### Document Parsers
 
@@ -1374,15 +1521,15 @@ final htmlParser = HtmlParser(
 );
 
 final htmlResult = await htmlParser.parseString(htmlContent);
-print('Title: ${htmlResult.metadata['title']}');
+print('Title: ${htmlResult.document.metadata['title']}');
 print('Content: ${htmlResult.document.content}');
 
-// With table extraction
-final htmlParserWithTables = HtmlParser(
-  extractTables: true,
+// With table extraction (an option of the call)
+final result = await htmlParser.parseString(
+  htmlWithTables,
+  options: const DocumentParserOptions(extractTables: true),
 );
-final result = await htmlParserWithTables.parseString(htmlWithTables);
-for (final table in result.extractedTables ?? []) {
+for (final table in result.extractedTables ?? const <ExtractedTable>[]) {
   print('Table: ${table.caption}');
   print(table.toMarkdown());
 }
@@ -1394,7 +1541,8 @@ final mdParser = MarkdownParser(
   extractCodeBlocks: true,
 );
 
-final mdContent = '''
+const fence = '```'; // the code fence inside the sample text
+const mdContent = '''
 ---
 title: My Document
 author: John Doe
@@ -1405,37 +1553,50 @@ tags: [dart, flutter]
 
 This is the content.
 
-```dart
+${fence}dart
 void main() {
   print('Hello');
 }
-```
+$fence
 ''';
 
 final mdResult = await mdParser.parseString(mdContent);
-print('Title: ${mdResult.metadata['title']}');
-print('Author: ${mdResult.metadata['author']}');
-print('Code blocks: ${mdResult.metadata['code_blocks']}');
+print('Title: ${mdResult.document.metadata['title']}');
+print('Author: ${mdResult.document.metadata['author']}');
+print('Code blocks: ${mdResult.metadata?['code_block_count']}');
 ```
+
+The title and the front matter are in the metadata of the parsed document (`result.document.metadata`); `ParseResult.metadata` holds the parser's own figures (`original_length`, `parsed_length`, `code_block_count`). Table extraction is an option of the call (`DocumentParserOptions.extractTables`), not of the constructor. `extractCodeBlocks` counts the fenced code blocks but does not return them. (The `fence` constant keeps the sample's code fence from ending this page's code block.)
 
 ### Custom Document Transformer
 
+Since 0.9, `transform` takes `{TransformerOptions? options}`, which carry the run context of the call; an implementation must declare the parameter even when it does not use it.
+
 ```dart
-class SummarizationTransformer implements DocumentTransformer {
+import 'package:threepio_core/threepio_core.dart';
+
+class SummarizationTransformer extends DocumentTransformer {
+  const SummarizationTransformer({required this.model});
+
   final BaseChatModel model;
 
-  SummarizationTransformer({required this.model});
-
   @override
-  Future<List<Document>> transform(List<Document> documents) async {
+  Future<List<Document>> transform(
+    List<Document> documents, {
+    TransformerOptions? options, // required since 0.9
+  }) async {
     final transformed = <Document>[];
 
     for (final doc in documents) {
-      // Generate summary
-      final response = await model.generate([
-        Message.system('Summarize the following text in 2-3 sentences.'),
-        Message.user(doc.content),
-      ]);
+      // Generate a summary; the model gets the run context of the call
+      // (cancellation, callbacks)
+      final response = await model.generate(
+        [
+          Message.system('Summarize the following text in 2-3 sentences.'),
+          Message.user(doc.content),
+        ],
+        options: ChatModelOptions(runContext: options?.runContext),
+      );
 
       transformed.add(doc.copyWith(
         metadata: {
@@ -1449,18 +1610,19 @@ class SummarizationTransformer implements DocumentTransformer {
   }
 }
 
-// Use in pipeline
-final pipeline = IngestionPipeline(
-  // ... other components
-  transformers: [
-    SummarizationTransformer(model: geminiModel),
-  ],
-);
+// Use in a pipeline
+IngestionPipeline summarizingPipeline(BaseChatModel model, TextSplitter splitter) =>
+    IngestionPipeline(
+      splitter: splitter,
+      transformers: [SummarizationTransformer(model: model)],
+    );
 ```
 
 ---
 
 ## 6. Reranking System
+
+> **Eino-shaped equivalent:** Eino has no reranker contract; a reranker there is a `document.Transformer`. `RerankerTransformer(reranker, query: …)` turns any reranker of this section into one, and `ScoreReorderTransformer` ports eino-ext's score reranker (best documents at both ends, nothing dropped).
 
 ### Basic Reranking
 
@@ -1479,7 +1641,7 @@ final scoreReranker = ScoreReranker(
 final reranked = await scoreReranker.rerank(
   query,
   documents,
-  options: RerankerOptions(topK: 5),
+  options: const RerankerOptions(topK: 5),
 );
 
 for (final result in reranked) {
@@ -1496,7 +1658,7 @@ final functionReranker = FunctionReranker(
     final queryTerms = query.toLowerCase().split(' ');
     final docTerms = document.content.toLowerCase().split(' ');
 
-    int matches = 0;
+    var matches = 0;
     for (final term in queryTerms) {
       if (docTerms.contains(term)) matches++;
     }
@@ -1506,6 +1668,7 @@ final functionReranker = FunctionReranker(
 );
 
 final results = await functionReranker.rerank(query, documents);
+print(results.map((r) => r.score).toList());
 ```
 
 ### MMR Reranking (Diversity)
@@ -1514,23 +1677,36 @@ Maximal Marginal Relevance balances relevance and diversity.
 
 ```dart
 final mmrReranker = MMRReranker(
-  embedder: geminiEmbedder,
+  embedder: embedder,
   lambda: 0.7,  // 0.0 = max diversity, 1.0 = max relevance
 );
 
-// Returns documents that are both relevant AND diverse
+// Picks documents that are relevant and diverse; the result is sorted by
+// score, and metadata['mmr_rank'] keeps the MMR order
 final diverseResults = await mmrReranker.rerank(
   query,
   documents,
-  options: RerankerOptions(topK: 10),
+  options: const RerankerOptions(topK: 10),
 );
+print('${diverseResults.length} documents');
 
-// With pre-computed embeddings (faster)
+// With pre-computed embeddings (no embedding calls for the documents).
+// Both MMR rerankers read a document's vector from metadata['embedding'],
+// not from Document.embedding.
+final queryEmbedding = (await embedder.embedStrings([query])).first;
 final precomputedReranker = PrecomputedMMRReranker(
-  queryEmbedding: await embedder.embedStrings([query]).then((e) => e.first),
+  queryEmbedding: queryEmbedding,
   lambda: 0.7,
 );
+final withVectors = [
+  for (final doc in documents)
+    doc.copyWith(metadata: {...doc.metadata, 'embedding': doc.embedding}),
+];
+final fastResults = await precomputedReranker.rerank(query, withVectors);
+print('${fastResults.length} documents');
 ```
+
+`MMRReranker` uses `metadata['embedding']` when a document has it and otherwise embeds the documents one call at a time; `PrecomputedMMRReranker` throws for a document without it.
 
 ### Composite Reranking
 
@@ -1543,26 +1719,31 @@ final compositeReranker = CompositeReranker(
     functionReranker,                     // Custom scoring
     MMRReranker(embedder: embedder),     // Diversity
   ],
-  weights: [0.4, 0.3, 0.3],  // Must sum to 1.0
+  weights: [0.4, 0.3, 0.3],  // One per reranker; each scales its scores
 );
 
 final results = await compositeReranker.rerank(
   query,
   documents,
-  options: RerankerOptions(
+  options: const RerankerOptions(
     topK: 10,
     threshold: 0.5,  // Minimum score
   ),
 );
+print('${results.length} documents');
 ```
 
 ### Cross-Encoder Reranking (with LLM)
 
-```dart
-class LLMReranker extends BaseReranker {
-  final BaseChatModel model;
+Extend `BaseReranker` for its helpers: `applyFilters` applies the threshold, sorts by score and keeps the top k.
 
+```dart
+import 'package:threepio_core/threepio_core.dart';
+
+class LLMReranker extends BaseReranker {
   LLMReranker({required this.model});
+
+  final BaseChatModel model;
 
   @override
   Future<List<RerankResult>> rerank(
@@ -1572,7 +1753,7 @@ class LLMReranker extends BaseReranker {
   }) async {
     final results = <RerankResult>[];
 
-    for (int i = 0; i < documents.length; i++) {
+    for (var i = 0; i < documents.length; i++) {
       final doc = documents[i];
 
       // Ask LLM to score relevance
@@ -1597,7 +1778,8 @@ Document: ${doc.content}
       ));
     }
 
-    return sortByScore(results);
+    // Threshold, sort by score, top-k
+    return applyFilters(results, options);
   }
 }
 ```
@@ -1605,6 +1787,10 @@ Document: ${doc.content}
 ---
 
 ## 7. Advanced Text Splitters
+
+> **Eino-shaped equivalent:** the eino-ext splitters, built from their configurations: `RecursiveCharacterTextSplitter.fromConfig(RecursiveSplitterConfig(…))`, `MarkdownSplitter.fromHeaderConfig(MarkdownHeaderSplitterConfig(…))`, `HtmlSplitter.fromHeaderConfig(HtmlHeaderSplitterConfig(…))` and `SemanticSplitter(SemanticSplitterConfig(…))`, each a `DocumentTransformer` that splits as Eino does (the recursive and semantic splitters measure lengths in UTF-8 bytes). See [RAG.md](RAG.md).
+
+The splitters of this section take the chunk size and overlap with each call, as `TextSplitterOptions` (defaults 1000 and 200), not in their constructors. `splitText` is synchronous, `splitDocuments` asynchronous. Every splitter is also a `DocumentTransformer`: `transform`, or `withOptions(TextSplitterOptions(…))` to fix the options once.
 
 ### HTML Splitter
 
@@ -1614,31 +1800,32 @@ Preserves HTML document structure when splitting.
 import 'package:threepio_core/threepio_core.dart';
 
 final htmlSplitter = HtmlSplitter(
-  chunkSize: 1000,
-  chunkOverlap: 200,
   stripTags: true,          // Remove HTML tags from output
   preserveLinks: true,      // Keep URLs
-  splitByHeaders: true,     // Split at header boundaries
+  splitByHeaders: true,     // Not read in 0.9: headerTags always mark sections
   headerTags: ['h1', 'h2', 'h3'],  // Header levels to split on
 );
 
-final htmlContent = '''
+// Chunk size and overlap are options of each call
+const options = TextSplitterOptions(chunkSize: 1000, chunkOverlap: 200);
+
+const htmlContent = '''
 <html>
 <head><title>Documentation</title></head>
 <body>
   <h1>Introduction</h1>
-  <p>This is the introduction section with lots of content...</p>
+  <p>This is the introduction section with lots of content.</p>
 
   <h2>Getting Started</h2>
-  <p>Here's how to get started...</p>
+  <p>Here's how to get started.</p>
 
   <h2>Advanced Usage</h2>
-  <p>For advanced users...</p>
+  <p>For advanced users.</p>
 </body>
 </html>
 ''';
 
-final chunks = await htmlSplitter.splitText(htmlContent);
+final chunks = htmlSplitter.splitText(htmlContent, options: options);
 
 for (final chunk in chunks) {
   print('--- Chunk ---');
@@ -1648,10 +1835,10 @@ for (final chunk in chunks) {
 
 // Split documents with metadata preservation
 final documents = [
-  Document(content: htmlContent, metadata: {'source': 'docs.html'}),
+  const Document(content: htmlContent, metadata: {'source': 'docs.html'}),
 ];
 
-final splitDocs = await htmlSplitter.splitDocuments(documents);
+final splitDocs = await htmlSplitter.splitDocuments(documents, options: options);
 for (final doc in splitDocs) {
   print('Source: ${doc.metadata['source']}');
   print('Chunk index: ${doc.metadata['chunk_index']}');
@@ -1664,15 +1851,14 @@ Preserves Markdown structure and handles code blocks.
 
 ```dart
 final mdSplitter = MarkdownSplitter(
-  chunkSize: 1000,
-  chunkOverlap: 200,
   preserveCodeBlocks: true,   // Keep code blocks intact
   splitOnHeaders: true,       // Split at header boundaries
   minHeaderLevel: 1,          // Start splitting at h1
   maxHeaderLevel: 3,          // Don't split below h3
 );
 
-final markdownContent = '''
+const fence = '```'; // the code fence inside the sample text
+const markdownContent = '''
 # Main Title
 
 Introduction paragraph.
@@ -1685,34 +1871,36 @@ Content for section 1.
 
 More detailed content.
 
-```python
+${fence}python
 def example():
     return "This code block stays together"
-```
+$fence
 
 ## Section 2
 
 Content for section 2.
 ''';
 
-final chunks = await mdSplitter.splitText(markdownContent);
+final chunks = mdSplitter.splitText(
+  markdownContent,
+  options: const TextSplitterOptions(chunkSize: 1000, chunkOverlap: 200),
+);
+print('${chunks.length} chunks');
 ```
 
 ### Markdown RAG Splitter
 
-Optimized for RAG with header breadcrumbs.
+Optimized for RAG: each chunk records the headers above it.
 
 ```dart
 final ragSplitter = MarkdownRAGSplitter(
-  chunkSize: 500,
-  chunkOverlap: 100,
-  includeHeadersInChunks: true,   // Prepend headers to chunks
-  addHeaderBreadcrumbs: true,     // Track header hierarchy
+  includeHeadersInChunks: true,   // Prepend the header line to each section
 );
 
-final chunks = await ragSplitter.splitDocuments([
-  Document(content: markdownContent),
-]);
+final chunks = await ragSplitter.splitDocuments(
+  [Document(content: markdownContent)],
+  options: const TextSplitterOptions(chunkSize: 500, chunkOverlap: 100),
+);
 
 for (final chunk in chunks) {
   print('Headers: ${chunk.metadata['header_breadcrumbs']}');
@@ -1720,191 +1908,228 @@ for (final chunk in chunks) {
   print('Content: ${chunk.content}');
   print('');
 }
-
-// Output:
-// Headers: [Main Title, Section 1, Subsection 1.1]
-// Current: Subsection 1.1
-// Content: # Main Title > Section 1 > Subsection 1.1
-//
-// More detailed content...
 ```
+
+Each chunk's metadata has `header_breadcrumbs`, the titles of the enclosing headers (`[Main Title, Section 1, Subsection 1.1]` for the chunk under "Subsection 1.1"), and `current_header`, the header line itself (`### Subsection 1.1`); with `includeHeadersInChunks` the first chunk of each section starts with that line (a section longer than `chunkSize` is split further, and the later pieces do not). Text before the first header has neither key. The breadcrumbs are always recorded (the `addHeaderBreadcrumbs` setting has no effect).
 
 ### Combining Splitters with Pipeline
 
 ```dart
-// Create parser-aware splitting
-Document splitByType(Document doc) async {
-  final extension = doc.metadata['extension'] as String?;
+import 'package:threepio_core/threepio_core.dart';
 
-  TextSplitter splitter;
-  if (extension == '.html' || extension == '.htm') {
-    splitter = HtmlSplitter(chunkSize: 1000);
-  } else if (extension == '.md') {
-    splitter = MarkdownRAGSplitter(chunkSize: 1000);
-  } else {
-    splitter = RecursiveCharacterTextSplitter(chunkSize: 1000);
+// Pick a splitter by file type (`source` is set by the file loaders)
+TextSplitter splitterFor(Document doc) {
+  final source = doc.metadata['source'] as String? ?? '';
+  if (source.endsWith('.html') || source.endsWith('.htm')) {
+    return HtmlSplitter();
+  } else if (source.endsWith('.md')) {
+    return MarkdownRAGSplitter();
   }
-
-  return await splitter.splitDocuments([doc]);
+  return RecursiveCharacterTextSplitter();
 }
 
-// In pipeline
-final pipeline = IngestionPipeline(
-  splitter: MarkdownRAGSplitter(
-    chunkSize: 500,
-    includeHeadersInChunks: true,
-  ),
-  // ... other components
-);
+Future<List<Document>> splitByType(List<Document> documents) async {
+  const options = TextSplitterOptions(chunkSize: 1000, chunkOverlap: 200);
+  return [
+    for (final doc in documents)
+      ...await splitterFor(doc).splitDocuments([doc], options: options),
+  ];
+}
+
+// In a pipeline: the splitter, and its options in the ingestion options
+Future<IngestionResult> ingestMarkdown(
+  List<Document> documents,
+  Embedder embedder,
+  VectorStore vectorStore,
+) {
+  final pipeline = IngestionPipeline(
+    splitter: MarkdownRAGSplitter(includeHeadersInChunks: true),
+    embedder: embedder,
+    vectorStore: vectorStore,
+  );
+  return pipeline.ingest(
+    documents: documents,
+    options: const IngestionOptions(
+      splitterOptions: TextSplitterOptions(chunkSize: 500, chunkOverlap: 50),
+    ),
+  );
+}
 ```
 
 ---
 
 ## Complete RAG Application Example
 
+Loads Markdown files, indexes the chunks for hybrid search, and answers questions with an Eino-shaped agent (`adk.ChatModelAgent` run by `adk.Runner`) that searches the knowledge base through a tool. It reads `GEMINI_API_KEY` (chat model) and `OPENAI_API_KEY` (embedder).
+
 ```dart
+import 'dart:io';
+
+import 'package:threepio_core/adk.dart' as adk;
 import 'package:threepio_core/threepio_core.dart';
+
+/// The input of the search tool, decoded from the JSON arguments the model
+/// writes.
+final class SearchQuery {
+  const SearchQuery(this.query);
+
+  factory SearchQuery.fromJson(Map<String, Object?> json) =>
+      SearchQuery(json['query']! as String);
+
+  final String query;
+}
 
 Future<void> main() async {
   // 1. Configure providers
-  final geminiConfig = GeminiConfig(
-    apiKey: Platform.environment['GEMINI_API_KEY']!,
-    defaultModel: 'gemini-2.5-flash',
+  final env = Platform.environment;
+  final model = GeminiChatModel(
+    config: GeminiConfig(apiKey: env['GEMINI_API_KEY']!),
   );
-
-  final model = GeminiChatModel(config: geminiConfig);
-  final embedder = OpenAIEmbedder(config: openAIConfig);
+  final embedder = OpenAIEmbedder(
+    config: OpenAIConfig(apiKey: env['OPENAI_API_KEY']!),
+  );
   final vectorStore = InMemoryVectorStore();
 
-  // 2. Create ingestion pipeline
-  final pipeline = IngestionPipeline(
-    loader: DirectoryLoader(path: './docs', extensions: ['.md']),
-    parser: MarkdownParser(parseFrontmatter: true),
-    splitter: MarkdownRAGSplitter(
-      chunkSize: 500,
-      includeHeadersInChunks: true,
-    ),
-    embedder: embedder,
-    vectorStore: vectorStore,
-    transformers: [
-      ContentCleanerTransformer(),
-      MetadataTransformer(metadata: {'indexed_at': DateTime.now().toIso8601String()}),
-    ],
-  );
+  try {
+    // 2. Load, clean and split the documents
+    final loaded = await DirectoryLoader(dirPath: './docs', glob: '**/*.md').load();
+    final cleaned = await ContentCleanerTransformer().transform(loaded);
+    final split = await MarkdownRAGSplitter(includeHeadersInChunks: true).splitDocuments(
+      cleaned,
+      options: const TextSplitterOptions(chunkSize: 500, chunkOverlap: 50),
+    );
+    // Both indexes must know a chunk by the same id
+    final chunks = [
+      for (var i = 0; i < split.length; i++) split[i].copyWith(id: 'chunk_$i'),
+    ];
 
-  // 3. Ingest documents
-  print('Ingesting documents...');
-  final ingestResult = await pipeline.ingest();
-  print('Indexed ${ingestResult.chunksStored} chunks');
+    // 3. Index the chunks for vector search (embed and store) and for
+    //    keyword search
+    print('Ingesting documents...');
+    await VectorStoreIndexer(vectorStore: vectorStore, embedder: embedder)
+        .store(RunContext.background(), chunks);
+    final keywordSearcher = InMemoryBM25Searcher();
+    await keywordSearcher.addDocuments(chunks);
+    print('Indexed ${chunks.length} chunks');
 
-  // 4. Create retriever with reranking
-  final baseRetriever = VectorRetriever(
-    embedder: embedder,
-    vectorStore: vectorStore,
-  );
+    // 4. Hybrid retrieval, reranked for diversity
+    final hybridRetriever = HybridRetriever(
+      vectorRetriever: VectorRetriever(embedder: embedder, vectorStore: vectorStore),
+      keywordSearcher: keywordSearcher,
+      vectorWeight: 0.7,
+      keywordWeight: 0.3,
+    );
+    final reranker = MMRReranker(embedder: embedder, lambda: 0.8);
 
-  final keywordSearcher = InMemoryBM25Searcher();
-  // Index for keyword search too
-  final docs = await vectorStore.getAllDocuments();
-  await keywordSearcher.addDocuments(docs);
+    // 5. The search tool (Eino `utils.InferTool`)
+    final searchTool = FunctionTool<SearchQuery, String>(
+      name: 'search_knowledge',
+      description: 'Search the knowledge base for relevant information',
+      params: const ParamsOneOf.params({
+        'query': ParameterInfo(type: DataType.string, desc: 'Search query', required: true),
+      }),
+      fromJson: SearchQuery.fromJson,
+      invoke: (ctx, input, options) async {
+        final docs = await hybridRetriever.retrieve(
+          input.query,
+          options: RetrieverOptions(topK: 10, runContext: ctx),
+        );
+        final reranked = await reranker.rerank(
+          input.query,
+          docs,
+          options: const RerankerOptions(topK: 5),
+        );
+        return reranked
+            .map((r) => '${r.document.metadata['current_header'] ?? 'Document'}:\n'
+                '${r.document.content}')
+            .join('\n\n---\n\n');
+      },
+    );
 
-  final hybridRetriever = HybridRetriever(
-    vectorRetriever: baseRetriever,
-    keywordSearcher: keywordSearcher,
-    vectorWeight: 0.7,
-    keywordWeight: 0.3,
-  );
-
-  final reranker = MMRReranker(
-    embedder: embedder,
-    lambda: 0.8,
-  );
-
-  // 5. Create RAG agent
-  final ragTool = InvokableTool.fromFunction(
-    name: 'search_knowledge',
-    description: 'Search the knowledge base for relevant information',
-    parameters: {
-      'query': JSONSchemaProperty.string(description: 'Search query'),
-    },
-    handler: (args) async {
-      final query = args['query'] as String;
-
-      // Retrieve
-      final docs = await hybridRetriever.retrieve(
-        query,
-        options: RetrieverOptions(topK: 10),
-      );
-
-      // Rerank
-      final reranked = await reranker.rerank(
-        query,
-        docs,
-        options: RerankerOptions(topK: 5),
-      );
-
-      // Format results
-      final results = reranked.map((r) =>
-        '${r.document.metadata['current_header'] ?? 'Document'}:\n${r.document.content}'
-      ).join('\n\n---\n\n');
-
-      return results;
-    },
-  );
-
-  final agent = ChatModelAgent(
-    name: 'rag-assistant',
-    model: model,
-    tools: [ragTool],
-    systemPrompt: '''
+    // 6. The agent (Eino `adk.NewChatModelAgent`) and its runner
+    final agent = adk.ChatModelAgent(adk.ChatModelAgentConfig(
+      name: 'rag-assistant',
+      description: 'Answers questions from the knowledge base',
+      instruction: '''
 You are a helpful assistant with access to a knowledge base.
 Use the search_knowledge tool to find relevant information before answering questions.
 Always cite your sources.
 ''',
-  );
+      model: model,
+      toolsConfig: adk.ToolsConfig(
+        toolsNode: adk.ToolsNodeConfig(tools: [searchTool]),
+      ),
+    ));
+    final runner = adk.Runner(agent: agent);
 
-  // 6. Run conversation
-  print('\nRAG Assistant ready. Type your questions:');
+    // 7. Run a conversation; the questions and answers are kept as history
+    print('\nRAG Assistant ready. Type your questions:');
+    final history = <Message>[];
+    while (true) {
+      stdout.write('\nYou: ');
+      final input = stdin.readLineSync();
+      if (input == null || input.isEmpty) break;
+      history.add(Message.user(input));
 
-  while (true) {
-    stdout.write('\nYou: ');
-    final input = stdin.readLineSync();
-    if (input == null || input.isEmpty) break;
-
-    print('\nAssistant: ');
-    final events = agent.run([Message.user(input)]);
-
-    await for (final event in events) {
-      if (event is AgentOutputEvent && event.isFinal) {
-        print(event.output.content);
+      final events = runner.run(RunContext.background(), [...history]);
+      for (var e = await events.nextOrNull(); e != null; e = await events.nextOrNull()) {
+        if (e.error != null) {
+          print('Error: ${e.error}');
+          continue;
+        }
+        final message = await adk.getMessageFromEvent(e);
+        if (message == null || message.role != RoleType.assistant) continue;
+        if (message.toolCalls?.isNotEmpty ?? false) continue;
+        print('\nAssistant: ${message.content}');
+        history.add(message);
       }
     }
+  } finally {
+    model.dispose();
+    embedder.dispose();
   }
 }
 ```
+
+The earlier version of this example used a `ChatModelAgent(name:, model:, tools:, systemPrompt:)` constructor, `InvokableTool.fromFunction` and `vectorStore.getAllDocuments()`, none of which exist; `FunctionTool` and the agent of `adk.dart` replace the first two, and the chunks are kept in a list instead of being read back from the store.
 
 ---
 
 ## Migration Guide
 
-If upgrading from a previous version:
+[MIGRATION.md](MIGRATION.md) covers everything that changed in 0.9. For the
+features on this page, three of its intentional breaks matter:
 
-1. **Gemini Provider**: New feature, no migration needed
-2. **ADK Agents**: New feature, no migration needed
-3. **Checkpoint System**: New feature, no migration needed
-4. **Advanced Retrievers**: New feature, no migration needed
-5. **Document Pipeline**: New feature, no migration needed
-6. **Rerankers**: New feature, no migration needed
-7. **Text Splitters**: `HtmlSplitter` and `MarkdownSplitter` extend existing `TextSplitter`
+1. **Checkpoint classes** of `StateGraph` (`InMemoryCheckpointStore<S>`,
+   `FileCheckpointStore<S>`, `JsonCheckpointSerializer<S>`, …) come from
+   `package:threepio_core/legacy_graph.dart`, imported `as legacy` next to the
+   umbrella (section 3).
+2. **A custom `DocumentTransformer`** declares the optional
+   `{TransformerOptions? options}` parameter of `transform` (section 5).
+3. **`ToolRegistry.register`** takes effect at once; look tools up with
+   `await registry.findTool(name)` (sections 1 and 2).
+
+The ReAct agent of section 2 is `LegacyChatModelAgent`: in the umbrella,
+`ChatModelAgent` is the Kortney runtime. Earlier versions of this page used
+names and parameters that do not exist (`ChatModelAgent(toolRegistry:)`,
+`InvokableTool.fromFunction`, `MessageInputPart.audioUrl`, …); the examples
+now use what exists.
 
 ---
 
 ## Best Practices
 
-1. **Use streaming** for long-running operations to provide user feedback
-2. **Configure checkpoints** for any workflow that may need human intervention
-3. **Combine retrieval strategies** (hybrid + reranking) for better results
-4. **Use appropriate splitters** for your content type (HTML, Markdown, etc.)
-5. **Monitor token usage** to optimize costs
-6. **Handle errors gracefully** with try-catch and fallback strategies
-7. **Use agents** for complex multi-step tasks that require reasoning
+1. **Use streaming** for long-running operations to give users feedback.
+2. **Start new code with the Eino-shaped APIs** (`adk.dart`, `compose.dart`,
+   `flow.dart`); the features on this page stay for existing code.
+3. **Configure checkpoints** for any workflow that may need a human decision.
+4. **Combine retrieval strategies** (hybrid search and reranking) for better
+   results.
+5. **Use the splitter that fits the content** (HTML, Markdown, plain text).
+6. **Monitor token usage** to keep costs down.
+7. **Handle errors**: providers throw `ChatModelException`s that say whether
+   a retry can help (`isRetryable`); `RetryingChatModel` acts on them, and
+   `FailoverChatModel` switches to its fallback on any error except a
+   cancellation unless given a `shouldFailover`.
+8. **Call `dispose()`** on models and embedders you created without an
+   `httpClient` once you no longer need them.

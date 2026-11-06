@@ -1,6 +1,6 @@
 name: threepio_core
-description: Production-ready LLM application framework for Dart/Flutter. Build intelligent apps with chat models, RAG, agents, graphs, and observability. Inspired by Eino and LangChain.
-version: 0.1.0
+description: A Dart port of Eino v0.9, the LLM application framework by CloudWeGo, with eino-ext components - chat models, tools, graphs, workflows, agents, RAG and tracing.
+version: 0.9.0
 homepage: https://github.com/EsotericTech/threepio
 repository: https://github.com/EsotericTech/threepio
 issue_tracker: https://github.com/EsotericTech/threepio/issues

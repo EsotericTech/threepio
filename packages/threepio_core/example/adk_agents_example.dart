@@ -1,26 +1,43 @@
 // ignore_for_file: avoid_print
 
+/// The agent runtime of the umbrella library (the Kortney runtime),
+/// demonstrating:
+/// 1. ChatModelAgent run through a Runner (model + tools loop)
+/// 2. Event streaming and handling
+/// 3. WorkflowAgent for multi-step processes (legacy agents)
+///
+/// This example uses the `ChatModelAgent`, `Runner` and agent events that
+/// `package:threepio_core/threepio_core.dart` exports, and the older
+/// `LegacyChatModelAgent` and `WorkflowAgent`. They stay for the apps built
+/// on them; since 0.9 the umbrella's `ChatModelAgent` runs on the
+/// Eino-shaped engine of `package:threepio_core/adk.dart`. **New code uses
+/// `adk.dart` directly** (its `ChatModelAgent`, `Runner`, `AgentTool`,
+/// interrupts and checkpoints): see `hitl_approval_example.dart`,
+/// `deep_agent_example.dart` and `mcp_tools_example.dart`.
+///
+/// No Eino counterpart: this is the umbrella's Kortney runtime; its
+/// Eino-shaped successor is `adk.dart` (Go `adk`).
+///
+/// To run this example:
+///
+/// ```bash
+/// GEMINI_API_KEY=... dart run example/adk_agents_example.dart
+/// ```
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:threepio_core/threepio_core.dart';
 
-/// Agent Development Kit (ADK) example demonstrating:
-/// 1. ChatModelAgent run through a Runner (model + tools loop)
-/// 2. Event streaming and handling
-/// 3. WorkflowAgent for multi-step processes (legacy agents)
-///
-/// To run this example:
-/// 1. Set GEMINI_API_KEY environment variable
-/// 2. Run: dart run example/adk_agents_example.dart
 Future<void> main() async {
   print('=== Agent Development Kit (ADK) Examples ===\n');
 
   final apiKey = Platform.environment['GEMINI_API_KEY'];
-  if (apiKey == null) {
-    print('Error: GEMINI_API_KEY must be set');
-    exit(1);
+  if (apiKey == null || apiKey.isEmpty) {
+    stderr.writeln('Set GEMINI_API_KEY to run this example.');
+    return;
   }
 
   final model = GeminiChatModel(
@@ -153,7 +170,9 @@ Future<void> workflowAgentExample(GeminiChatModel model) async {
     systemPrompt: 'You summarize plans into a brief executive summary.',
   );
 
-  // Create workflow
+  // Create workflow. The default WorkflowConfig runs the steps one after
+  // another (WorkflowMode.sequential); a failed step ends the workflow with a
+  // WorkflowException.
   final workflow = WorkflowAgent(
     name: 'planning-workflow',
     description: 'A workflow that analyzes, plans, and summarizes',
@@ -180,10 +199,6 @@ Future<void> workflowAgentExample(GeminiChatModel model) async {
         ],
       ),
     ],
-    config: const WorkflowConfig(
-      mode: WorkflowMode.sequential,
-      stopOnFirstError: false,
-    ),
   );
 
   print('   User: I want to learn machine learning in 3 months.\n');
@@ -193,15 +208,12 @@ Future<void> workflowAgentExample(GeminiChatModel model) async {
     Message.user('I want to learn machine learning in 3 months.'),
   ]);
 
-  String currentStep = '';
   try {
     while (true) {
       final event = await reader.recv();
-      if (event is AgentRunStartEvent) {
-        if (event.agentName != currentStep) {
-          currentStep = event.agentName;
-          print('   --- Step: $currentStep ---');
-        }
+      // The workflow reports each step it starts as a state update.
+      if (event is AgentStateUpdateEvent && event.stateName == 'current_step') {
+        print('   --- Step: ${event.newValue} ---');
       } else if (event is AgentOutputEvent && !event.isPartial) {
         print('   ${_truncate(event.message.content, 100)}\n');
       }
@@ -275,9 +287,9 @@ class _CalculatorTool extends InvokableTool {
     }
   }
 
-  double _evaluate(String expr) {
+  double _evaluate(String expression) {
     // Remove spaces and handle basic operations
-    expr = expr.replaceAll(' ', '');
+    final expr = expression.replaceAll(' ', '');
 
     // Handle percentage
     if (expr.contains('%')) {

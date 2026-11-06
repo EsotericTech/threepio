@@ -1,46 +1,58 @@
 // ignore_for_file: avoid_print
 
+/// Example of the Google Gemini chat model.
+///
+/// This example demonstrates:
+/// 1. Basic text generation
+/// 2. Streaming responses
+/// 3. Tool calling: the model asks for a tool, the result is sent back by
+///    hand
+/// 4. A ReAct agent with a calculator tool (the umbrella's older `Agent` and
+///    `ToolRegistry`; new code uses `ChatModelAgent` of
+///    `package:threepio_core/adk.dart`, see `mcp_tools_example.dart`)
+/// 5. Image generation with Imagen
+///
+/// Eino counterpart: eino-ext `components/model/gemini`.
+///
+/// To run this example:
+///
+/// ```bash
+/// GEMINI_API_KEY=... dart run example/gemini_example.dart
+/// # Optional: GEMINI_MODEL (default gemini-2.5-flash).
+/// ```
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:threepio_core/threepio_core.dart';
 
-/// Comprehensive example showing how to use Threepio Core with Google Gemini
-///
-/// This example demonstrates:
-/// 1. Basic text generation
-/// 2. Streaming responses
-/// 3. Multimodal input (images)
-/// 4. Image generation
-/// 5. Tool calling
-/// 6. Agent with ReAct pattern
-///
-/// To run this example:
-/// 1. Set GEMINI_API_KEY environment variable
-/// 2. Run: dart run example/gemini_example.dart
 Future<void> main() async {
   // Get API key from environment
   final apiKey = Platform.environment['GEMINI_API_KEY'];
-  if (apiKey == null) {
-    print('Error: GEMINI_API_KEY environment variable not set');
-    exit(1);
+  if (apiKey == null || apiKey.isEmpty) {
+    stderr.writeln('Set GEMINI_API_KEY to run this example.');
+    return;
   }
 
   // Configure Gemini
   final config = GeminiConfig(
     apiKey: apiKey,
-    defaultModel: 'gemini-2.5-flash',
-    timeout: const Duration(seconds: 120),
+    defaultModel: Platform.environment['GEMINI_MODEL'] ?? 'gemini-2.5-flash',
   );
 
   // Create chat model
   final model = GeminiChatModel(config: config);
 
   // Run examples
-  await basicGeneration(model);
-  await streamingExample(model);
-  await toolCallingExample(model);
-  await agentExample(model);
+  try {
+    await basicGeneration(model);
+    await streamingExample(model);
+    await toolCallingExample(model);
+    await agentExample(model);
+  } finally {
+    model.dispose();
+  }
   await imagenExample(apiKey);
 }
 
@@ -163,8 +175,7 @@ Future<void> agentExample(GeminiChatModel model) async {
   final calculatorTool = _CalculatorTool();
 
   // Create tool registry
-  final registry = ToolRegistry();
-  registry.register(calculatorTool);
+  final registry = ToolRegistry()..register(calculatorTool);
 
   // Create agent
   final agent = Agent(
@@ -303,5 +314,7 @@ Future<void> imagenExample(String apiKey) async {
     } else {
       print('Error: $e');
     }
+  } finally {
+    imagenModel.dispose();
   }
 }

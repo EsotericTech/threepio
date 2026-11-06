@@ -1,5 +1,13 @@
 # Threepio Enhancement Plan: Eino Feature Parity
 
+> **Superseded.** This is the first, pre-0.9 plan for bringing Eino features to
+> threepio. It was replaced by the plan for the 0.9 port of Eino v0.9.22
+> (`docs/EINO_PARITY_PLAN.md`, a maintainers' working document that is not
+> part of the repository or the package). What was built is described in the [README](../README.md),
+> [MIGRATION.md](MIGRATION.md) and the [CHANGELOG](../CHANGELOG.md). This file
+> is kept as a record. Its code blocks are design sketches: they do not compile
+> against the current API and are not checked by the documentation tests.
+
 ## Executive Summary
 
 This document outlines a comprehensive plan to enhance the Threepio Dart LLM framework with 4 high-value features from the ByteDance Eino framework, adapted for idiomatic Dart implementation.
