@@ -219,6 +219,13 @@ final class LangfuseConfig {
 /// ingestion API Langfuse has deprecated (`/api/public/ingestion`) is not
 /// used.
 ///
+/// **Not yet verified against a live Langfuse project.** The spans are sent
+/// as OTLP/JSON, which Langfuse documents as supported (eino-ext's v2 README:
+/// "Langfuse supports OTLP over HTTP/protobuf and HTTP/JSON"), but no export
+/// has been checked against a real project yet. The `integration`-tagged
+/// test `test/integration/langfuse_integration_test.dart` does that check
+/// when it is run with `THREEPIO_INTEGRATION=1` and the project's keys.
+///
 /// ```dart
 /// final langfuse = LangfuseHandler(
 ///   const LangfuseConfig(

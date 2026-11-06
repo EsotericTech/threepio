@@ -15,6 +15,7 @@ import 'package:meta/meta.dart';
 import '../../../../errors.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
+import '../../../../internal/go_duration.dart' as go_duration;
 import 'ollama_config.dart';
 
 /// The conversions of the Ollama provider. Public in `src/` for the tests;
@@ -221,6 +222,8 @@ abstract final class OllamaConverters {
   /// Without required parameters `required` is `null`, as Go sends its nil
   /// slice.
   static Map<String, Object?> toolToOllama(ToolInfo tool) {
+    final rawSchema = tool.function.parametersJsonSchema;
+    if (rawSchema != null) return _rawToolToOllama(tool, rawSchema);
     final parameters = tool.function.parameters;
     final required = parameters?.required ?? const <String>[];
     return {
@@ -238,6 +241,74 @@ abstract final class OllamaConverters {
           },
         },
       },
+    };
+  }
+
+  /// [toolToOllama] for a tool info made with `ToolInfo.fromJsonSchemaMap`,
+  /// read the way Go reads every schema (`toOllamaTools` over the
+  /// `*jsonschema.Schema` of the tool): `required` is the document's list as
+  /// it is (`[]` stays `[]`; `null` without one), and each property keeps
+  /// what `schemaToToolProperty` keeps, nothing else (see
+  /// [_rawToolPropertyOf]).
+  static Map<String, Object?> _rawToolToOllama(
+    ToolInfo tool,
+    Map<String, dynamic> schema,
+  ) {
+    final required = schema['required'];
+    final properties = schema['properties'];
+    return {
+      'type': 'function',
+      'function': {
+        'name': tool.name,
+        'description': tool.desc ?? '',
+        'parameters': {
+          'type': 'object',
+          'required': required is List<Object?>
+              ? [
+                  for (final name in required)
+                    if (name is String) name,
+                ]
+              : null,
+          'properties': {
+            if (properties is Map<String, Object?>)
+              for (final MapEntry(:key, :value) in properties.entries)
+                key: _rawToolPropertyOf(value),
+          },
+        },
+      },
+    };
+  }
+
+  /// One property of a JSON Schema document (Go: `schemaToToolProperty`):
+  /// its `anyOf` branches (each read the same way), its type, its items, its
+  /// description and its enum values.
+  ///
+  /// As Go's `api.PropertyType` writes it, a type list of one name is that
+  /// name, any other list stays a list (`["string", "null"]`), and no type
+  /// is `null`. A schema that is not an object (`true`, `false`) has none of
+  /// these.
+  static Map<String, Object?> _rawToolPropertyOf(Object? raw) {
+    final property = raw is Map<String, Object?> ? raw : const <String, Object?>{};
+    final type = switch (property['type']) {
+      final String type when type.isNotEmpty => type,
+      final List<Object?> types => switch (types.whereType<String>().toList()) {
+          [final single] => single,
+          final names => names,
+        },
+      _ => null,
+    };
+    final anyOf = property['anyOf'];
+    final items = property['items'];
+    final description = property['description'];
+    final enumValues = property['enum'];
+    return {
+      if (anyOf is List<Object?> && anyOf.isNotEmpty)
+        'anyOf': [for (final branch in anyOf) _rawToolPropertyOf(branch)],
+      'type': type,
+      if (items != null) 'items': _rawToolPropertyOf(items),
+      'description': description is String ? description : '',
+      if (enumValues is List<Object?> && enumValues.isNotEmpty)
+        'enum': [...enumValues],
     };
   }
 
@@ -308,45 +379,8 @@ abstract final class OllamaConverters {
 
   /// [duration] as Go's `time.Duration.String` writes it: `0s`, `250ms`,
   /// `1.5s`, `5m0s`, `1h2m3s`.
-  static String goDurationString(Duration duration) {
-    var micros = duration.inMicroseconds;
-    if (micros == 0) return '0s';
-    final negative = micros < 0;
-    if (negative) micros = -micros;
-
-    final String text;
-    if (micros < Duration.microsecondsPerMillisecond) {
-      text = '$micros${String.fromCharCode(0xB5)}s';
-    } else if (micros < Duration.microsecondsPerSecond) {
-      final millis = micros ~/ Duration.microsecondsPerMillisecond;
-      final fraction = micros % Duration.microsecondsPerMillisecond;
-      text = '$millis${_fraction(fraction, 3)}ms';
-    } else {
-      final fraction = micros % Duration.microsecondsPerSecond;
-      final totalSeconds = micros ~/ Duration.microsecondsPerSecond;
-      final seconds = '${totalSeconds % 60}${_fraction(fraction, 6)}s';
-      final totalMinutes = totalSeconds ~/ 60;
-      if (totalMinutes == 0) {
-        text = seconds;
-      } else {
-        final hours = totalMinutes ~/ 60;
-        final minutes = '${totalMinutes % 60}m$seconds';
-        text = hours == 0 ? minutes : '${hours}h$minutes';
-      }
-    }
-    return negative ? '-$text' : text;
-  }
-
-  /// `.5` for 500 of 1000 ([digits] 3): the fraction without trailing zeros,
-  /// or nothing when it is zero (Go: `fmtFrac`).
-  static String _fraction(int value, int digits) {
-    if (value == 0) return '';
-    var text = value.toString().padLeft(digits, '0');
-    while (text.endsWith('0')) {
-      text = text.substring(0, text.length - 1);
-    }
-    return '.$text';
-  }
+  static String goDurationString(Duration duration) =>
+      go_duration.goDurationString(duration);
 
   static ToolCall _toolCallOf(Object? raw) {
     final call = _map(raw);

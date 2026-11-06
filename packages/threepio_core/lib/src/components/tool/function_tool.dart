@@ -12,6 +12,7 @@ import 'dart:convert';
 
 import '../../core/run_context.dart';
 import '../../errors.dart';
+import '../../internal/go_json.dart';
 import '../../internal/naming.dart';
 import '../../schema/tool_info.dart';
 import '../../schema/tool_result.dart';
@@ -60,9 +61,11 @@ typedef ToolOutputEncoder<O> = Object? Function(O output);
 ///   `fromJson` rejects make the call fail with a [ThreepioFormatException].
 ///   Give the tool to `wrapToolWithErrorHandler` to report that to the model
 ///   instead.
-/// * A `String` result is returned as it is. Everything else is encoded with
-///   `jsonEncode`, after [ToolOutputEncoder] if there is one; without one,
-///   `jsonEncode` calls the `toJson()` method of the output.
+/// * A `String` result is returned as it is. Everything else is encoded as
+///   JSON the way Go's sonic writes it (as `jsonEncode` does, except that
+///   backspace and form feed are written `\u0008` and `\u000c`), after
+///   [ToolOutputEncoder] if there is one; without one, the `toJson()` method
+///   of the output is called.
 /// * What the function throws is thrown by the call, unchanged.
 ///
 /// There is nothing that checks the parameters against [I]: keeping the two
@@ -361,10 +364,10 @@ ToolInfo _toolInfo(
   ParamsOneOf params,
   Map<String, Object?>? extra,
 ) =>
-    ToolInfo.fromJsonSchema(
+    ToolInfo.fromParamsOneOf(
       name: name,
       desc: description,
-      schema: params.toJsonSchema(),
+      params: params,
       extra: extra,
     );
 
@@ -423,9 +426,10 @@ String _jsonKind(Object? value) => switch (value) {
 /// The string a tool hands to the model for [output].
 ///
 /// Port of eino's `marshalString`: a `String` is the result as it is,
-/// everything else is encoded as JSON, so `null` becomes `null` and `42`
-/// becomes `42`. [toJson], when given, is applied first.
+/// everything else is encoded as JSON the way `sonic.MarshalString` writes
+/// it, so `null` becomes `null` and `42` becomes `42`. [toJson], when given,
+/// is applied first.
 String _encodeOutput<O>(O output, ToolOutputEncoder<O>? toJson) {
   final encodable = toJson == null ? output : toJson(output);
-  return encodable is String ? encodable : jsonEncode(encodable);
+  return encodable is String ? encodable : goSonicMarshal(encodable);
 }

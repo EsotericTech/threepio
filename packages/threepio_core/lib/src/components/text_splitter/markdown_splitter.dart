@@ -1,4 +1,6 @@
 import '../../schema/document.dart';
+import '../document/transformer.dart';
+import '../document/transformer/splitter/markdown_header_splitter.dart';
 import 'fixed_size_split.dart';
 import 'text_splitter.dart';
 
@@ -61,6 +63,37 @@ class MarkdownSplitter extends TextSplitter {
   /// Whether to return each line as a separate chunk (for embedding).
   final bool returnEachLine;
 
+  /// eino-ext's markdown header splitter, configured by [config].
+  ///
+  /// Port of eino-ext `markdown.NewHeaderSplitter`. Its algorithm is Eino's,
+  /// not the one of this class: Eino cuts a document at every line that
+  /// starts with one of the configured headers (outside fenced code blocks),
+  /// whatever the length of the pieces, and records the text of the headers
+  /// in effect in each chunk's metadata under the names the config maps them
+  /// to:
+  ///
+  /// ```dart
+  /// final splitter = MarkdownSplitter.fromHeaderConfig(
+  ///   const MarkdownHeaderSplitterConfig(
+  ///     headers: {'#': 'h1', '##': 'h2'},
+  ///     trimHeaders: true,
+  ///   ),
+  /// );
+  /// final chunks = await splitter.transform(documents);
+  /// ```
+  ///
+  /// Every chunk is a new document with a copy of its document's metadata
+  /// (plus the header entries) and source and the id the config's
+  /// `idGenerator` makes (by default the document's own); the input
+  /// documents are not changed.
+  ///
+  /// Throws [ArgumentError] when `headers` is empty (`no headers specified`)
+  /// or a header is not made of `#` only (`header can only consist of '#':
+  /// …`).
+  static DocumentTransformer fromHeaderConfig(
+    MarkdownHeaderSplitterConfig config,
+  ) =>
+      MarkdownHeaderSplitterTransformer(config);
 
   @override
   List<String> splitText(

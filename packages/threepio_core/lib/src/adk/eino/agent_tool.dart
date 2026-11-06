@@ -100,10 +100,10 @@ final class AgentTool extends InvokableTool {
       );
     }
     final params = inputSchema ?? _defaultAgentToolParams;
-    return ToolInfo.fromJsonSchema(
+    return ToolInfo.fromParamsOneOf(
       name: name,
       desc: description,
-      schema: params.toJsonSchema(),
+      params: params,
     );
   }
 

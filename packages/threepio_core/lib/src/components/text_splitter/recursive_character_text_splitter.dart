@@ -1,4 +1,6 @@
 import '../../schema/document.dart';
+import '../document/transformer.dart';
+import '../document/transformer/splitter/recursive_splitter.dart';
 import 'fixed_size_split.dart';
 import 'text_splitter.dart';
 
@@ -57,6 +59,34 @@ class RecursiveCharacterTextSplitter extends TextSplitter {
 
   /// Separators to try in order
   final List<String> separators;
+
+  /// eino-ext's recursive splitter, configured by [config].
+  ///
+  /// Port of eino-ext `recursive.NewSplitter`. Its algorithm is Eino's, not
+  /// the one of this class: Eino tries the separators in order and cuts at
+  /// the first one the text contains, cuts the pieces that are still too
+  /// long at the separators after it, merges small pieces up to the chunk
+  /// size with up to `overlapSize` repeated between chunks, measures length
+  /// in UTF-8 bytes unless `lenFunc` says otherwise, and keeps or drops the
+  /// separators as `keepType` says. The result gives the same chunks as Eino
+  /// for the same text and configuration:
+  ///
+  /// ```dart
+  /// final splitter = RecursiveCharacterTextSplitter.fromConfig(
+  ///   const RecursiveSplitterConfig(chunkSize: 500, overlapSize: 50),
+  /// );
+  /// final chunks = await splitter.transform(documents);
+  /// ```
+  ///
+  /// Every chunk is a new document with a copy of its document's metadata
+  /// and source and the id the config's `idGenerator` makes (by default the
+  /// document's own); the input documents are not changed.
+  ///
+  /// Throws [ArgumentError] when `chunkSize` is not positive (`chunk size
+  /// must be greater than zero`) or `overlapSize` is negative (`overlap must
+  /// be greater than or equal to zero`).
+  static DocumentTransformer fromConfig(RecursiveSplitterConfig config) =>
+      RecursiveSplitterTransformer(config);
 
   @override
   List<String> splitText(

@@ -27,7 +27,10 @@ plan-execute-replan), and the retrieval flows of the Eino package `flow`
 wave of eino-ext: the chat model providers (OpenAI, OpenRouter, Claude,
 Gemini, Ollama, OpenAI-compatible endpoints), embedders and an embedding
 cache, the MCP client with its tools and prompt template, and the local
-filesystem backend.
+filesystem backend; and from its second wave: document loaders, parsers and
+transformers, the HTTP request, search, Wikipedia, sequential-thinking and
+command-line tools, the Qdrant indexer and retriever, and tracing to
+LangSmith.
 
 ### Fixed
 
@@ -371,6 +374,96 @@ filesystem backend.
   agents.md middleware should skip (Go: an error wrapping `os.ErrNotExist`).
   `InMemoryBackend`, like eino's in-memory backend, does not: it reports a
   missing file with a plain `ThreepioException`.
+- **Tool infos that keep a JSON Schema document as it is** (coordinator
+  decision after P11; Go `schema.NewParamsOneOfByJSONSchema` for any
+  schema): `ToolInfo.fromJsonSchemaMap`, `ParamsOneOf.jsonSchemaMap` (with
+  the getter `jsonSchemaMap`), `FunctionInfo.parametersJsonSchema` (left out of `toJson` when `null`) and
+  `ToolInfo.fromParamsOneOf` (the tool info for any `ParamsOneOf` form).
+  Every keyword survives (`anyOf`, `$ref`, `$defs`, `format`, `default`, …);
+  `function.parameters` holds the part threepio's `JSONSchema` can describe.
+  The providers send the document as given: OpenAI-compatible models and
+  OpenRouter as `parameters`, Gemini as `parametersJsonSchema`, Claude its
+  `properties` and `required`, Ollama each property's `anyOf`, type (lists
+  too), items, description and enum, as eino-ext does for every schema.
+- **Document transformers** (port of eino-ext `transformer/splitter/*` and
+  `transformer/reranker/score`), in `components.dart`, as
+  `DocumentTransformer`s: `RecursiveCharacterTextSplitter.fromConfig`
+  (`RecursiveSplitterConfig`: `chunkSize`, `overlapSize`, `separators`,
+  `lenFunc`, `keepType` with `SplitterKeepType`, `idGenerator` with
+  `SplitIdGenerator`), `MarkdownSplitter.fromHeaderConfig`
+  (`MarkdownHeaderSplitterConfig`: header map, `trimHeaders`, `idGenerator`;
+  lines inside ``` or ~~~ fences are never headers),
+  `HtmlSplitter.fromHeaderConfig` (`HtmlHeaderSplitterConfig`, on
+  `package:html`), `SemanticSplitter` (`SemanticSplitterConfig`: embedder,
+  buffer size, minimum chunk size, separators, percentile) and
+  `ScoreReorderTransformer` ("lost in the middle": the best documents at both
+  ends). The existing splitter classes are unchanged.
+- **Qdrant** (port of eino-ext `indexer/qdrant` and `retriever/qdrant`, over
+  Qdrant's REST API instead of gRPC): `QdrantIndexer.create`
+  (`QdrantIndexerConfig`:
+  collection, vector size, `QdrantDistance`, batch size, embedder; creates the
+  collection when it is missing) and `QdrantRetriever`
+  (`QdrantRetrieverConfig`, per-call `QdrantRetrieverOptions` with a filter),
+  both firing the indexer/retriever callbacks, on `QdrantClient`
+  (`QdrantPoint`, `QdrantScoredPoint`, `QdrantUpdateResult` with
+  `QdrantUpdateStatus`, `QdrantException`). Queries use
+  `POST /collections/{c}/points/query` (Qdrant 1.10 or later), the REST
+  counterpart of the go-client's `Query`.
+- **Tools** (port of eino-ext `tool/*`), in `components.dart`:
+  - `HttpRequestToolkit` with `HttpGetRequestTool`, `HttpPostRequestTool`,
+    `HttpPutRequestTool`, `HttpDeleteRequestTool` (`httprequest`;
+    `HttpRequestToolConfig`, `HttpRequestToolkitConfig`).
+  - `GoogleSearchTool` (`googlesearch`, the Custom Search JSON API;
+    `GoogleSearchConfig`, `GoogleSearchRequest`, `GoogleSearchResult`,
+    `GoogleApiException`).
+  - `WikipediaTool` (`wikipedia`; `WikipediaConfig`, `WikipediaException`,
+    `WikipediaApiException`).
+  - `DuckDuckGoSearchTool` (`duckduckgo/v2`, scraping DuckDuckGo's HTML
+    page: not meant for production, as upstream says; `DuckDuckGoConfig`,
+    `DuckDuckGoRegion`, `DuckDuckGoTimeRange`, `DuckDuckGoSearchClient`).
+  - `SearxngSearchTool` and `SearxngClient` (`searxng`; `SearxngClientConfig`,
+    `SearxngSearchRequestConfig` with `SearxngTimeRange`, `SearxngLanguage`,
+    `SearxngSafeSearch`, `SearxngEngine`).
+  - `SequentialThinkingTool` (`sequentialthinking`).
+  - `PyExecutorTool` and `StrReplaceEditorTool` over a
+    `CommandLineOperator` (`commandline`); `LocalOperator` (in `io.dart`)
+    runs commands with `dart:io` processes, without a shell. The Docker
+    sandbox is not ported.
+  - The search tools answer the model exactly as Go does and also give Dart
+    callers their hits as the shared `SearchResult` (title, URL, snippet,
+    extra).
+- **LangSmith** (port of eino-ext `callbacks/langsmith`), in
+  `callbacks.dart`: `LangSmithHandler` (`LangSmithConfig`), a
+  `ComponentCallbackHandler` that creates a run with `POST /runs` at the start
+  of every component and updates it with `PATCH /runs/{id}` at its end;
+  `LangSmithTrace` (session, tags, metadata, reference example of a run;
+  `LangSmithTraceOptions`, `LangSmithState`), `LangSmithFlowTrace` (several
+  runs in one trace), `LangSmithClient` (`LangSmithApi`, `LangSmithRun`,
+  `LangSmithRunPatch`, `LangSmithRunType`, `LangSmithException`). Requests
+  are sent in the background, in order, never blocking or breaking the run;
+  `flush()` and `shutdown()` wait for them. Not yet verified against a live
+  LangSmith project: `test/integration/langsmith_integration_test.dart` does
+  that check when run with `THREEPIO_INTEGRATION=1` and a key.
+- **Document loaders and parsers** (port of eino-ext `loader/file`,
+  `loader/url`, `parser/html`, `parser/pdf`, `parser/docx`,
+  `parser/xlsx`): `FileLoader` (`FileLoaderConfig`; in `io.dart`) and the
+  URL loader `UrlLoader.fromConfig` (`UrlContentLoader`, `UrlLoaderConfig`
+  with a parser, a client, a request builder and a timeout), both
+  `Loader`s that fire the loader callbacks; eino-ext's HTML parser
+  `HtmlParser.fromConfig` (`HtmlContentParser`, `HtmlParserConfig` with a
+  CSS selector, `htmlBodySelector`; on `package:html`, with the text passed
+  through a port of bluemonday's UGC policy as Go does), `PdfParser`
+  (`PdfParserConfig`, `PdfParserOptions`; the text comes from an injected
+  `PdfTextExtractor`, since there is no pure-Dart PDF text extraction),
+  `DocxParser` (`DocxParserConfig`: sections, headers, footers, tables as
+  Markdown, a port of docx2md; `DocxParser.sectionTypeOf`) and `XlsxParser`
+  (`XlsxParserConfig`: sheet, header row, id prefix; one document per row),
+  both reading the zip archive themselves with `package:archive` and
+  `package:xml`. The metadata keys are top-level constants
+  (`fileLoaderMetaKeyFileName`, `htmlMetaKeyTitle`, `docxMetaKeySectionType`,
+  `xlsxMetaKeyRow`, …). The legacy `HtmlParser` gains an optional
+  `selector`: when it is set, the parser works on the elements it selects
+  (the outermost ones, in document order); without it nothing changes.
 - **Langfuse**: the observation of an agent ends with the messages and custom
   outputs of its events; retry notifications of its model
   (`WillRetryException`) are kept as `eino_retry_events` metadata instead of
@@ -707,6 +800,31 @@ filesystem backend.
 
 ### Changed
 
+- **MCP tools keep their input schema exactly as the server sends it**
+  (`ToolInfo.fromJsonSchemaMap`): the providers now receive every keyword
+  (`anyOf`, `$ref`, `$defs`, `format`, `default`, …), which used to be
+  dropped by the mapping onto `JSONSchema`; `function.parameters` still
+  holds that mapping. The client's protocol negotiation is unchanged in
+  behaviour (it asks for `2025-11-25` and speaks `2025-06-18`, `2025-03-26`
+  or `2024-11-05` when the server answers with one of them) and is now
+  documented and tested against each.
+- **`FunctionTool`, `StreamFunctionTool`**: a result that is not a `String`
+  is written as Go's `sonic.MarshalString` writes it, so backspace and form
+  feed are `\u0008` and `\u000c` (they were `\b` and `\f`); everything else
+  is unchanged. `FunctionTool`, `StreamFunctionTool`, `EnhancedFunctionTool`,
+  `EnhancedStreamFunctionTool`, `GraphTool.invokable`/`streamable` and
+  `AgentTool` keep a
+  `ParamsOneOf.jsonSchemaMap` document in their tool info (built with the new
+  `ToolInfo.fromParamsOneOf`); the other `ParamsOneOf` forms give the same
+  tool info as before.
+- **`LangfuseHandler`**'s documentation says it has not been verified
+  against a live Langfuse project; the `integration`-tagged
+  `test/integration/langfuse_integration_test.dart` checks an export end to
+  end when run with `THREEPIO_INTEGRATION=1` and the project's keys.
+- New dependencies: `archive` (`^4.0.0`), `html` (`^0.15.5`) and `xml`
+  (`^6.5.0`), for the HTML parser, the HTML splitter and web tools, and the
+  DOCX and XLSX parsers. All three were already in `sourcery_main`'s
+  dependency graph.
 - **`OpenAIChatModel`** runs on the shared OpenAI-compatible client. Visible
   differences: a stream holds back messages without content, tool calls or
   reasoning and merges them into the next one (as Eino does; the first frame
@@ -1314,9 +1432,12 @@ filesystem backend.
     also `EnhancedInvokableTool`s; a tool error (`isError`) throws
     `McpToolkitException` unless `errorAsError: false`, as officialmcp does;
     the client asks for protocol `2025-11-25` and accepts the three earlier
-    revisions; input schemas are mapped onto threepio's `JSONSchema`, which
-    cannot hold every keyword (the raw schema is kept with
-    `McpMetadataMode.full`); policy output has a fixed key order;
+    revisions (`2025-06-18`, `2025-03-26`, `2024-11-05`) when the server
+    answers with one of them, as the specification's lifecycle requires;
+    input schemas are kept exactly as the server sends them
+    (`ToolInfo.fromJsonSchemaMap`, since P12; before, they were mapped onto
+    threepio's `JSONSchema` and lost the keywords it has no field for);
+    policy output has a fixed key order;
     `McpPromptTemplate` uses the new multi-content fields.
   - *Local backend*: a missing file is a plain `ThreepioException` with Go's
     text (`file not found: <path>`; never `FileNotFoundException`, so the
@@ -1327,6 +1448,111 @@ filesystem backend.
     `CancelledException` (Go: `context canceled`, exit code -1); `read`
     with no limit reads 2000 lines, as Go; bytes that are not UTF-8 are read
     as U+FFFD.
+- **Differences from Eino in the ext components (wave 2).**
+  - *Tool schemas*: a tool info built from a JSON Schema document is sent as
+    given; acl/openai's `sortArrayFields` (which sorts `required`) is not
+    applied. Claude gets `{}` for a document without `properties` (Go:
+    `null`).
+  - *Documents*: `FileLoader` reports any failing `stat` with Go's "no such
+    file or directory" text (`dart:io` does not tell the causes apart) and
+    streams the file after checking it can be opened. The URL loader also
+    hands the call's `LoaderOptions` to the request builder, reads the whole
+    body before parsing (so a timeout and a cancellation cover it, and a
+    broken body fails the load rather than the parser), creates and closes a
+    client per load when none is given (Go: `http.DefaultClient`), and has a
+    `timeout` standing in for `http.Client.Timeout` (zero or negative: none,
+    as in Go); a cancellation or a timeout stops reading the body. The HTML
+    parser decodes invalid UTF-8 as U+FFFD, evaluates selectors with
+    `package:html` (cascadia's extensions such as `:contains` match nothing),
+    lets `package:html` decode entities, and walks the page without
+    recursion; a selector other than a plain tag name on a page nested too
+    deeply for `package:html` throws a `ThreepioFormatException` (the legacy
+    `HtmlParser`'s `selector` too). `PdfParser` has no text extraction of
+    its own. `DocxParser` returns the sections in the fixed order headers,
+    main text, tables, footers (Go walks a map), reads a file without
+    `word/styles.xml` without styles (Go panics), and reports XML syntax
+    errors with `package:xml`'s texts. `XlsxParser` applies the General
+    number format only (no dates, percentages or custom formats; `t="d"`
+    cells are not converted), stops a sheet after row 1,048,576, takes the
+    first of two sheets whose names differ only in case (Go picks either),
+    and checks no CRCs. A part with no XML element at all reads as Go
+    reads it: missing for the XLSX parser (excelize ignores the `io.EOF`),
+    an empty body or `open Docx document failed: EOF` for the DOCX parser. `IncludeComments` (deprecated upstream) is not
+    ported.
+  - *Transformers*: lengths default to UTF-8 bytes (Go's `len`); a chunk
+    keeps its source document's id, metadata (copied), and `source`, not its
+    `embedding`/`score` fields (the metadata entries Eino uses for them are
+    copied, as in Go); `SplitIdGenerator` returns `null` for Go's `""`;
+    configuration mistakes are `ArgumentError`s with Go's messages, and the
+    semantic splitter throws where Go panics (too few or short vectors, a
+    percentile outside the range); orders Go takes from a map are fixed. The
+    HTML header splitter works on `package:html`'s tree, which differs from
+    `x/net/html`'s in corners (`<main>`, `<dialog>`, `<search>` inside an
+    open `<p>`, `<isindex>`, `<template>`). The score reorder sorts stably,
+    ranks NaN lowest and also counts an `int` score.
+  - *Qdrant*: REST instead of gRPC (queries need Qdrant 1.10 or later); the
+    retriever applies a per-call score threshold (Go applies only the
+    configured one, although it reports the per-call one to callbacks);
+    its callback input reports the REST filter, or `null` (Go: the protobuf
+    filter, or `"null"`); retrieved metadata is a plain JSON map; a document
+    whose id is `null` gets a UUID (an empty id is sent as Go sends it, and
+    Qdrant refuses it); payload
+    values Go would panic on are `ThreepioFormatException`s; every request
+    has a 60 s default timeout (`QdrantClient.defaultTimeout`).
+  - *Web tools*: the answers to the model are Go's byte for byte (sonic's
+    escapes included); argument decoding errors use `encoding/json`'s
+    wording. Errors never contain an API key or a URL password (Go's
+    `url.Error` quotes the Google key; passwords show as `***`, as Go's
+    `stripPassword` writes them). As in Go, a zero timeout means no limit
+    for the HTTP request and Google tools, and the Go default for Wikipedia
+    (15 s, also when negative), DuckDuckGo and SearXNG (30 s; negative: no
+    limit); an explicit timeout also applies to an injected client. Redirects are followed
+    by hand with Go's rules (method changes, credential stripping,
+    `Referer`), checking the cancel token before each hop. The HTTP tools
+    send a Dart `User-Agent`. Google: a hit without `pagemap` gets an empty
+    description (Go fails the whole call), a response without `queries`, a
+    `null` hit or a 204 is tolerated (Go panics), trailing data after the
+    JSON is refused, `lang` is sent as `gl` (as Go does), no
+    `x-goog-api-client` header. Wikipedia counts `DocMaxChars` in UTF-8
+    bytes (Go's `len`) and, of several pages in an answer, takes the first
+    in answer order (Go walks a map).
+    DuckDuckGo picks from 8 desktop user agents (Go: uarand's list), its
+    page delay (`pageDelay`, Go: a fixed 3 s) is configurable and
+    cancellable, and any region code can be given
+    (`DuckDuckGoRegion('es-es')`). SearXNG: its retry delay (`retryDelay`,
+    Go: a fixed 1 s) is configurable and cancellable, a negative
+    `maxRetries` is an `ArgumentError` (Go crashes on the first search), a
+    `null` hit is written as an empty object, `searchResults` returns an
+    empty list where the tool fails with "no search results found"; the
+    unused proxy setting is not ported.
+  - *Command line and sequential thinking*: the three tools' schemas are
+    Go's exactly; JSON keys of the arguments match ignoring case, as Go's
+    decoders do. The editor's
+    ranged `view` numbers lines from the start of the range (Go's shadowed
+    `initLine` numbers them from 1, against its own description), and an
+    empty `old_str` in an empty file writes `new_str` (Go panics); Go's
+    other quirks are kept (`create` is recorded in the undo history, tabs
+    are expanded in the whole file, the executor ignores stderr and the exit
+    code and leaves its `.py` file behind). `LocalOperator` runs commands
+    without a shell, with a 30 s default timeout, reports `128 + signal` for
+    a killed process on POSIX and the unsigned exit code on Windows, and is
+    killed by a cancellation. The Docker sandbox is not ported. Sequential
+    thinking lists branches in first-seen order.
+  - *LangSmith*: requests are queued and sent in the background, in order,
+    a child's creation after its parent's (Go sends them synchronously in
+    the hook); a failed request is logged and counted, not retried; the
+    queue holds `LangSmithConfig.maxQueueSize` requests (2048 by default;
+    more are dropped, with one warning); the
+    update of a run whose creation was dropped is dropped too; after
+    `shutdown()` begins, no new run is created but the runs already created
+    are still ended. Dotted orders carry the microseconds of the start time,
+    as LangSmith's own clients write them (Go's layout writes a literal
+    `000000`, so runs that start within the same second sort at random).
+    Payloads are written with threepio's JSON form (camelCase message
+    fields); a successful creation's body is not read; a streamed output
+    keeps the extra values its streamed input added (Go drops them).
+    Caller metadata is never mutated, and a payload that cannot be encoded
+    still creates its run (Go fails or panics in those cases).
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

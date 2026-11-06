@@ -256,7 +256,9 @@ Map<String, Object?> _goToolInfoJson(ToolInfo info) => {
       if (info.extra != null && info.extra!.isNotEmpty) 'extra': _sortedMap(info.extra!),
       if (info.function.parameters != null) 'has_params_one_of': true,
       if (info.function.parameters != null)
-        'json_schema': info.function.parameters!.toJson(),
+        'json_schema':
+            info.function.parametersJsonSchema ??
+                info.function.parameters!.toJson(),
     };
 
 Map<String, Object?> _sortedMap(Map<String, dynamic> map) {

@@ -65,6 +65,8 @@ _FunctionInfo _$FunctionInfoFromJson(Map<String, dynamic> json) =>
           ? null
           : JSONSchema.fromJson(json['parameters'] as Map<String, dynamic>),
       strict: json['strict'] as bool?,
+      parametersJsonSchema:
+          json['parametersJsonSchema'] as Map<String, dynamic>?,
     );
 
 Map<String, dynamic> _$FunctionInfoToJson(_FunctionInfo instance) =>
@@ -73,6 +75,7 @@ Map<String, dynamic> _$FunctionInfoToJson(_FunctionInfo instance) =>
       'description': instance.description,
       'parameters': instance.parameters?.toJson(),
       'strict': instance.strict,
+      'parametersJsonSchema': ?instance.parametersJsonSchema,
     };
 
 _ToolInfo _$ToolInfoFromJson(Map<String, dynamic> json) => _ToolInfo(

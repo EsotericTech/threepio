@@ -691,6 +691,22 @@ List<Map<String, Object?>> claudeToolParams(
     ];
 
 Map<String, Object?> _inputSchema(ToolInfo tool) {
+  final rawSchema = tool.function.parametersJsonSchema;
+  if (rawSchema != null) {
+    // A JSON Schema document given as it is: like eino-ext's
+    // `toAnthropicToolParam`, the input schema takes its properties and its
+    // required list, each unchanged (an empty list too, as Go's `omitzero`
+    // keeps an empty non-nil slice). One deliberate difference: a document
+    // without properties gets an empty object, as every threepio tool does,
+    // where Go sends `null` (its nil ordered map).
+    final properties = rawSchema['properties'];
+    final required = rawSchema['required'];
+    return {
+      'type': 'object',
+      'properties': properties ?? const <String, Object?>{},
+      if (required is List) 'required': required,
+    };
+  }
   final schema = tool.function.parameters;
   if (schema == null) return {'type': 'object'};
   return {

@@ -40,6 +40,13 @@ dependencies:
   # HTTP Client
   http: ^1.1.0
 
+  # Documents: the HTML parser, the HTML header splitter and the web tools
+  # read HTML with an HTML5 parser; DOCX and XLSX files are zip archives of
+  # XML parts.
+  archive: ^4.0.0
+  html: ^0.15.5
+  xml: ^6.5.0
+
 dev_dependencies:
   # Testing
   test: ^1.24.0

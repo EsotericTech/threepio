@@ -659,7 +659,18 @@ mixin _$FunctionInfo {
  String get name;/// Description of what the function does
  String? get description;/// Parameters schema
  JSONSchema? get parameters;/// Whether the function is strict (OpenAI specific)
- bool? get strict;
+ bool? get strict;/// The parameters as a complete JSON Schema document, exactly as it was
+/// given (Eino: a `ParamsOneOf` made by `NewParamsOneOfByJSONSchema`).
+///
+/// [parameters] can describe types, descriptions, enums, items,
+/// properties, `required` and `additionalProperties`, nothing else. A
+/// schema that uses more (`anyOf`, `$ref`, `$defs`, `format`, `default`,
+/// `minimum`, …) is kept here unchanged, and [parameters] holds the part
+/// of it that [JSONSchema] can describe, for code that reads
+/// [parameters]. Providers send this map instead of [parameters] when it
+/// is set. Set it with [ToolInfo.fromJsonSchemaMap]; it is `null`
+/// otherwise, and left out of [toJson] then.
+@JsonKey(includeIfNull: false) Map<String, dynamic>? get parametersJsonSchema;
 /// Create a copy of FunctionInfo
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -672,16 +683,16 @@ $FunctionInfoCopyWith<FunctionInfo> get copyWith => _$FunctionInfoCopyWithImpl<F
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is FunctionInfo&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.parameters, parameters) || other.parameters == parameters)&&(identical(other.strict, strict) || other.strict == strict));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is FunctionInfo&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.parameters, parameters) || other.parameters == parameters)&&(identical(other.strict, strict) || other.strict == strict)&&const DeepCollectionEquality().equals(other.parametersJsonSchema, parametersJsonSchema));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,name,description,parameters,strict);
+int get hashCode => Object.hash(runtimeType,name,description,parameters,strict,const DeepCollectionEquality().hash(parametersJsonSchema));
 
 @override
 String toString() {
-  return 'FunctionInfo(name: $name, description: $description, parameters: $parameters, strict: $strict)';
+  return 'FunctionInfo(name: $name, description: $description, parameters: $parameters, strict: $strict, parametersJsonSchema: $parametersJsonSchema)';
 }
 
 
@@ -692,7 +703,7 @@ abstract mixin class $FunctionInfoCopyWith<$Res>  {
   factory $FunctionInfoCopyWith(FunctionInfo value, $Res Function(FunctionInfo) _then) = _$FunctionInfoCopyWithImpl;
 @useResult
 $Res call({
- String name, String? description, JSONSchema? parameters, bool? strict
+ String name, String? description, JSONSchema? parameters, bool? strict,@JsonKey(includeIfNull: false) Map<String, dynamic>? parametersJsonSchema
 });
 
 
@@ -709,13 +720,14 @@ class _$FunctionInfoCopyWithImpl<$Res>
 
 /// Create a copy of FunctionInfo
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? name = null,Object? description = freezed,Object? parameters = freezed,Object? strict = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? name = null,Object? description = freezed,Object? parameters = freezed,Object? strict = freezed,Object? parametersJsonSchema = freezed,}) {
   return _then(_self.copyWith(
 name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,description: freezed == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
 as String?,parameters: freezed == parameters ? _self.parameters : parameters // ignore: cast_nullable_to_non_nullable
 as JSONSchema?,strict: freezed == strict ? _self.strict : strict // ignore: cast_nullable_to_non_nullable
-as bool?,
+as bool?,parametersJsonSchema: freezed == parametersJsonSchema ? _self.parametersJsonSchema : parametersJsonSchema // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,
   ));
 }
 /// Create a copy of FunctionInfo
@@ -812,10 +824,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String name,  String? description,  JSONSchema? parameters,  bool? strict)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String name,  String? description,  JSONSchema? parameters,  bool? strict, @JsonKey(includeIfNull: false)  Map<String, dynamic>? parametersJsonSchema)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _FunctionInfo() when $default != null:
-return $default(_that.name,_that.description,_that.parameters,_that.strict);case _:
+return $default(_that.name,_that.description,_that.parameters,_that.strict,_that.parametersJsonSchema);case _:
   return orElse();
 
 }
@@ -833,10 +845,10 @@ return $default(_that.name,_that.description,_that.parameters,_that.strict);case
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String name,  String? description,  JSONSchema? parameters,  bool? strict)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String name,  String? description,  JSONSchema? parameters,  bool? strict, @JsonKey(includeIfNull: false)  Map<String, dynamic>? parametersJsonSchema)  $default,) {final _that = this;
 switch (_that) {
 case _FunctionInfo():
-return $default(_that.name,_that.description,_that.parameters,_that.strict);case _:
+return $default(_that.name,_that.description,_that.parameters,_that.strict,_that.parametersJsonSchema);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -853,10 +865,10 @@ return $default(_that.name,_that.description,_that.parameters,_that.strict);case
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String name,  String? description,  JSONSchema? parameters,  bool? strict)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String name,  String? description,  JSONSchema? parameters,  bool? strict, @JsonKey(includeIfNull: false)  Map<String, dynamic>? parametersJsonSchema)?  $default,) {final _that = this;
 switch (_that) {
 case _FunctionInfo() when $default != null:
-return $default(_that.name,_that.description,_that.parameters,_that.strict);case _:
+return $default(_that.name,_that.description,_that.parameters,_that.strict,_that.parametersJsonSchema);case _:
   return null;
 
 }
@@ -868,7 +880,7 @@ return $default(_that.name,_that.description,_that.parameters,_that.strict);case
 @JsonSerializable()
 
 class _FunctionInfo implements FunctionInfo {
-  const _FunctionInfo({required this.name, this.description, this.parameters, this.strict});
+  const _FunctionInfo({required this.name, this.description, this.parameters, this.strict, @JsonKey(includeIfNull: false) final  Map<String, dynamic>? parametersJsonSchema}): _parametersJsonSchema = parametersJsonSchema;
   factory _FunctionInfo.fromJson(Map<String, dynamic> json) => _$FunctionInfoFromJson(json);
 
 /// Name of the function
@@ -879,6 +891,37 @@ class _FunctionInfo implements FunctionInfo {
 @override final  JSONSchema? parameters;
 /// Whether the function is strict (OpenAI specific)
 @override final  bool? strict;
+/// The parameters as a complete JSON Schema document, exactly as it was
+/// given (Eino: a `ParamsOneOf` made by `NewParamsOneOfByJSONSchema`).
+///
+/// [parameters] can describe types, descriptions, enums, items,
+/// properties, `required` and `additionalProperties`, nothing else. A
+/// schema that uses more (`anyOf`, `$ref`, `$defs`, `format`, `default`,
+/// `minimum`, …) is kept here unchanged, and [parameters] holds the part
+/// of it that [JSONSchema] can describe, for code that reads
+/// [parameters]. Providers send this map instead of [parameters] when it
+/// is set. Set it with [ToolInfo.fromJsonSchemaMap]; it is `null`
+/// otherwise, and left out of [toJson] then.
+ final  Map<String, dynamic>? _parametersJsonSchema;
+/// The parameters as a complete JSON Schema document, exactly as it was
+/// given (Eino: a `ParamsOneOf` made by `NewParamsOneOfByJSONSchema`).
+///
+/// [parameters] can describe types, descriptions, enums, items,
+/// properties, `required` and `additionalProperties`, nothing else. A
+/// schema that uses more (`anyOf`, `$ref`, `$defs`, `format`, `default`,
+/// `minimum`, …) is kept here unchanged, and [parameters] holds the part
+/// of it that [JSONSchema] can describe, for code that reads
+/// [parameters]. Providers send this map instead of [parameters] when it
+/// is set. Set it with [ToolInfo.fromJsonSchemaMap]; it is `null`
+/// otherwise, and left out of [toJson] then.
+@override@JsonKey(includeIfNull: false) Map<String, dynamic>? get parametersJsonSchema {
+  final value = _parametersJsonSchema;
+  if (value == null) return null;
+  if (_parametersJsonSchema is EqualUnmodifiableMapView) return _parametersJsonSchema;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableMapView(value);
+}
+
 
 /// Create a copy of FunctionInfo
 /// with the given fields replaced by the non-null parameter values.
@@ -893,16 +936,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _FunctionInfo&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.parameters, parameters) || other.parameters == parameters)&&(identical(other.strict, strict) || other.strict == strict));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _FunctionInfo&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.parameters, parameters) || other.parameters == parameters)&&(identical(other.strict, strict) || other.strict == strict)&&const DeepCollectionEquality().equals(other._parametersJsonSchema, _parametersJsonSchema));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,name,description,parameters,strict);
+int get hashCode => Object.hash(runtimeType,name,description,parameters,strict,const DeepCollectionEquality().hash(_parametersJsonSchema));
 
 @override
 String toString() {
-  return 'FunctionInfo(name: $name, description: $description, parameters: $parameters, strict: $strict)';
+  return 'FunctionInfo(name: $name, description: $description, parameters: $parameters, strict: $strict, parametersJsonSchema: $parametersJsonSchema)';
 }
 
 
@@ -913,7 +956,7 @@ abstract mixin class _$FunctionInfoCopyWith<$Res> implements $FunctionInfoCopyWi
   factory _$FunctionInfoCopyWith(_FunctionInfo value, $Res Function(_FunctionInfo) _then) = __$FunctionInfoCopyWithImpl;
 @override @useResult
 $Res call({
- String name, String? description, JSONSchema? parameters, bool? strict
+ String name, String? description, JSONSchema? parameters, bool? strict,@JsonKey(includeIfNull: false) Map<String, dynamic>? parametersJsonSchema
 });
 
 
@@ -930,13 +973,14 @@ class __$FunctionInfoCopyWithImpl<$Res>
 
 /// Create a copy of FunctionInfo
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? name = null,Object? description = freezed,Object? parameters = freezed,Object? strict = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? name = null,Object? description = freezed,Object? parameters = freezed,Object? strict = freezed,Object? parametersJsonSchema = freezed,}) {
   return _then(_FunctionInfo(
 name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,description: freezed == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
 as String?,parameters: freezed == parameters ? _self.parameters : parameters // ignore: cast_nullable_to_non_nullable
 as JSONSchema?,strict: freezed == strict ? _self.strict : strict // ignore: cast_nullable_to_non_nullable
-as bool?,
+as bool?,parametersJsonSchema: freezed == parametersJsonSchema ? _self._parametersJsonSchema : parametersJsonSchema // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,
   ));
 }
 

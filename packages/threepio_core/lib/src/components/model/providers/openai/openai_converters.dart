@@ -179,14 +179,24 @@ class OpenAIConverters {
   }
 
   /// Convert ToolInfo to OpenAI tool format
+  ///
+  /// A tool info made with `ToolInfo.fromJsonSchemaMap` sends its JSON Schema
+  /// document as it was given (`FunctionInfo.parametersJsonSchema`). Unlike
+  /// eino-ext acl/openai's `toTools`, whose `sortArrayFields` sorts the
+  /// `required` names of every object schema, nothing is reordered: threepio
+  /// sends schemas as given (coordinator decision 2 after P11; the sort was
+  /// left out at P11 already).
   static Map<String, dynamic> toolInfoToOpenAI(ToolInfo tool) {
+    final rawSchema = tool.function.parametersJsonSchema;
     return {
       'type': 'function',
       'function': {
         'name': tool.function.name,
         if (tool.function.description != null)
           'description': tool.function.description,
-        if (tool.function.parameters != null)
+        if (rawSchema != null)
+          'parameters': rawSchema
+        else if (tool.function.parameters != null)
           'parameters': _jsonSchemaToOpenAI(tool.function.parameters!),
         if (tool.function.strict != null) 'strict': tool.function.strict,
       },

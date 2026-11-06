@@ -31,6 +31,12 @@ const String mcpLatestProtocolVersion = '2025-11-25';
 /// Every revision of the MCP specification a server may answer the
 /// `initialize` request with. Any other revision fails the handshake, as in
 /// the go-sdk.
+///
+/// The client asks for [mcpLatestProtocolVersion]. The specification's
+/// lifecycle lets a server that does not support it answer with another
+/// revision it supports; the client accepts any revision in this list and
+/// speaks it from then on (it is the `MCP-Protocol-Version` header of every
+/// later HTTP request), and disconnects otherwise.
 const List<String> mcpSupportedProtocolVersions = [
   '2025-11-25',
   '2025-06-18',

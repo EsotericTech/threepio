@@ -19,6 +19,8 @@ library;
 export 'src/adk/filesystem/local_backend.dart'
     show LocalFilesystemBackend, LocalMultiModalReadConfig;
 export 'src/adk/filesystem/local_shell.dart' show LocalShell, CommandValidator;
+export 'src/components/document/loader/file_loader.dart';
 export 'src/components/embedding/file_embedding_cache.dart';
+export 'src/components/tool/command_line/local_operator.dart';
 export 'src/components/tool/mcp/stdio_transport.dart';
 export 'src/compose/stores/file_checkpoint_store.dart';

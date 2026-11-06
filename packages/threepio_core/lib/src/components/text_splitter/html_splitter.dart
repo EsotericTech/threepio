@@ -1,4 +1,6 @@
 import '../../schema/document.dart';
+import '../document/transformer.dart';
+import '../document/transformer/splitter/html_header_splitter.dart';
 import 'fixed_size_split.dart';
 import 'text_splitter.dart';
 
@@ -61,6 +63,41 @@ class HtmlSplitter extends TextSplitter {
 
   /// HTML block-level tags to split on.
   final List<String> blockTags;
+
+  /// eino-ext's HTML header splitter, configured by [config].
+  ///
+  /// Port of eino-ext `html.NewHeaderSplitter`. Its algorithm is Eino's, not
+  /// the one of this class: Eino parses the document into an HTML5 tree
+  /// (with `package:html`), walks it in document order, cuts at every
+  /// configured header element, whatever the length of the pieces, and
+  /// records the text of the headers in effect in each chunk's metadata
+  /// under the names the config maps them to. A chunk is the concatenated
+  /// text of its text nodes, without markup:
+  ///
+  /// ```dart
+  /// final splitter = HtmlSplitter.fromHeaderConfig(
+  ///   const HtmlHeaderSplitterConfig(headers: {'h1': 'h1', 'h2': 'h2'}),
+  /// );
+  /// final chunks = await splitter.transform(documents);
+  /// ```
+  ///
+  /// Every chunk is a new document with a copy of its document's metadata
+  /// (plus the header entries) and source and the id the config's
+  /// `idGenerator` makes (by default the document's own); the input
+  /// documents are not changed. Nothing is checked here, as in Go; the
+  /// transformer throws `ThreepioException` when it meets a configured
+  /// element whose name has no level (`calculate header level fail: …`).
+  ///
+  /// `package:html` builds the tree Go's x/net/html builds, except for a
+  /// `<main>`, `<dialog>` or `<search>` element next to an unclosed `<p>`
+  /// (which it does not close), for `<isindex>` (which it expands into a
+  /// form with a prompt text) and inside `<template>` (which it parses
+  /// without the template insertion modes); there the chunks can differ
+  /// from Eino's.
+  static DocumentTransformer fromHeaderConfig(
+    HtmlHeaderSplitterConfig config,
+  ) =>
+      HtmlHeaderSplitterTransformer(config);
 
   @override
   List<String> splitText(

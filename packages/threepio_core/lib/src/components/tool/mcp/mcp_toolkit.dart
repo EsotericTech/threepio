@@ -434,9 +434,13 @@ final class McpToolkit {
         );
       }
 
-      final JSONSchema schema;
+      final ToolInfo bareInfo;
       try {
-        schema = _jsonSchemaOf(tool.inputSchema);
+        bareInfo = _toolInfoOf(
+          exposedToolName,
+          _applyDescriptionPolicy(tool.description, descriptionPolicy),
+          tool.inputSchema,
+        );
       } on FormatException catch (error) {
         throw McpToolkitException(
           'conv official mcp tool input schema fail: ${error.message}, '
@@ -460,12 +464,7 @@ final class McpToolkit {
       result.add(
         McpInvokableTool._(
           client: client,
-          info: ToolInfo.fromJsonSchema(
-            name: exposedToolName,
-            desc: _applyDescriptionPolicy(tool.description, descriptionPolicy),
-            schema: schema,
-            extra: extra,
-          ),
+          info: bareInfo.copyWith(extra: extra),
           serverName: serverName,
           rawToolName: rawToolName,
           exposedToolName: exposedToolName,
@@ -797,87 +796,25 @@ final class McpInvokableTool extends InvokableTool
 // Input schema
 // ---------------------------------------------------------------------------
 
-/// The [JSONSchema] of an MCP input schema.
+/// The tool info of an MCP tool named [name] with the input schema [raw].
 ///
-/// threepio's [JSONSchema] knows `type`, `description`, `enum`, `items`,
-/// `properties`, `required` and `additionalProperties`; other keywords are
-/// dropped. A property without a `type` takes the type of its first
-/// `anyOf`/`oneOf` branch, or is inferred from its keywords (`string` when
-/// nothing tells). A missing schema is an empty object schema. Throws a
-/// [FormatException] for a schema that is not an object.
-JSONSchema _jsonSchemaOf(Object? raw) {
-  if (raw == null) return const JSONSchema();
-  if (raw is! Map<String, Object?>) {
-    throw FormatException('the input schema is not a JSON object: $raw');
-  }
-  final properties = raw['properties'];
-  final additional = raw['additionalProperties'];
-  return JSONSchema(
-    type: _schemaType(raw) ?? 'object',
-    properties: properties is Map<String, Object?>
-        ? {
-            for (final MapEntry(:key, :value) in properties.entries)
-              key: _propertyOf(value, key),
-          }
-        : const {},
-    required: _stringList(raw['required']),
-    additionalProperties: additional is bool && additional,
-  );
-}
-
-JSONSchemaProperty _propertyOf(Object? raw, String name) {
-  if (raw is bool) return const JSONSchemaProperty(type: 'string');
-  if (raw is! Map<String, Object?>) {
-    throw FormatException('the schema of property "$name" is not an object');
-  }
-  final properties = raw['properties'];
-  final items = raw['items'];
-  final enumValues = raw['enum'];
-  final additional = raw['additionalProperties'];
-  final description = raw['description'];
-  final required = raw['required'];
-  return JSONSchemaProperty(
-    type: _schemaType(raw) ?? 'string',
-    description: description is String ? description : null,
-    enumValues: enumValues is List<Object?> ? [...enumValues] : null,
-    items: items is Map<String, Object?> ? _propertyOf(items, '$name[]') : null,
-    properties: properties is Map<String, Object?>
-        ? {
-            for (final MapEntry(:key, :value) in properties.entries)
-              key: _propertyOf(value, '$name.$key'),
-          }
-        : null,
-    required: required is List<Object?> ? _stringList(required) : null,
-    additionalProperties: additional is bool ? additional : null,
-  );
-}
-
-String? _schemaType(Map<String, Object?> schema) {
-  final type = schema['type'];
-  if (type is String) return type;
-  if (type is List<Object?>) {
-    for (final entry in type) {
-      if (entry is String && entry != 'null') return entry;
-    }
-  }
-  for (final key in const ['anyOf', 'oneOf', 'allOf']) {
-    final branches = schema[key];
-    if (branches is List<Object?>) {
-      for (final branch in branches) {
-        if (branch is Map<String, Object?>) {
-          final branchType = _schemaType(branch);
-          if (branchType != null && branchType != 'null') return branchType;
-        }
-      }
-    }
-  }
-  if (schema['properties'] is Map) return 'object';
-  if (schema['items'] != null) return 'array';
-  return null;
-}
-
-List<String> _stringList(Object? raw) =>
-    raw is List<Object?> ? [for (final e in raw) if (e is String) e] : const [];
+/// The input schema is kept exactly as the server sent it
+/// ([ToolInfo.fromJsonSchemaMap], Eino's `NewParamsOneOfByJSONSchema`), so
+/// providers see every keyword (`anyOf`, `$ref`, `$defs`, `format`, …);
+/// `function.parameters` holds the part threepio's [JSONSchema] can
+/// describe. A missing schema is an empty object schema. Throws a
+/// [FormatException] for a schema, or a property schema, that is not an
+/// object.
+ToolInfo _toolInfoOf(String name, String? desc, Object? raw) => switch (raw) {
+      null => ToolInfo.fromJsonSchema(
+          name: name,
+          desc: desc,
+          schema: const JSONSchema(),
+        ),
+      final Map<String, Object?> schema =>
+        ToolInfo.fromJsonSchemaMap(name: name, desc: desc, schema: schema),
+      _ => throw FormatException('the input schema is not a JSON object: $raw'),
+    };
 
 // ---------------------------------------------------------------------------
 // Policies

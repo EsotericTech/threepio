@@ -854,7 +854,12 @@ class GeminiConverters {
       declaration['description'] = tool.function.description;
     }
 
-    if (tool.function.parameters != null) {
+    final rawSchema = tool.function.parametersJsonSchema;
+    if (rawSchema != null) {
+      // A JSON Schema document given as it is goes, unchanged, where
+      // eino-ext puts every schema: `parametersJsonSchema`.
+      declaration['parametersJsonSchema'] = rawSchema;
+    } else if (tool.function.parameters != null) {
       declaration['parameters'] = _convertSchema(tool.function.parameters!);
     }
 

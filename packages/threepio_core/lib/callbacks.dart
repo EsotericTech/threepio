@@ -2,7 +2,8 @@
 /// built on them.
 ///
 /// Port of the Eino packages `callbacks` and `utils/callbacks`, and of the
-/// Langfuse handler of eino-ext (`callbacks/langfuse/v2`).
+/// Langfuse and LangSmith handlers of eino-ext (`callbacks/langfuse/v2`,
+/// `callbacks/langsmith`).
 ///
 /// * **Writing a handler**: extend `ComponentCallbackHandler`, build one from
 ///   functions with `CallbackHandlerBuilder`, or get typed payloads per kind
@@ -16,8 +17,11 @@
 ///   from this library only, not from `package:threepio_core/threepio_core.dart`:
 ///   import this library, with a prefix if you like
 ///   (`import 'package:threepio_core/callbacks.dart' as callbacks;`).
-/// * **Tracing**: `LangfuseHandler` sends a run to Langfuse, and
-///   `OtlpHttpTraceExporter` sends spans to any OTLP/HTTP collector.
+/// * **Tracing**: `LangfuseHandler` sends a run to Langfuse,
+///   `LangSmithHandler` to LangSmith (`LangSmithTrace` sets the session, tags
+///   and metadata of a run; `LangSmithFlowTrace` joins several runs into one
+///   trace), and `OtlpHttpTraceExporter` sends spans to any OTLP/HTTP
+///   collector.
 ///
 /// The older callback API (`CallbackHandler`, `BaseCallbackHandler`,
 /// `CallbackManager` and the logging, metrics and tracing handlers written
@@ -39,6 +43,10 @@ export 'src/callbacks/component_callbacks.dart';
 export 'src/callbacks/global_callbacks.dart';
 export 'src/callbacks/handler_builder.dart';
 export 'src/callbacks/handler_helper.dart';
+export 'src/callbacks/handlers/langsmith/langsmith_client.dart';
+export 'src/callbacks/handlers/langsmith/langsmith_flow_trace.dart';
+export 'src/callbacks/handlers/langsmith/langsmith_handler.dart';
+export 'src/callbacks/handlers/langsmith/langsmith_trace.dart';
 export 'src/callbacks/legacy_adapter.dart';
 export 'src/core/run_context.dart';
 export 'src/observability/langfuse/langfuse_handler.dart';

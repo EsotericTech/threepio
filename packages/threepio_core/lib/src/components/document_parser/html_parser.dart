@@ -1,6 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:html/dom.dart' as dom;
+import 'package:html/parser.dart' as html_parser;
+
+import '../../errors.dart';
+import '../document/parser/eino_html_parser.dart';
+import '../document/parser/parser.dart';
 import 'document_parser.dart';
 
 /// Parser for HTML documents.
@@ -26,6 +32,7 @@ class HtmlParser extends BaseDocumentParser {
     this.removeComments = true,
     this.preserveLinks = false,
     this.preserveLineBreaks = true,
+    this.selector,
   });
 
   /// Whether to remove script tags and their content.
@@ -42,6 +49,45 @@ class HtmlParser extends BaseDocumentParser {
 
   /// Whether to preserve line breaks from block elements.
   final bool preserveLineBreaks;
+
+  /// A CSS selector that restricts the content to the elements it matches
+  /// (`article`, `#main`, `div.post p`), or `null` (the default) for the
+  /// whole page.
+  ///
+  /// When it is set, the page is parsed with `package:html`, the elements
+  /// the selector matches are taken in document order (an element inside
+  /// another match is not taken a second time), their HTML is joined, and
+  /// that HTML goes through the same steps as a whole page (scripts, styles
+  /// and comments removed, tables and images extracted, tags stripped,
+  /// white space cleaned up). The `title` metadata still comes from the
+  /// whole page. A selector that matches nothing gives empty content.
+  ///
+  /// A selector that cannot be parsed makes [parse] and [parseString] throw
+  /// a [ThreepioFormatException]; so does a selector `package:html` parses
+  /// but cannot evaluate (some pseudo-classes, such as `:hover`), when an
+  /// element is matched against it, and a page nested so deeply (about ten
+  /// thousand levels) that `package:html`'s recursive selector evaluation
+  /// or serialization overflows the stack.
+  final String? selector;
+
+  /// eino-ext's HTML parser, configured by [config].
+  ///
+  /// Port of eino-ext `html.NewParser`. Its output is Eino's, not the one of
+  /// this class: one document whose content is the text of the elements the
+  /// config's `selector` picks (the whole page by default), passed through
+  /// bluemonday's UGC policy, so HTML-escaped, and trimmed; its metadata has
+  /// the page's title, description, language and charset (under
+  /// `htmlMetaKeyTitle`, `htmlMetaKeyDescription`, `htmlMetaKeyLanguage`,
+  /// `htmlMetaKeyCharset`) and the URI of the call under `metaKeySource`:
+  ///
+  /// ```dart
+  /// final parser = HtmlParser.fromConfig(
+  ///   const HtmlParserConfig(selector: htmlBodySelector),
+  /// );
+  /// final docs = await parser.parse(ctx, response.stream);
+  /// ```
+  static Parser fromConfig([HtmlParserConfig config = const HtmlParserConfig()]) =>
+      HtmlContentParser(config);
 
   @override
   List<String> get supportedExtensions => ['html', 'htm', 'xhtml'];
@@ -90,6 +136,10 @@ class HtmlParser extends BaseDocumentParser {
 
     // Process the HTML
     var processed = content;
+
+    // Keep only the elements the selector matches
+    final selector = this.selector;
+    if (selector != null) processed = _selectedHtml(content, selector);
 
     // Remove scripts
     if (removeScripts) {
@@ -157,6 +207,66 @@ class HtmlParser extends BaseDocumentParser {
       extractedImages: images,
     );
   }
+
+  /// The HTML of the elements of [content] that [selector] matches, in
+  /// document order, without the matches inside another match.
+  static String _selectedHtml(String content, String selector) {
+    final page = html_parser.parse(content);
+    final List<dom.Element> matches;
+    try {
+      matches = page.querySelectorAll(selector);
+    } on FormatException catch (error) {
+      throw ThreepioFormatException(
+        'invalid CSS selector: ${error.message}',
+        source: selector,
+        cause: error,
+      );
+    }
+    // package:html throws this for a selector it parses but cannot evaluate.
+    // ignore: avoid_catching_errors
+    on UnimplementedError catch (error) {
+      throw ThreepioFormatException(
+        'unsupported CSS selector: ${error.message}',
+        source: selector,
+        cause: error,
+      );
+    }
+    // ignore: avoid_catching_errors
+    on StackOverflowError catch (error) {
+      throw _tooDeep(selector, error);
+    }
+    final matched = Set<dom.Node>.identity()..addAll(matches);
+    final out = StringBuffer();
+    for (final element in matches) {
+      var inOtherMatch = false;
+      for (var parent = element.parentNode;
+          parent != null;
+          parent = parent.parentNode) {
+        if (matched.contains(parent)) {
+          inOtherMatch = true;
+          break;
+        }
+      }
+      if (inOtherMatch) continue;
+      try {
+        out.write(element.outerHtml);
+      }
+      // ignore: avoid_catching_errors
+      on StackOverflowError catch (error) {
+        throw _tooDeep(selector, error);
+      }
+    }
+    return out.toString();
+  }
+
+  /// The error of a page nested too deeply for `package:html`, whose
+  /// selector evaluation and serialization recurse once per level.
+  static ThreepioFormatException _tooDeep(String selector, Object error) =>
+      ThreepioFormatException(
+        'the page is nested too deeply to evaluate the selector',
+        source: selector,
+        cause: error,
+      );
 
   String _htmlToPlainText(String html) {
     var result = html;

@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 
 import '../../errors.dart';
 import '../../schema/document.dart';
+import '../document/loader.dart';
+import '../document/loader/url_loader.dart';
 import '../document_parser/document_parser.dart';
 import '../document_parser/parser_registry.dart';
 import 'document_loader.dart';
@@ -76,6 +78,25 @@ class UrlLoader extends DocumentLoader {
 
   /// HTTP client (injectable for testing).
   final http.Client? _httpClient;
+
+  /// eino-ext's URL loader, configured by [config].
+  ///
+  /// Port of eino-ext `url.NewLoader`. Unlike this class, the returned
+  /// [Loader] is not bound to one URL: the URL is the source of each call.
+  /// It sends the config's request (by default a `GET` of the source's URI),
+  /// hands the response body to the config's parser (by default eino-ext's
+  /// HTML parser on the `<body>` of the page, see `HtmlParser.fromConfig`)
+  /// and fires the loader callbacks:
+  ///
+  /// ```dart
+  /// final loader = UrlLoader.fromConfig();
+  /// final docs = await loader.load(
+  ///   ctx,
+  ///   const DocumentSource(uri: 'https://example.com/page.html'),
+  /// );
+  /// ```
+  static Loader fromConfig([UrlLoaderConfig config = const UrlLoaderConfig()]) =>
+      UrlContentLoader(config);
 
   @override
   Future<List<Document>> load({

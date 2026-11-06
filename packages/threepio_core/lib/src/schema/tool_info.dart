@@ -136,6 +136,19 @@ abstract class FunctionInfo with _$FunctionInfo {
 
     /// Whether the function is strict (OpenAI specific)
     bool? strict,
+
+    /// The parameters as a complete JSON Schema document, exactly as it was
+    /// given (Eino: a `ParamsOneOf` made by `NewParamsOneOfByJSONSchema`).
+    ///
+    /// [parameters] can describe types, descriptions, enums, items,
+    /// properties, `required` and `additionalProperties`, nothing else. A
+    /// schema that uses more (`anyOf`, `$ref`, `$defs`, `format`, `default`,
+    /// `minimum`, …) is kept here unchanged, and [parameters] holds the part
+    /// of it that [JSONSchema] can describe, for code that reads
+    /// [parameters]. Providers send this map instead of [parameters] when it
+    /// is set. Set it with [ToolInfo.fromJsonSchemaMap]; it is `null`
+    /// otherwise, and left out of [toJson] then.
+    @JsonKey(includeIfNull: false) Map<String, dynamic>? parametersJsonSchema,
   }) = _FunctionInfo;
 
   factory FunctionInfo.fromJson(Map<String, dynamic> json) =>
@@ -213,6 +226,89 @@ abstract class ToolInfo with _$ToolInfo {
         extra: extra,
       );
 
+  /// Create a tool info whose parameters are a JSON Schema document, kept
+  /// exactly as given.
+  ///
+  /// Port of a Go `ToolInfo` literal with
+  /// `schema.NewParamsOneOfByJSONSchema(schema)` for a schema that
+  /// [JSONSchema] cannot hold: every keyword survives (`anyOf`, `oneOf`,
+  /// `$ref`, `$defs`, `format`, `default`, `minimum`, …), and providers send
+  /// [schema] as it is (see [FunctionInfo.parametersJsonSchema]). MCP tools
+  /// are built this way.
+  ///
+  /// The map is copied, so later changes to [schema] do not reach the tool
+  /// info. [FunctionInfo.parameters] gets the part of [schema] that
+  /// [JSONSchema] can describe: the type (`object` when the schema names
+  /// none), the properties, `required` and a boolean `additionalProperties`.
+  /// A property without a `type` takes the type of its first `anyOf`,
+  /// `oneOf` or `allOf` branch that has one, or is inferred from its
+  /// keywords (`string` when nothing tells).
+  ///
+  /// Throws a [ThreepioFormatException] when [schema] or the schema of a
+  /// property is not a JSON object (a property may also be `true`/`false`),
+  /// or when [schema] holds something that is not JSON (a value other than
+  /// `null`, a bool, a finite number, a string, a list or a map with string
+  /// keys).
+  factory ToolInfo.fromJsonSchemaMap({
+    required String name,
+    required Map<String, Object?> schema,
+    String? desc,
+    Map<String, dynamic>? extra,
+  }) {
+    final copy = _copyJsonObject(schema, r'$');
+    return ToolInfo(
+      function: FunctionInfo(
+        name: name,
+        description: desc,
+        parameters: _lenientJsonSchema(copy),
+        parametersJsonSchema: copy,
+      ),
+      extra: extra,
+    );
+  }
+
+  /// Create a tool info whose parameters are [params], in whichever form
+  /// they were given; `null` makes a tool without parameters.
+  ///
+  /// Port of a Go `ToolInfo{Name: name, Desc: desc, ParamsOneOf: params}`
+  /// literal. A [ParamsOneOf.jsonSchemaMap] keeps its document (as
+  /// [ToolInfo.fromJsonSchemaMap] does, which copies it); the other forms
+  /// are stored as [ParamsOneOf.toJsonSchema] gives them (as
+  /// [ToolInfo.fromParams] and [ToolInfo.fromJsonSchema] do). Code that takes
+  /// a [ParamsOneOf] and builds the tool info from it uses this, so that no
+  /// keyword of a JSON Schema document is lost.
+  ///
+  /// Throws a [ThreepioFormatException] when a JSON Schema document cannot
+  /// be read (see [ToolInfo.fromJsonSchemaMap]).
+  factory ToolInfo.fromParamsOneOf({
+    required String name,
+    ParamsOneOf? params,
+    String? desc,
+    Map<String, dynamic>? extra,
+  }) {
+    if (params == null) {
+      return ToolInfo(
+        function: FunctionInfo(name: name, description: desc),
+        extra: extra,
+      );
+    }
+    final document = params.jsonSchemaMap;
+    if (document != null) {
+      return ToolInfo.fromJsonSchemaMap(
+        name: name,
+        desc: desc,
+        schema: document,
+        extra: extra,
+      );
+    }
+    return ToolInfo.fromJsonSchema(
+      name: name,
+      desc: desc,
+      schema: params.toJsonSchema(),
+      extra: extra,
+    );
+  }
+
   /// The unique name of the tool (Eino: `ToolInfo.Name`).
   String get name => function.name;
 
@@ -221,7 +317,13 @@ abstract class ToolInfo with _$ToolInfo {
 
   /// The parameters of the tool, or `null` when it takes none (Eino:
   /// `ToolInfo.ParamsOneOf`).
+  ///
+  /// A tool info made with [ToolInfo.fromJsonSchemaMap] answers with the
+  /// [ParamsOneOf.jsonSchemaMap] form, every other one with the
+  /// [ParamsOneOf.jsonSchema] form.
   ParamsOneOf? get paramsOneOf {
+    final raw = function.parametersJsonSchema;
+    if (raw != null) return ParamsOneOf.jsonSchemaMap(raw);
     final parameters = function.parameters;
     return parameters == null ? null : ParamsOneOf.jsonSchema(parameters);
   }
@@ -523,6 +625,9 @@ List<String> _requiredOf(Map<String, ParameterInfo> params) => [
 ///   required flags.
 /// * [ParamsOneOf.jsonSchema] (Go: `NewParamsOneOfByJSONSchema`): a complete
 ///   [JSONSchema].
+/// * [ParamsOneOf.jsonSchemaMap] (Go: `NewParamsOneOfByJSONSchema` as well):
+///   a JSON Schema document as a map, kept exactly as given, for schemas
+///   that use keywords [JSONSchema] has no field for.
 ///
 /// A tool without parameters has no `ParamsOneOf` at all.
 @immutable
@@ -536,8 +641,24 @@ sealed class ParamsOneOf {
   /// Parameters given as a JSON schema.
   const factory ParamsOneOf.jsonSchema(JSONSchema schema) = _ParamsBySchema;
 
+  /// Parameters given as a JSON Schema document, kept exactly as given.
+  ///
+  /// Port of `schema.NewParamsOneOfByJSONSchema` for any schema: `anyOf`,
+  /// `$ref`, `$defs`, `format`, `default` and every other keyword survive.
+  /// [ToolInfo.fromJsonSchemaMap] makes a tool info with such parameters;
+  /// [toJsonSchema] gives the part of the document [JSONSchema] can
+  /// describe.
+  ///
+  /// The map is used as it is; [ToolInfo.fromJsonSchemaMap] copies it.
+  const factory ParamsOneOf.jsonSchemaMap(Map<String, Object?> schema) =
+      _ParamsByJsonSchemaMap;
+
   /// Reads the map written by [toJson].
   factory ParamsOneOf.fromJson(Map<String, Object?> json) {
+    final map = json['jsonSchemaMap'];
+    if (map is Map<String, Object?>) {
+      return ParamsOneOf.jsonSchemaMap(map);
+    }
     final schema = json['jsonSchema'];
     if (schema is Map<String, Object?>) {
       return ParamsOneOf.jsonSchema(JSONSchema.fromJson(schema));
@@ -558,11 +679,19 @@ sealed class ParamsOneOf {
   /// The schema, when this was made with [ParamsOneOf.jsonSchema].
   JSONSchema? get jsonSchema;
 
+  /// The JSON Schema document, when this was made with
+  /// [ParamsOneOf.jsonSchemaMap].
+  Map<String, Object?>? get jsonSchemaMap;
+
   /// The schema to give to a model.
   ///
   /// Port of eino `ParamsOneOf.ToJSONSchema`: a schema that was given is
   /// returned as it is; parameter descriptions become an object schema whose
-  /// properties are sorted by name.
+  /// properties are sorted by name. For a [ParamsOneOf.jsonSchemaMap] it is
+  /// the part of the document that [JSONSchema] can describe (see
+  /// [ToolInfo.fromJsonSchemaMap]); the document itself is [jsonSchemaMap].
+  /// Throws a [ThreepioFormatException] when that document cannot be read
+  /// as a schema.
   JSONSchema toJsonSchema();
 
   /// A JSON-compatible map; [ParamsOneOf.fromJson] reads it back.
@@ -577,6 +706,9 @@ final class _ParamsByInfo extends ParamsOneOf {
 
   @override
   JSONSchema? get jsonSchema => null;
+
+  @override
+  Map<String, Object?>? get jsonSchemaMap => null;
 
   @override
   JSONSchema toJsonSchema() => JSONSchema(
@@ -616,6 +748,9 @@ final class _ParamsBySchema extends ParamsOneOf {
   Map<String, ParameterInfo>? get params => null;
 
   @override
+  Map<String, Object?>? get jsonSchemaMap => null;
+
+  @override
   JSONSchema toJsonSchema() => jsonSchema;
 
   @override
@@ -632,6 +767,145 @@ final class _ParamsBySchema extends ParamsOneOf {
   @override
   String toString() => 'ParamsOneOf.jsonSchema($jsonSchema)';
 }
+
+final class _ParamsByJsonSchemaMap extends ParamsOneOf {
+  const _ParamsByJsonSchemaMap(this.jsonSchemaMap) : super._();
+
+  @override
+  final Map<String, Object?> jsonSchemaMap;
+
+  @override
+  Map<String, ParameterInfo>? get params => null;
+
+  @override
+  JSONSchema? get jsonSchema => null;
+
+  @override
+  JSONSchema toJsonSchema() => _lenientJsonSchema(jsonSchemaMap);
+
+  @override
+  Map<String, Object?> toJson() => {'jsonSchemaMap': jsonSchemaMap};
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _ParamsByJsonSchemaMap &&
+          const DeepCollectionEquality()
+              .equals(other.jsonSchemaMap, jsonSchemaMap);
+
+  @override
+  int get hashCode => const DeepCollectionEquality().hash(jsonSchemaMap);
+
+  @override
+  String toString() => 'ParamsOneOf.jsonSchemaMap($jsonSchemaMap)';
+}
+
+// ---------------------------------------------------------------------------
+// JSON Schema documents
+// ---------------------------------------------------------------------------
+
+/// A deep copy of the JSON object [value], with unmodifiable maps and lists.
+Map<String, Object?> _copyJsonObject(Map<String, Object?> value, String path) =>
+    Map.unmodifiable({
+      for (final MapEntry(:key, value: entry) in value.entries)
+        key: _copyJson(entry, '$path.$key'),
+    });
+
+Object? _copyJson(Object? value, String path) => switch (value) {
+      // NaN and the infinities have no JSON form.
+      final double number when !number.isFinite => throw ThreepioFormatException(
+          'the JSON schema holds a number that is not JSON at $path: $number',
+        ),
+      null || bool() || num() || String() => value,
+      final Map<String, Object?> map => _copyJsonObject(map, path),
+      final Map<Object?, Object?> map when map.keys.every((k) => k is String) =>
+        _copyJsonObject(map.cast<String, Object?>(), path),
+      final List<Object?> list => List<Object?>.unmodifiable([
+          for (var i = 0; i < list.length; i++) _copyJson(list[i], '$path[$i]'),
+        ]),
+      _ => throw ThreepioFormatException(
+          'the JSON schema holds a value that is not JSON at $path: '
+          '${value.runtimeType}',
+        ),
+    };
+
+/// The part of the JSON Schema document [raw] that [JSONSchema] can hold.
+JSONSchema _lenientJsonSchema(Map<String, Object?> raw) {
+  final properties = raw['properties'];
+  final additional = raw['additionalProperties'];
+  return JSONSchema(
+    type: _schemaType(raw) ?? 'object',
+    properties: properties is Map<String, Object?>
+        ? {
+            for (final MapEntry(:key, :value) in properties.entries)
+              key: _lenientProperty(value, key),
+          }
+        : const {},
+    required: _stringList(raw['required']),
+    additionalProperties: additional is bool && additional,
+  );
+}
+
+JSONSchemaProperty _lenientProperty(Object? raw, String name) {
+  if (raw is bool) return const JSONSchemaProperty(type: 'string');
+  if (raw is! Map<String, Object?>) {
+    throw ThreepioFormatException(
+      'the schema of property "$name" is not an object',
+    );
+  }
+  final properties = raw['properties'];
+  final items = raw['items'];
+  final enumValues = raw['enum'];
+  final additional = raw['additionalProperties'];
+  final description = raw['description'];
+  final required = raw['required'];
+  return JSONSchemaProperty(
+    type: _schemaType(raw) ?? 'string',
+    description: description is String ? description : null,
+    enumValues: enumValues is List<Object?> ? [...enumValues] : null,
+    items: items is Map<String, Object?>
+        ? _lenientProperty(items, '$name[]')
+        : null,
+    properties: properties is Map<String, Object?>
+        ? {
+            for (final MapEntry(:key, :value) in properties.entries)
+              key: _lenientProperty(value, '$name.$key'),
+          }
+        : null,
+    required: required is List<Object?> ? _stringList(required) : null,
+    additionalProperties: additional is bool ? additional : null,
+  );
+}
+
+/// The type a schema names, the first non-null type of a type list, the type
+/// of its first `anyOf`/`oneOf`/`allOf` branch that has one, or what its
+/// keywords imply; `null` when nothing tells.
+String? _schemaType(Map<String, Object?> schema) {
+  final type = schema['type'];
+  if (type is String) return type;
+  if (type is List<Object?>) {
+    for (final entry in type) {
+      if (entry is String && entry != 'null') return entry;
+    }
+  }
+  for (final key in const ['anyOf', 'oneOf', 'allOf']) {
+    final branches = schema[key];
+    if (branches is List<Object?>) {
+      for (final branch in branches) {
+        if (branch is Map<String, Object?>) {
+          final branchType = _schemaType(branch);
+          if (branchType != null && branchType != 'null') return branchType;
+        }
+      }
+    }
+  }
+  if (schema['properties'] is Map) return 'object';
+  if (schema['items'] != null) return 'array';
+  return null;
+}
+
+List<String> _stringList(Object? raw) =>
+    raw is List<Object?> ? [for (final e in raw) if (e is String) e] : const [];
 
 /// The tools a tool search found.
 ///

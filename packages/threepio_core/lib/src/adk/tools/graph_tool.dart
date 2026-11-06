@@ -145,10 +145,10 @@ abstract final class GraphTool {
     _ensureRegistered();
     return _InvokableGraphTool<I, O>(
       _GraphToolCore<I, O>(
-        info: ToolInfo.fromJsonSchema(
+        info: ToolInfo.fromParamsOneOf(
           name: name,
           desc: description,
-          schema: params.toJsonSchema(),
+          params: params,
         ),
         fromJson: fromJson,
         graph: graph,
@@ -177,10 +177,10 @@ abstract final class GraphTool {
     _ensureRegistered();
     return _StreamableGraphTool<I, O>(
       _GraphToolCore<I, O>(
-        info: ToolInfo.fromJsonSchema(
+        info: ToolInfo.fromParamsOneOf(
           name: name,
           desc: description,
-          schema: params.toJsonSchema(),
+          params: params,
         ),
         fromJson: fromJson,
         graph: graph,
