@@ -292,6 +292,7 @@ final class AdkCheckpoint {
     required this.interruptId2Address,
     required this.interruptId2State,
     this.rootInput,
+    this.agenticRootInput,
   });
 
   /// A checkpoint from its JSON form.
@@ -306,6 +307,7 @@ final class AdkCheckpoint {
           final Map<String, Object?> input => AgentInput.fromJson(input),
           _ => null,
         },
+        agenticRootInput: TypeRegistry.decode(json['agentic_root_input']),
         enableStreaming: json['enable_streaming'] == true,
         interruptId2Address: {
           for (final MapEntry(:key, :value)
@@ -323,6 +325,10 @@ final class AdkCheckpoint {
 
   final Map<String, Object?> sessionValues;
   final AgentInput? rootInput;
+
+  /// The input of an agentic run (eino `runContext.AgenticRootInput`),
+  /// written through [TypeRegistry]; `null` for a classic run.
+  final Object? agenticRootInput;
   final bool enableStreaming;
   final Map<String, Address> interruptId2Address;
   final Map<String, InterruptState> interruptId2State;
@@ -335,6 +341,8 @@ final class AdkCheckpoint {
             key: TypeRegistry.encode(value),
         },
         if (rootInput != null) 'root_input': rootInput!.toJson(),
+        if (agenticRootInput != null)
+          'agentic_root_input': TypeRegistry.encode(agenticRootInput),
         'enable_streaming': enableStreaming,
         'interrupt_id_to_address': {
           for (final MapEntry(:key, :value) in interruptId2Address.entries)
@@ -398,6 +406,7 @@ Future<void> saveAdkCheckpoint({
   final checkpoint = AdkCheckpoint(
     sessionValues: Map.of(run?.session.values ?? const {}),
     rootInput: run?.rootInput,
+    agenticRootInput: run?.agenticRootInput,
     enableStreaming: enableStreaming,
     interruptId2Address: addresses,
     interruptId2State: states,
@@ -454,6 +463,7 @@ Future<(RunContext, AdkRunContext, ResumeInfo)> loadAdkCheckpoint(
     AdkRunContext(
       session: RunSession(Map.of(decoded.sessionValues)),
       rootInput: decoded.rootInput,
+      agenticRootInput: decoded.agenticRootInput,
     ),
     ResumeInfo(enableStreaming: decoded.enableStreaming),
   );
@@ -483,6 +493,7 @@ Future<(RunContext, AdkRunContext, ResumeInfo)> loadAdkCheckpoint(
       AdkRunContext(
         session: run.session,
         rootInput: run.rootInput,
+        agenticRootInput: run.agenticRootInput,
         depth: run.depth + 1,
       ),
     );

@@ -7,6 +7,7 @@ library;
 import 'package:meta/meta.dart';
 
 import '../internal/type_utils.dart';
+import 'agentic_message.dart';
 import 'document.dart';
 import 'message.dart';
 
@@ -53,8 +54,9 @@ final class _TypeEntry<T extends Object> {
 ///
 /// JSON values need no registration: `null`, `bool`, `num`, `String`, and
 /// lists and string-keyed maps of anything encodable. The schema types of
-/// this package ([Message], `List<Message>`, [Document], [ToolCall] and the
-/// others Eino registers) are registered already, under Eino's names.
+/// this package ([Message], `List<Message>`, [AgenticMessage],
+/// `List<AgenticMessage>`, [Document], [ToolCall] and the others Eino
+/// registers) are registered already, under Eino's names.
 ///
 /// A value is matched with `is`, never by its `runtimeType`, so a registration
 /// for `Message` covers the private class the value really has, and one for
@@ -271,7 +273,7 @@ abstract final class TypeRegistry {
   }
 
   /// The types Eino registers in `schema/serialization.go`, under the same
-  /// names. The deprecated and the agentic ones are left out.
+  /// names. The deprecated ones are left out.
   static void _ensureBuiltIns() {
     if (_builtInsRegistered) return;
     _builtInsRegistered = true;
@@ -290,6 +292,24 @@ abstract final class TypeRegistry {
           (value) => {'name': value.name},
         );
 
+    // The agentic messages come first: a value both a classic and an agentic
+    // entry fit (an empty `List<Never>`) keeps resolving to the classic one,
+    // as before they were added.
+    add<AgenticMessage>(
+      '_eino_agentic_message',
+      AgenticMessage.fromJson,
+      (v) => v.toJson(),
+    );
+    add<List<AgenticMessage>>(
+      '_eino_agentic_message_slice',
+      (json) => [
+        for (final item in json['items'] as List<Object?>)
+          AgenticMessage.fromJson(item! as Map<String, Object?>),
+      ],
+      (value) => {
+        'items': [for (final message in value) message.toJson()],
+      },
+    );
     add<Message>('_eino_message', Message.fromJson, (v) => v.toJson());
     add<List<Message>>(
       '_eino_message_slice',

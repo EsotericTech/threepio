@@ -7,13 +7,15 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 
 import '../components/model/cancel_token.dart';
+import '../errors.dart';
 
 /// Sends a request with a body and waits for the whole response.
 ///
 /// Throws [CancelledException] when [cancelToken] is (or becomes) cancelled
 /// before the response is there, and [TimeoutException] when it takes longer
-/// than [timeout]. Other failures of [client] are rethrown as they are; the
-/// caller wraps them in its own exception type.
+/// than [timeout]. Other failures of [client] are rethrown as they are (see
+/// [_send] for the one exception); the caller wraps them in its own
+/// exception type.
 Future<http.Response> sendRequest(
   http.Client client,
   Uri url, {
@@ -26,8 +28,7 @@ Future<http.Response> sendRequest(
   cancelToken?.throwIfCancelled();
   final request = http.Request(method, url)..headers.addAll(headers);
   if (body != null) request.body = body;
-  final response = client
-      .send(request)
+  final response = _send(client, request)
       .then(http.Response.fromStream)
       .timeout(timeout);
   if (cancelToken == null) return response;
@@ -83,8 +84,9 @@ final class CallWatch {
 /// Sends a request whose response body is read as a stream.
 ///
 /// Waits for the response headers only, at most [timeout]; the body is left
-/// to the caller. Throws like [sendRequest]. When [cancelToken] fires while
-/// the headers are awaited, a response that still arrives is drained.
+/// to the caller. Throws like [sendRequest]. When [cancelToken] fires or the
+/// timeout passes while the headers are awaited, a response that still
+/// arrives is drained.
 Future<http.StreamedResponse> sendStreamingRequest(
   http.Client client,
   Uri url, {
@@ -97,21 +99,68 @@ Future<http.StreamedResponse> sendStreamingRequest(
   cancelToken?.throwIfCancelled();
   final request = http.Request(method, url)..headers.addAll(headers);
   if (body != null) request.body = body;
-  final response = client.send(request).timeout(timeout);
-  if (cancelToken == null) return response;
+  final sent = _send(client, request);
   var abandoned = false;
+  // A response that arrives after the caller gave up (timeout or cancel) is
+  // drained, so that its connection is let go.
   unawaited(
-    response.then(
+    sent.then(
       (r) {
         if (abandoned) unawaited(r.stream.listen(null).cancel());
       },
       onError: (Object _) {},
     ),
   );
+  final response = sent.timeout(
+    timeout,
+    onTimeout: () {
+      abandoned = true;
+      throw TimeoutException('Future not completed', timeout);
+    },
+  );
+  if (cancelToken == null) return response;
   final watch = CallWatch(cancelToken)..onCancel(() => abandoned = true);
   try {
     return await Future.any<http.StreamedResponse>([response, watch.cancelled]);
   } finally {
     watch.release();
+  }
+}
+
+/// Sends [request] with [client].
+///
+/// A header value the platform client refuses fails with a
+/// [ThreepioFormatException] that names the header only. `dart:io` rejects
+/// control characters in header values (an API key read from a file with
+/// its trailing newline, for example) with a `FormatException` that quotes
+/// the value, and the providers put the text of the error they wrap into
+/// their own messages, so the key would end up in logs. Go's `net/http`
+/// says `invalid header field value for "<name>"` there.
+Future<http.StreamedResponse> _send(
+  http.Client client,
+  http.Request request,
+) async {
+  try {
+    return await client.send(request);
+  } on FormatException catch (error, stackTrace) {
+    if (error is ThreepioFormatException ||
+        !error.message.startsWith('Invalid HTTP header field value')) {
+      rethrow;
+    }
+    String? name;
+    for (final MapEntry(:key, :value) in request.headers.entries) {
+      if (value == error.source) {
+        name = key;
+        break;
+      }
+    }
+    Error.throwWithStackTrace(
+      ThreepioFormatException(
+        name == null
+            ? 'invalid header field value'
+            : 'invalid header field value for "$name"',
+      ),
+      stackTrace,
+    );
   }
 }

@@ -30,7 +30,10 @@ cache, the MCP client with its tools and prompt template, and the local
 filesystem backend; and from its second wave: document loaders, parsers and
 transformers, the HTTP request, search, Wikipedia, sequential-thinking and
 command-line tools, the Qdrant indexer and retriever, and tracing to
-LangSmith.
+LangSmith; and the agentic path, which upstream labels beta: agentic
+messages of typed content blocks, the agentic model, template and tools
+node, the agentic chat model agent and runner, and the OpenAI Responses and
+Claude agentic models.
 
 ### Fixed
 
@@ -464,6 +467,91 @@ LangSmith.
   `xlsxMetaKeyRow`, …). The legacy `HtmlParser` gains an optional
   `selector`: when it is set, the parser works on the elements it selects
   (the outermost ones, in document order); without it nothing changes.
+- **Agentic path (beta; port of the `AgenticMessage` half of Eino and of
+  eino-ext's agentic models).** Upstream labels all of it beta and advises
+  to keep `Message` unless model-native agentic protocols are needed; the
+  classic path is unchanged and stays the default.
+  - *Schema* (`schema.dart`, umbrella): `AgenticMessage` (`role`, ordered
+    `contentBlocks`, `responseMeta`, `extra`; `AgenticMessage.system`,
+    `.user`), `ContentBlock` (`content`, `streamingMeta`, `extra`; typed
+    getters) over the sealed `ContentBlockVariant` hierarchy — `Reasoning`,
+    `UserInputText/Image/Audio/Video/File` (sealed `UserInputVariant`),
+    `AssistantGenText/Image/Audio/Video`, `FunctionToolCall`,
+    `FunctionToolResult` (`FunctionToolResultContentBlock`),
+    `ToolSearchFunctionToolResult`, `ServerToolCall`, `ServerToolResult`,
+    `AgenticMcpToolCall`, `AgenticMcpToolResult`, `AgenticMcpListToolsResult`,
+    `AgenticMcpToolApprovalRequest`, `AgenticMcpToolApprovalResponse` (Go's
+    `MCP…` blocks; the `Mcp…` names belong to the MCP client) —,
+    `ContentBlockType`, `AgenticRoleType`, `AgenticResponseMeta`,
+    `StreamingMeta`; Go's JSON form and `String()` text; `concatAgenticMessages`
+    and `concatAgenticMessagesArray`; `AgenticMessagesTemplate`,
+    `AgenticMessagesPlaceholder` and `AgenticMessage.format`;
+    `AgenticToolChoice` (`AgenticAllowedToolChoice`, `AgenticForcedToolChoice`,
+    sealed `AllowedTool` = `AllowedFunctionTool` | `AllowedMcpTool` |
+    `AllowedServerTool`); the provider extensions `OpenAI…`, `Claude…` and
+    `Gemini…` (`src/schema/extensions/`, Go's `schema/openai|claude|gemini`)
+    with their concat functions.
+    `AgenticMessage` and `List<AgenticMessage>` are registered with
+    `TypeRegistry` (`_eino_agentic_message`, `_eino_agentic_message_slice`) and
+    `StreamConcat`; `AgenticMessage` is `FieldAddressable` and a built-in
+    blank of workflow field mappings.
+  - *Components* (`components.dart`): `AgenticModel` (`generate`/`stream`;
+    tools per call in `ChatModelOptions.tools`),
+    `ChatModelOptions.agenticToolChoice`, the callback payloads
+    `AgenticModelCallbackInput/Output/Config`; `AgenticChatTemplate`
+    (`AgenticChatTemplate.fromAgenticMessages`, `DefaultAgenticChatTemplate`)
+    with `AgenticPromptCallbackInput/Output`; the `ComponentType` values
+    `agenticModel`, `agenticChatTemplate`, `agenticToolsNode`, `agenticAgent`.
+  - *Compose* (`compose.dart`): `AgenticToolsNode` (a `ToolsNode` behind
+    Go's conversions: function calls in, one user message with a
+    `FunctionToolResult` or `ToolSearchFunctionToolResult` per call out);
+    `addAgenticModelNode`, `addAgenticChatTemplateNode`,
+    `addAgenticToolsNode` on `Graph` and `Workflow`, `appendAgentic…` on
+    `Chain`, `addAgentic…` on `ChainBranch` and `Parallel`.
+  - *Callbacks* (`callbacks.dart`): `HandlerHelper.agenticModel`,
+    `.agenticPrompt`, `.agenticToolsNode`, `.agenticAgent` with
+    `AgenticModelCallbackHandler`, `AgenticPromptCallbackHandler`,
+    `AgenticToolsNodeCallbackHandlers`, `AgenticAgentCallbackHandler`.
+    `LangfuseHandler` traces agentic models as generations, agentic
+    templates as chains and agentic agents as agents (with the messages of
+    their events).
+  - *ADK* (`adk.dart`): `AgenticChatModelAgent` (`AgenticChatModelAgentConfig`,
+    `AgenticGenModelInput`, `defaultAgenticGenModelInput`) — the ReAct loop
+    over an `AgenticModel` and an `AgenticToolsNode`, `returnDirectly`,
+    `maxIterations`, streaming, the nine-hook `AgenticChatModelAgentMiddleware`
+    (`AgenticChatModelAgentState`, `AgenticModelContext`), interrupts from
+    tools, cancel at the safe points (`withCancel`), callbacks with
+    `ComponentType.agenticAgent` (`AgenticAgentCallbackInput/Output`,
+    `typedAgenticAgentCallbackHandler`); `AgenticRunner` (`run`, `query`,
+    `resume`, `resumeWithParams`, checkpoints in the classic format plus the
+    agentic root input); `AgenticAgent`, `ResumableAgenticAgent`,
+    `AgenticAgentInput`, `AgenticAgentEvent`, `AgenticAgentOutput`,
+    `AgenticMessageVariant`, `getAgenticMessageFromEvent`, the
+    `agentic…InterruptEvent` helpers, `AgenticAgentContext`,
+    `agenticMessageIdOf`/`ensureAgenticMessageId`; `AgenticAgentTool` (an
+    agentic agent as a tool, with interrupt and resume). Actions, interrupt
+    infos, resume parameters, run options and session values are the
+    classic types. The agentic engine shares the classic one's internals
+    through an internal message codec; the classic `Agent`, `Runner` and
+    `ChatModelAgent` stay as they are (not generic over the message type).
+  - *Providers* (umbrella): `OpenAIResponsesModel` (port of eino-ext
+    `agenticopenai`'s Responses model: `OpenAIResponsesConfig`,
+    `OpenAIResponsesOptions` for the per-call options (`WithResponses*`,
+    `WithCustomHeaders`, `WithExtraFields`, `WithHeadPreviousResponseID`),
+    server tools web search, file search, code interpreter and shell, MCP
+    tools,
+    `previous_response_id` (`headPreviousResponseId`, or automatically with
+    `OpenAIResponsesConfig.enableAutoCache`), prompt cache, reasoning,
+    the server-tool payload types, `OpenAIResponsesException`, openai-go's
+    retries) and `ClaudeAgenticModel` (port of eino-ext `agenticclaude`,
+    Anthropic Messages API only: `ClaudeAgenticConfig`,
+    `ClaudeAgenticOptions`, the server tools web search, web fetch, code
+    execution and tool search (BM25, regex), thinking, cache control on
+    blocks and tools, the server-tool payload types). Both fire the
+    agentic model callbacks, cancel their requests with the run, and
+    register their payload types for checkpoints
+    (`OpenAIResponsesModel.ensureTypesRegistered`,
+    `ensureClaudeAgenticTypesRegistered`).
 - **Langfuse**: the observation of an agent ends with the messages and custom
   outputs of its events; retry notifications of its model
   (`WillRetryException`) are kept as `eino_retry_events` metadata instead of
@@ -800,6 +888,39 @@ LangSmith.
 
 ### Changed
 
+- **HTTP providers: a header value the platform client refuses names the
+  header, not the value.** `dart:io` rejects control characters in header
+  values (an API key read from a file with its trailing newline, for
+  example) with a `FormatException` that quotes the value, and the
+  providers put the text of the error into their own exceptions, so the key
+  reached logs. The shared request helpers now fail with a
+  `ThreepioFormatException('invalid header field value for "<name>"')`
+  (Go's `net/http` wording) without the value; every provider that sends
+  through them (OpenAI, OpenRouter, OpenAI-compatible, Claude, Gemini,
+  Ollama, the embedders, Qdrant, LangSmith, and the OpenAI Responses and
+  Claude agentic models) wraps that instead; the Claude agentic model also
+  checks its headers before sending, with the same wording. Clients that
+  send through code of their own (the SearXNG and DuckDuckGo tools, for
+  example) are not covered.
+- **HTTP providers: a streamed response that arrives after the header
+  timeout is drained**, so that its connection is let go (only a cancelled
+  wait did that before).
+- **An interrupted `ToolsNode` keeps registered types in the `extra` of
+  its tool calls.** Its checkpoint state (`ToolsInterruptAndRerunExtra` and
+  the rerun state) writes an `extra` of the input message or of a tool
+  call that `jsonEncode` cannot write (one that holds a registered type
+  without a `toJson()`) through `TypeRegistry`, marked by a `$typed_extra`
+  key next to it, as Go's checkpoint serializer writes the registered
+  types in `ToolCall.Extra`. The agentic tools node hands the block extras
+  of a model to its inner `ToolsNode` there (the OpenAI Responses model
+  keeps its item ids and statuses as registered types), so an agentic run
+  whose tool interrupted could not be checkpointed before. Every other
+  `extra` (plain JSON, also with a `$type` key, and objects with a
+  `toJson()`) is written byte for byte as before, and a checkpoint written
+  before is read as it was.
+- **`ComponentType` has four more values** (`agenticModel`,
+  `agenticChatTemplate`, `agenticToolsNode`, `agenticAgent`). A `switch`
+  over `ComponentType` without a default case must add them.
 - **MCP tools keep their input schema exactly as the server sends it**
   (`ToolInfo.fromJsonSchemaMap`): the providers now receive every keyword
   (`anyOf`, `$ref`, `$defs`, `format`, `default`, …), which used to be
@@ -1553,6 +1674,82 @@ LangSmith.
     keeps the extra values its streamed input added (Go drops them).
     Caller metadata is never mutated, and a payload that cannot be encoded
     still creates its run (Go fails or panics in those cases).
+- **Differences from Eino in the agentic path (beta).**
+  - *Types*: hand-written immutable classes, not freezed: Go's JSON nests a
+    block's payload under its type key, which freezed unions do not write.
+    A `ContentBlock` always has a payload (Go's struct can carry a type with
+    a nil payload); a block without one reads back as the zero-valued
+    payload. Go's string zero values are kept as defaults (`callId: ''`).
+    The role of a message is required, so `concatAgenticMessages([])`
+    throws `ArgumentError` (Go returns a message without a role); conflicts
+    throw `MessageConcatException`. Values only the producer knows the type
+    of (`extension`, server tool `arguments`/`content`, `extra`) are written
+    to JSON through `TypeRegistry` (registered types are tagged with their
+    name and come back as themselves; anything else that is not plain JSON
+    makes `toJson` throw). `extension` and server tool `arguments`/
+    `content` are joined through `StreamConcat`, which merges two
+    string-keyed maps where Go's `ConcatSliceValue` fails; `extra` maps are
+    merged key by key, each key's values through `StreamConcat`.
+    `ToolSearchResult` uses threepio's JSON form. The field mappings of an
+    `AgenticMessage` (`getField`/`withField`) take the Dart field names and
+    Go's as aliases.
+  - *Tools node*: the classic `ToolsNode` fills the positions of the other
+    calls in a stream chunk with empty messages, so the agentic node gives
+    those positions as user messages without blocks (Go: `nil`), and a call
+    whose pieces were all empty gets its result block in one final chunk.
+    The joined result equals Go's except that a call whose only chunk was
+    joined with others loses its `StreamingMeta`. A tool that streams
+    nothing gives an empty result (Go fails; as the classic `ToolsNode`
+    does).
+  - *Callbacks*: `AgenticPromptCallbackHandler` receives the agentic prompt
+    payloads (Go v0.9.22 types it with the classic ones, so its end hook
+    always gets `nil`); `LangfuseHandler` records the input, output, model
+    and usage of agentic models (Go reads them with the classic converters
+    and records `null`).
+  - *ADK*: not built — model retry (`ShouldRetry`) and failover for agentic
+    models (the classic retry and failover types are bound to `Message`;
+    building them needs a parallel copy or a generic rewrite of the classic
+    engine), the turn loop over agentic agents, and `OutputKey`/transfer
+    (not recommended upstream, see the ADK notes). `AgenticMessageVariant`
+    has no role or tool name (Go leaves them empty for agentic messages);
+    events are named when their agent name is empty (run paths are not
+    ported); run-local values come from the nearest agent state of either
+    kind; `AgenticAgentTool` has no `fullChatHistoryAsInput` (Go refuses it
+    for agentic agents).
+  - *OpenAI Responses*: no SDK; requests are JSON written with openai-go's
+    field rules and the SSE stream is parsed as openai-go does. openai-go's
+    retries are kept (2 by default; 408, 409, 429, 5xx and transport errors;
+    `retry-after-ms`, `retry-after` in seconds, `x-should-retry`; a timed-out
+    attempt is not retried, as in openai-go); an HTTP-date `retry-after` is
+    not parsed. The timeout bounds the headers of a stream (Go: the whole
+    stream) and an `idleTimeout` ends a stalled one.
+    `OpenAIResponsesModel.invalidateMessageCaches` returns copies (Go edits
+    the messages in place); the item ids and statuses in block `extra` are
+    internal wrapper types registered for checkpoints. Extra fields are
+    top-level keys (no dotted paths). Server-tool payload maps are read
+    leniently. Streamed API errors are classified as retryable by their
+    code or type. The newest wire names (`shell_call`, `tool_search_call`,
+    `cache_write_tokens`, `defer_loading`) follow openai-go v3.44, whose
+    source was not available to check.
+  - *Claude agentic*: no SDK, no environment variables, no SDK retries;
+    `requestTimeout` (10 minutes) bounds the headers of a stream, an
+    `idleTimeout` (90 s) a stalled one. `tool_search_tool_result` blocks
+    become `ServerToolResult`s when their tool search call came first (Go
+    fails `generate` and drops them from a stream; a stream here still
+    drops one whose call it has not seen); streamed server tool calls can
+    be joined (Go registers no concat function for their arguments); an
+    empty `input_json_delta` of a server tool call gives no chunk (Go fails
+    the stream); streamed web search and fetch results keep their caller in
+    `extra`. In `generate`, function tool-call arguments are decoded and
+    re-encoded (number formatting can differ from the bytes the API sent).
+    `anthropic-beta` values are joined in a fixed order. The server-tool
+    definitions of the 2026 tool versions could not be checked
+    against anthropic-sdk-go v1.56 (not available); they follow the Go
+    code's use and the SDK's naming.
+  - *Not ported*: the agentic Gemini model, eino-ext's agentic
+    chat-completions models (`agenticopenai.NewChatModel`, DeepSeek, Qwen),
+    the Ark agentic model (Ark's Responses API) and the Bedrock and Vertex
+    variants of Claude.
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

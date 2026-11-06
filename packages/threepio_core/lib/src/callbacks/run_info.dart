@@ -52,7 +52,19 @@ enum ComponentType {
   lambda('Lambda'),
 
   /// Graph node that executes the tool calls of a message
-  toolsNode('ToolsNode');
+  toolsNode('ToolsNode'),
+
+  /// Model of the agentic path (`AgenticMessage` in and out). **Beta.**
+  agenticModel('AgenticModel'),
+
+  /// Chat template of the agentic path. **Beta.**
+  agenticChatTemplate('AgenticChatTemplate'),
+
+  /// Tools node of the agentic path. **Beta.**
+  agenticToolsNode('AgenticToolsNode'),
+
+  /// Agent of the agentic path. **Beta.**
+  agenticAgent('AgenticAgent');
 
   const ComponentType(this.einoName);
 

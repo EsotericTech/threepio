@@ -665,7 +665,7 @@ final class ToolsInterruptAndRerunExtra {
       ToolsInterruptAndRerunExtra(
         toolCalls: [
           for (final call in json['tool_calls']! as List<Object?>)
-            ToolCall.fromJson(call! as Map<String, dynamic>),
+            _toolCallFromJson(call! as Map<String, dynamic>),
         ],
         executedTools:
             (json['executed_tools']! as Map<String, Object?>).cast(),
@@ -700,9 +700,12 @@ final class ToolsInterruptAndRerunExtra {
   final Map<String, Object?> rerunExtraMap;
 
   /// The JSON form of the report. An info in [rerunExtraMap] that is neither
-  /// JSON nor of a registered type is written as its `toString()`.
+  /// JSON nor of a registered type is written as its `toString()`. The
+  /// `extra` of a tool call that `jsonEncode` cannot write (it holds a
+  /// registered type without a `toJson()`) is written through
+  /// [TypeRegistry]; every other `extra` is written as it is.
   Map<String, Object?> toJson() => {
-        'tool_calls': [for (final call in toolCalls) call.toJson()],
+        'tool_calls': [for (final call in toolCalls) _toolCallToJson(call)],
         'executed_tools': executedTools,
         'executed_enhanced_tools': {
           for (final MapEntry(:key, :value) in executedEnhancedTools.entries)
@@ -739,7 +742,7 @@ final class _ToolsRerunState {
 
   factory _ToolsRerunState.fromJson(Map<String, Object?> json) =>
       _ToolsRerunState(
-        input: Message.fromJson(json['input']! as Map<String, dynamic>),
+        input: _messageFromJson(json['input']! as Map<String, dynamic>),
         executedTools:
             (json['executed_tools']! as Map<String, Object?>).cast(),
         executedEnhancedTools: {
@@ -757,7 +760,7 @@ final class _ToolsRerunState {
   final List<String> rerunTools;
 
   Map<String, Object?> toJson() => {
-        'input': input.toJson(),
+        'input': _messageToJson(input),
         'executed_tools': executedTools,
         'executed_enhanced_tools': {
           for (final MapEntry(:key, :value) in executedEnhancedTools.entries)
@@ -766,6 +769,117 @@ final class _ToolsRerunState {
         'rerun_tools': rerunTools,
       };
 }
+
+/// The key that marks, in the JSON of a tool call or a message that a tools
+/// node writes into a checkpoint, an `extra` written through [TypeRegistry].
+///
+/// It is written only next to such an `extra`, so every other checkpoint is
+/// byte for byte what the tools node wrote before registered extras were
+/// supported, and one written then is read exactly as it was (also when its
+/// `extra` happens to hold a `$type` key).
+const _typedExtraKey = r'$typed_extra';
+
+/// [call] as a tools node writes it into a checkpoint: its JSON form, whose
+/// `extra` is written through [TypeRegistry] when `jsonEncode` cannot write
+/// it (see [_typedExtra]).
+///
+/// Go's checkpoint serializer writes the registered types in
+/// `ToolCall.Extra` with their names, and the agentic tools node puts the
+/// block extras of a model there (the item ids and statuses of the OpenAI
+/// Responses model are registered types without a `toJson()`), so an
+/// interrupted agentic tools node must be able to keep them.
+Map<String, Object?> _toolCallToJson(ToolCall call) {
+  final json = call.toJson();
+  final typed = _typedExtra(call.extra);
+  if (typed != null) {
+    json['extra'] = typed;
+    json[_typedExtraKey] = true;
+  }
+  return json;
+}
+
+/// The tool call [_toolCallToJson] wrote.
+ToolCall _toolCallFromJson(Map<String, dynamic> json) {
+  final call = ToolCall.fromJson(json);
+  return json[_typedExtraKey] == true
+      ? call.copyWith(extra: _decodeExtra(json['extra']))
+      : call;
+}
+
+/// [message] as a tools node writes it into a checkpoint: its JSON form,
+/// with the `extra` of the message and of its tool calls written as
+/// [_toolCallToJson] writes them.
+Map<String, Object?> _messageToJson(Message message) {
+  final json = message.toJson();
+  final toolCalls = message.toolCalls;
+  if (toolCalls != null) {
+    json['toolCalls'] = [for (final call in toolCalls) _toolCallToJson(call)];
+  }
+  final typed = _typedExtra(message.extra);
+  if (typed != null) {
+    json['extra'] = typed;
+    json[_typedExtraKey] = true;
+  }
+  return json;
+}
+
+/// The message [_messageToJson] wrote.
+Message _messageFromJson(Map<String, dynamic> json) {
+  final message = Message.fromJson(json);
+  final Object? calls = json['toolCalls'];
+  final typedCalls = calls is List<Object?> &&
+          calls.any((call) => call is Map && call[_typedExtraKey] == true)
+      ? calls
+      : null;
+  final typedExtra = json[_typedExtraKey] == true;
+  // Written without registered extras (always so before they were
+  // supported): read as it always was.
+  if (typedCalls == null && !typedExtra) return message;
+  return message.copyWith(
+    toolCalls: typedCalls == null
+        ? message.toolCalls
+        : [
+            for (final call in typedCalls)
+              _toolCallFromJson(call! as Map<String, dynamic>),
+          ],
+    extra: typedExtra ? _decodeExtra(json['extra']) : message.extra,
+  );
+}
+
+/// [extra] written through [TypeRegistry], or `null` when it is written as
+/// it is.
+///
+/// Only an `extra` that `jsonEncode` cannot write is written through the
+/// registry: one that holds a registered type without a `toJson()`. Any
+/// other `extra` is left as it was before registered extras were
+/// supported: plain JSON (also a map with a `$type` key), objects with a
+/// `toJson()` (which `jsonEncode` calls; a registered one among them comes
+/// back as its JSON, as before), and values neither can write (the
+/// checkpoint then fails as it did).
+Object? _typedExtra(Map<String, dynamic>? extra) {
+  if (extra == null) return null;
+  try {
+    jsonEncode(extra);
+    return null;
+    // What jsonEncode throws for a value it cannot write.
+    // ignore: avoid_catching_errors
+  } on JsonCyclicError {
+    return null;
+    // ignore: avoid_catching_errors
+  } on JsonUnsupportedObjectError {
+    try {
+      return TypeRegistry.encode(extra);
+      // A value TypeRegistry does not know either.
+      // ignore: avoid_catching_errors
+    } on ArgumentError {
+      return null;
+    }
+  }
+}
+
+/// The `extra` [_typedExtra] wrote.
+Map<String, dynamic> _decodeExtra(Object? json) =>
+    TypeRegistry.decode(json)! as Map<String, Object?>;
 
 /// Registers the types a tools node writes into checkpoints, under the names
 /// Eino uses.

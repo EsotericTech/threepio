@@ -109,5 +109,21 @@ export 'src/components/model/providers/claude/claude_options.dart';
 export 'src/components/model/providers/ollama/ollama_chat_model.dart';
 export 'src/components/model/providers/ollama/ollama_config.dart';
 export 'src/components/model/providers/ollama/ollama_options.dart';
+// Agentic models (beta): OpenAI Responses API and Claude
+export 'src/components/model/providers/claude_agentic/claude_agentic_config.dart';
+export 'src/components/model/providers/claude_agentic/claude_agentic_consts.dart';
+export 'src/components/model/providers/claude_agentic/claude_agentic_content_block_extra.dart';
+export 'src/components/model/providers/claude_agentic/claude_agentic_extension.dart';
+export 'src/components/model/providers/claude_agentic/claude_agentic_message_extra.dart';
+export 'src/components/model/providers/claude_agentic/claude_agentic_model.dart';
+export 'src/components/model/providers/claude_agentic/claude_agentic_options.dart';
+export 'src/components/model/providers/claude_agentic/claude_agentic_register.dart';
+export 'src/components/model/providers/openai_responses/openai_responses_config.dart';
+export 'src/components/model/providers/openai_responses/openai_responses_consts.dart';
+export 'src/components/model/providers/openai_responses/openai_responses_exception.dart'
+    show OpenAIResponsesException;
+export 'src/components/model/providers/openai_responses/openai_responses_extension.dart';
+export 'src/components/model/providers/openai_responses/openai_responses_model.dart';
+export 'src/components/model/providers/openai_responses/openai_responses_options.dart';
 export 'src/components/embedding/gemini_embedder.dart';
 export 'src/components/embedding/ollama_embedder.dart' hide OllamaEmbedResponse;

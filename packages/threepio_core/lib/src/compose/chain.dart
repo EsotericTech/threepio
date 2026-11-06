@@ -10,10 +10,13 @@ import '../components/document/loader.dart';
 import '../components/document/transformer.dart';
 import '../components/embedding/embedder.dart';
 import '../components/indexer/indexer.dart';
+import '../components/model/agentic_model.dart';
 import '../components/model/base_chat_model.dart';
+import '../components/prompt/agentic_chat_template.dart';
 import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
 import '../core/run_context.dart';
+import 'agentic_tools_node.dart';
 import 'chain_branch.dart';
 import 'composable_runnable.dart';
 import 'errors.dart';
@@ -101,6 +104,30 @@ final class Chain<I, O> implements AnyGraph {
   /// Appends a tools node. Port of eino `Chain.AppendToolsNode`.
   Chain<I, O> appendToolsNode(ToolsNode node, {NodeOptions? options}) =>
       _append(toToolsNode(node, options));
+
+  /// Appends an agentic model. Port of eino `Chain.AppendAgenticModel`.
+  /// **Beta.**
+  Chain<I, O> appendAgenticModel(
+    AgenticModel model, {
+    NodeOptions? options,
+  }) =>
+      _append(toAgenticModelNode(model, options));
+
+  /// Appends an agentic chat template. Port of eino
+  /// `Chain.AppendAgenticChatTemplate`. **Beta.**
+  Chain<I, O> appendAgenticChatTemplate(
+    AgenticChatTemplate template, {
+    NodeOptions? options,
+  }) =>
+      _append(toAgenticChatTemplateNode(template, options));
+
+  /// Appends an agentic tools node. Port of eino
+  /// `Chain.AppendAgenticToolsNode`. **Beta.**
+  Chain<I, O> appendAgenticToolsNode(
+    AgenticToolsNode node, {
+    NodeOptions? options,
+  }) =>
+      _append(toAgenticToolsNode(node, options));
 
   /// Appends a document transformer. Port of eino
   /// `Chain.AppendDocumentTransformer`.

@@ -1,5 +1,6 @@
 import '../../core/run_context.dart';
 import '../../internal/option_extensions.dart';
+import '../../schema/agentic_tool_choice.dart';
 import '../../schema/tool_info.dart';
 import 'cancel_token.dart';
 
@@ -28,6 +29,7 @@ class ChatModelOptions {
     this.allowedToolNames,
     this.runContext,
     this.extensions = const [],
+    this.agenticToolChoice,
   });
 
   /// Temperature for controlling randomness (typically 0.0-2.0)
@@ -124,6 +126,11 @@ class ChatModelOptions {
   /// ```
   final List<Object> extensions;
 
+  /// How an agentic model may call tools (Eino:
+  /// `model.WithAgenticToolChoice`). **Beta.** Only `AgenticModel`s read
+  /// it; the classic chat models use [toolChoice].
+  final AgenticToolChoice? agenticToolChoice;
+
   /// The first of the [extensions] that is a [T], or `null`.
   ///
   /// The counterpart of eino's `model.GetImplSpecificOptions`.
@@ -148,6 +155,7 @@ class ChatModelOptions {
     List<String>? allowedToolNames,
     RunContext? runContext,
     List<Object>? extensions,
+    AgenticToolChoice? agenticToolChoice,
   }) {
     return ChatModelOptions(
       temperature: temperature ?? this.temperature,
@@ -167,6 +175,7 @@ class ChatModelOptions {
       allowedToolNames: allowedToolNames ?? this.allowedToolNames,
       runContext: runContext ?? this.runContext,
       extensions: extensions ?? this.extensions,
+      agenticToolChoice: agenticToolChoice ?? this.agenticToolChoice,
     );
   }
 
@@ -203,6 +212,7 @@ class ChatModelOptions {
           : other.allowedToolNames ?? allowedToolNames,
       runContext: other.runContext ?? runContext,
       extensions: mergeExtensions(extensions, other.extensions),
+      agenticToolChoice: other.agenticToolChoice ?? agenticToolChoice,
     );
   }
 

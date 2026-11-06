@@ -20,6 +20,7 @@ import '../../errors.dart';
 import '../../schema/message.dart';
 import '../../schema/tool_result.dart';
 import '../../streaming/stream_reader.dart';
+import '../agentic/agentic_context.dart' show agenticExecContextOf;
 import 'agent_context.dart';
 import 'agent_event.dart';
 import 'run_options.dart';
@@ -746,9 +747,12 @@ CancelContext? cancelContextOf(RunContext ctx) => ctx.value(_cancelContextKey);
     return (fromOptions, !identical(fromOptions, inherited));
   }
   if (inherited != null) {
+    // Eino `hasActiveChatModelAgentExecCtx` looks for a run of either
+    // message type.
     if (inherited.parent != null &&
         !inherited.abortOnly &&
-        execContextOf(ctx) == null) {
+        execContextOf(ctx) == null &&
+        agenticExecContextOf(ctx) == null) {
       return (inherited, false);
     }
     return (inherited.deriveAbortOnly(ctx), true);
@@ -826,19 +830,37 @@ bool checkPreExecCancel(
 StreamReader<AgentEvent> wrapEventsWithCancelContext(
   StreamReader<AgentEvent> events,
   CancelContext? cancelContext,
-) {
+) =>
+    wrapTypedEventsWithCancelContext<AgentEvent>(
+      events,
+      cancelContext,
+      interruptSignalOf: (event) => event.action?.interruptSignal,
+      errorEvent: (error, [stackTrace]) =>
+          AgentEvent(error: error, stackTrace: stackTrace),
+    );
+
+/// [wrapEventsWithCancelContext] for the events of either message type (eino
+/// `wrapIterWithCancelCtx[M]`): [interruptSignalOf] reads the interrupt an
+/// event carries and [errorEvent] builds an error event.
+@internal
+StreamReader<E> wrapTypedEventsWithCancelContext<E extends Object>(
+  StreamReader<E> events,
+  CancelContext? cancelContext, {
+  required AddressedInterruptSignal? Function(E event) interruptSignalOf,
+  required E Function(Object error, [StackTrace? stackTrace]) errorEvent,
+}) {
   if (cancelContext == null) return events;
-  final (reader, writer) = pipe<AgentEvent>();
+  final (reader, writer) = pipe<E>();
   unawaited(() async {
     try {
       for (var event = await events.nextOrNull();
           event != null;
           event = await events.nextOrNull()) {
-        final signal = event.action?.interruptSignal;
+        final signal = interruptSignalOf(event);
         if (cancelContext.isRoot && signal != null && cancelContext.shouldCancel) {
           final error =
               cancelContext.createAndMarkCancelHandled(interruptSignal: signal);
-          if (error != null) writer.send(AgentEvent(error: error));
+          if (error != null) writer.send(errorEvent(error));
           return;
         }
         writer.send(event);
@@ -846,7 +868,7 @@ StreamReader<AgentEvent> wrapEventsWithCancelContext(
       // Whatever the source throws ends the run.
       // ignore: avoid_catches_without_on_clauses
     } catch (error, stackTrace) {
-      writer.send(AgentEvent(error: error, stackTrace: stackTrace));
+      writer.send(errorEvent(error, stackTrace));
     } finally {
       // Eino defers both; a failing close of the source (Go's cannot fail)
       // must not skip them, nor escape as an unhandled error.

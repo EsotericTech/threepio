@@ -9,9 +9,12 @@ import '../components/document/loader.dart';
 import '../components/document/transformer.dart';
 import '../components/embedding/embedder.dart';
 import '../components/indexer/indexer.dart';
+import '../components/model/agentic_model.dart';
 import '../components/model/base_chat_model.dart';
+import '../components/prompt/agentic_chat_template.dart';
 import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
+import 'agentic_tools_node.dart';
 import 'errors.dart';
 import 'graph.dart';
 import 'graph_node.dart';
@@ -77,6 +80,36 @@ final class Parallel {
     NodeOptions? options,
   }) =>
       _add(outputKey, toToolsNode(node, _keyed(outputKey, options)));
+
+  /// Adds an agentic model. Port of eino `Parallel.AddAgenticModel`.
+  /// **Beta.**
+  Parallel addAgenticModel(
+    String outputKey,
+    AgenticModel model, {
+    NodeOptions? options,
+  }) =>
+      _add(outputKey, toAgenticModelNode(model, _keyed(outputKey, options)));
+
+  /// Adds an agentic chat template. Port of eino
+  /// `Parallel.AddAgenticChatTemplate`. **Beta.**
+  Parallel addAgenticChatTemplate(
+    String outputKey,
+    AgenticChatTemplate template, {
+    NodeOptions? options,
+  }) =>
+      _add(
+        outputKey,
+        toAgenticChatTemplateNode(template, _keyed(outputKey, options)),
+      );
+
+  /// Adds an agentic tools node. Port of eino
+  /// `Parallel.AddAgenticToolsNode`. **Beta.**
+  Parallel addAgenticToolsNode(
+    String outputKey,
+    AgenticToolsNode node, {
+    NodeOptions? options,
+  }) =>
+      _add(outputKey, toAgenticToolsNode(node, _keyed(outputKey, options)));
 
   /// Adds a lambda. Port of eino `Parallel.AddLambda`.
   ///

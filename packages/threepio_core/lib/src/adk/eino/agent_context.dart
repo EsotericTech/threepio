@@ -39,10 +39,20 @@ final class RunSession {
 @internal
 final class AdkRunContext {
   /// The context of a run with [session].
-  const AdkRunContext({required this.session, this.rootInput, this.depth = 0});
+  const AdkRunContext({
+    required this.session,
+    this.rootInput,
+    this.depth = 0,
+    this.agenticRootInput,
+  });
 
   /// The input the run was started with.
   final AgentInput? rootInput;
+
+  /// The input an agentic run (`AgenticRunner`) was started with, an
+  /// `AgenticAgentInput`. Port of eino's `runContext.AgenticRootInput`;
+  /// `null` in a classic run.
+  final Object? agenticRootInput;
 
   /// The session values of the run.
   final RunSession session;
@@ -75,17 +85,24 @@ RunContext withAdkRunContext(RunContext ctx, AdkRunContext? run) =>
 /// [ctx] for the agent [agentName] entering its run. Port of eino
 /// `initRunCtx`: the session is shared, and the input becomes the root input
 /// when the agent is the first one.
+///
+/// An agentic agent passes its input as [agenticInput] (eino
+/// `initTypedRunCtx`), which becomes the agentic root input in the same way.
 @internal
 (RunContext, AdkRunContext) initAdkRunContext(
   RunContext ctx,
   String agentName,
-  AgentInput? input,
-) {
+  AgentInput? input, {
+  Object? agenticInput,
+}) {
   final current = adkRunContextOf(ctx);
   final depth = (current?.depth ?? 0) + 1;
   final run = AdkRunContext(
     session: current?.session ?? RunSession(),
     rootInput: depth == 1 && input != null ? input : current?.rootInput,
+    agenticRootInput: depth == 1 && agenticInput != null
+        ? agenticInput
+        : current?.agenticRootInput,
     depth: depth,
   );
   return (withAdkRunContext(ctx, run), run);
@@ -262,10 +279,21 @@ extension AgentContext on RunContext {
   }
 }
 
-ReactState _reactStateOf(RunContext ctx, String operation) {
+/// The state of an agent run that keeps run-local values: the `ReactState`
+/// of a `ChatModelAgent` run, or the state of an `AgenticChatModelAgent`
+/// run. Port of what eino's `processTypedState` reaches in either state
+/// type (`typedState[*schema.Message]` or `typedState[*schema.AgenticMessage]`).
+@internal
+abstract interface class RunLocalValueHolder {
+  /// The run-local values.
+  Map<String, Object?>? get extra;
+  set extra(Map<String, Object?>? value);
+}
+
+RunLocalValueHolder _reactStateOf(RunContext ctx, String operation) {
   for (var holder = internalStateOf(ctx); holder != null; holder = holder.parent) {
     final state = holder.state;
-    if (state is ReactState) return state;
+    if (state is RunLocalValueHolder) return state;
   }
   throw StateError(
     '$operation failed: must be called within a ChatModelAgent run() or '

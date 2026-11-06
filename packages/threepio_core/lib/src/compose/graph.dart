@@ -13,12 +13,15 @@ import '../components/document/loader.dart';
 import '../components/document/transformer.dart';
 import '../components/embedding/embedder.dart';
 import '../components/indexer/indexer.dart';
+import '../components/model/agentic_model.dart';
 import '../components/model/base_chat_model.dart';
+import '../components/prompt/agentic_chat_template.dart';
 import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
 import '../core/run_context.dart';
 import '../streaming/stream_reader.dart';
 import 'address.dart';
+import 'agentic_tools_node.dart';
 import 'call_options.dart';
 import 'channel_manager.dart';
 import 'checkpoint.dart';
@@ -974,6 +977,38 @@ final class Graph<I, O> implements AnyGraph {
   /// of eino `Graph.AddToolsNode`.
   void addToolsNode(String key, ToolsNode node, {NodeOptions? options}) =>
       _core.addNode(key, toToolsNode(node, options));
+
+  /// Adds an agentic model as the node [key]: it takes a
+  /// `List<AgenticMessage>` and gives an `AgenticMessage`. Port of eino
+  /// `Graph.AddAgenticModelNode`. **Beta.**
+  void addAgenticModelNode(
+    String key,
+    AgenticModel model, {
+    NodeOptions? options,
+  }) =>
+      _core.addNode(key, toAgenticModelNode(model, options));
+
+  /// Adds an agentic chat template as the node [key]: it takes the
+  /// variables as a `Map<String, Object?>` and gives a
+  /// `List<AgenticMessage>`. Port of eino `Graph.AddAgenticChatTemplateNode`.
+  /// **Beta.**
+  void addAgenticChatTemplateNode(
+    String key,
+    AgenticChatTemplate template, {
+    NodeOptions? options,
+  }) =>
+      _core.addNode(key, toAgenticChatTemplateNode(template, options));
+
+  /// Adds an agentic tools node as the node [key]: it takes the
+  /// `AgenticMessage` with function tool calls and gives the results as a
+  /// `List<AgenticMessage>`. Port of eino `Graph.AddAgenticToolsNode`.
+  /// **Beta.**
+  void addAgenticToolsNode(
+    String key,
+    AgenticToolsNode node, {
+    NodeOptions? options,
+  }) =>
+      _core.addNode(key, toAgenticToolsNode(node, options));
 
   /// Adds a retriever as the node [key]: it takes the query as a `String` and
   /// gives a `List<Document>`. Port of eino `Graph.AddRetrieverNode`.

@@ -36,6 +36,7 @@ export 'schema.dart';
 export 'src/callbacks/component_callback_handler.dart';
 export 'src/callbacks/run_info.dart';
 export 'src/compose/address.dart';
+export 'src/compose/agentic_tools_node.dart' show AgenticToolsNode;
 export 'src/compose/batch_node.dart';
 export 'src/compose/call_options.dart';
 export 'src/compose/chain.dart';

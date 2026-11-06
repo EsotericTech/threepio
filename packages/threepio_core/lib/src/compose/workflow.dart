@@ -10,11 +10,14 @@ import '../components/document/loader.dart';
 import '../components/document/transformer.dart';
 import '../components/embedding/embedder.dart';
 import '../components/indexer/indexer.dart';
+import '../components/model/agentic_model.dart';
 import '../components/model/base_chat_model.dart';
+import '../components/prompt/agentic_chat_template.dart';
 import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
 import '../core/run_context.dart';
 import '../streaming/stream_reader.dart';
+import 'agentic_tools_node.dart';
 import 'composable_runnable.dart';
 import 'errors.dart';
 import 'graph.dart';
@@ -125,6 +128,33 @@ final class Workflow<I, O> implements AnyGraph {
     NodeOptions? options,
   }) =>
       _add(key, () => toToolsNode(node, options));
+
+  /// Adds an agentic model as the node [key]. Port of eino
+  /// `Workflow.AddAgenticModelNode`. **Beta.**
+  WorkflowNode addAgenticModelNode(
+    String key,
+    AgenticModel model, {
+    NodeOptions? options,
+  }) =>
+      _add(key, () => toAgenticModelNode(model, options));
+
+  /// Adds an agentic chat template as the node [key]. Port of eino
+  /// `Workflow.AddAgenticChatTemplateNode`. **Beta.**
+  WorkflowNode addAgenticChatTemplateNode(
+    String key,
+    AgenticChatTemplate template, {
+    NodeOptions? options,
+  }) =>
+      _add(key, () => toAgenticChatTemplateNode(template, options));
+
+  /// Adds an agentic tools node as the node [key]. Port of eino
+  /// `Workflow.AddAgenticToolsNode`. **Beta.**
+  WorkflowNode addAgenticToolsNode(
+    String key,
+    AgenticToolsNode node, {
+    NodeOptions? options,
+  }) =>
+      _add(key, () => toAgenticToolsNode(node, options));
 
   /// Adds a retriever as the node [key]. Port of eino
   /// `Workflow.AddRetrieverNode`.

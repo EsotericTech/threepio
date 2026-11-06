@@ -11,6 +11,7 @@ import 'package:meta/meta.dart';
 import '../core/field_addressable.dart';
 import '../errors.dart';
 import '../internal/type_utils.dart';
+import '../schema/agentic_message.dart';
 import '../schema/document.dart';
 import '../schema/message.dart';
 import '../streaming/stream_reader.dart';
@@ -350,8 +351,9 @@ bool _canHoldFields(TypeRef<Object?> type) =>
 
 /// The empty value field mappings fill in for a place of type [T]: the one
 /// registered with [FieldAddressable.registerBlank], or the built-in one of
-/// [Message] (a user message without content) and [Document] (without
-/// content). `null` when [T] is no [FieldAddressable] type or has no blank.
+/// [Message] (a user message without content), [Document] (without
+/// content) and [AgenticMessage] (a user message without blocks). `null`
+/// when [T] is no [FieldAddressable] type or has no blank.
 @internal
 FieldAddressable? blankOf<T>() {
   if (!isSubtype<T, FieldAddressable?>()) return null;
@@ -359,8 +361,14 @@ FieldAddressable? blankOf<T>() {
   if (registered != null) return registered;
   if (isSubtype<Message, T>()) return const Message(role: RoleType.user);
   if (isSubtype<Document, T>()) return const Document(content: '');
+  if (isSubtype<AgenticMessage, T>()) return _blankAgenticMessage;
   return null;
 }
+
+/// The blank of [AgenticMessage] (its constructor copies its lists, so it
+/// cannot be `const`).
+final AgenticMessage _blankAgenticMessage =
+    AgenticMessage(role: AgenticRoleType.user);
 
 /// Why a value could not be assigned: the reason of the first way that was
 /// tried, which is the plain one (the others are guesses at what could stand
@@ -382,6 +390,7 @@ Iterable<Object> _emptyHolders() sync* {
   yield* FieldAddressable.blanks();
   yield const Message(role: RoleType.user);
   yield const Document(content: '');
+  yield _blankAgenticMessage;
 }
 
 /// The ways to give [destination] the [value] at [path], best first. Each is

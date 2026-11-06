@@ -13,13 +13,17 @@ import '../components/document/loader.dart';
 import '../components/document/transformer.dart';
 import '../components/embedding/embedder.dart';
 import '../components/indexer/indexer.dart';
+import '../components/model/agentic_model.dart';
 import '../components/model/base_chat_model.dart';
 import '../components/model/chat_model_options.dart';
+import '../components/prompt/agentic_chat_template.dart';
 import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
 import '../core/run_context.dart';
+import '../schema/agentic_message.dart';
 import '../schema/document.dart';
 import '../schema/message.dart';
+import 'agentic_tools_node.dart';
 import 'composable_runnable.dart';
 import 'errors.dart';
 import 'field_mapping.dart';
@@ -284,6 +288,20 @@ ChatModelOptions _chatModelOptions(
         .fold(const ChatModelOptions(), (merged, next) => merged.merge(next))
         .copyWith(runContext: ctx);
 
+/// Port of eino `toAgenticModelNode`. Like [toChatModelNode], the model gets
+/// the merged [ChatModelOptions] of the call with the node's context as
+/// their `runContext`.
+GraphNode toAgenticModelNode(AgenticModel model, NodeOptions? options) =>
+    toComponentNode<List<AgenticMessage>, AgenticMessage, ChatModelOptions>(
+      model,
+      ComponentType.agenticModel,
+      options,
+      invoke: (ctx, input, callOptions) =>
+          model.generate(input, options: _chatModelOptions(ctx, callOptions)),
+      stream: (ctx, input, callOptions) =>
+          model.stream(input, options: _chatModelOptions(ctx, callOptions)),
+    );
+
 /// Port of eino `toChatTemplateNode`.
 GraphNode toChatTemplateNode(ChatTemplate template, NodeOptions? options) =>
     toComponentNode<Map<String, dynamic>, List<Message>, ChatTemplateOptions>(
@@ -291,6 +309,29 @@ GraphNode toChatTemplateNode(ChatTemplate template, NodeOptions? options) =>
       ComponentType.promptTemplate,
       options,
       invoke: (ctx, input, callOptions) => template.format(
+        input,
+        options: callOptions
+            .fold(
+              const ChatTemplateOptions(),
+              (merged, next) => merged.merge(next),
+            )
+            .copyWith(runContext: ctx),
+      ),
+    );
+
+/// Port of eino `toAgenticChatTemplateNode`. The template gets the merged
+/// [ChatTemplateOptions] of the call and the node's context.
+GraphNode toAgenticChatTemplateNode(
+  AgenticChatTemplate template,
+  NodeOptions? options,
+) =>
+    toComponentNode<Map<String, Object?>, List<AgenticMessage>,
+        ChatTemplateOptions>(
+      template,
+      ComponentType.agenticChatTemplate,
+      options,
+      invoke: (ctx, input, callOptions) => template.format(
+        ctx,
         input,
         options: callOptions
             .fold(
@@ -389,6 +430,18 @@ GraphNode toToolsNode(ToolsNode node, NodeOptions? options) =>
     toComponentNode<Message, List<Message>, ToolsNodeOptions>(
       node,
       ComponentType.toolsNode,
+      options,
+      invoke: (ctx, input, callOptions) =>
+          node.invokeTools(ctx, input, options: _toolsNodeOptions(callOptions)),
+      stream: (ctx, input, callOptions) =>
+          node.streamTools(ctx, input, options: _toolsNodeOptions(callOptions)),
+    );
+
+/// Port of eino `toAgenticToolsNode`.
+GraphNode toAgenticToolsNode(AgenticToolsNode node, NodeOptions? options) =>
+    toComponentNode<AgenticMessage, List<AgenticMessage>, ToolsNodeOptions>(
+      node,
+      ComponentType.agenticToolsNode,
       options,
       invoke: (ctx, input, callOptions) =>
           node.invokeTools(ctx, input, options: _toolsNodeOptions(callOptions)),

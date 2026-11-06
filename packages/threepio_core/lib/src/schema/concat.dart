@@ -9,6 +9,8 @@ import 'package:meta/meta.dart';
 
 import '../internal/type_utils.dart';
 import '../streaming/stream_reader.dart';
+import 'agentic_message.dart';
+import 'agentic_message_concat.dart';
 import 'message.dart';
 import 'message_concat.dart';
 import 'tool_result.dart';
@@ -47,6 +49,8 @@ final class _ConcatEntry<T extends Object> {
 ///   map type (`Map<String, String>`) needs a function of its own.
 /// * [Message], `List<Message>` and [ToolResult]: [concatMessages],
 ///   [concatMessageArray] and [concatToolResults].
+/// * [AgenticMessage] and `List<AgenticMessage>`: [concatAgenticMessages]
+///   and [concatAgenticMessagesArray].
 ///
 /// Anything else is added with [register]. For a type without a function,
 /// chunks can only be joined when at most one of them carries a value (is not
@@ -146,6 +150,10 @@ abstract final class StreamConcat {
       _ConcatEntry<Map<String, Object?>>(
         (chunks) => concatMaps(chunks, appendLists: false),
       ),
+      // Before the classic messages, so that a value both fit (an empty
+      // `List<Never>`) keeps resolving to the classic function.
+      _ConcatEntry<AgenticMessage>(concatAgenticMessages),
+      _ConcatEntry<List<AgenticMessage>>(concatAgenticMessagesArray),
       _ConcatEntry<Message>(concatMessages),
       _ConcatEntry<List<Message>>(concatMessageArray),
       _ConcatEntry<ToolResult>(concatToolResults),

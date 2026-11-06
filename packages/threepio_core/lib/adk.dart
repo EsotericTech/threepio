@@ -43,6 +43,15 @@
 /// file and shell tools, and sub-agents started through a `task` tool) and
 /// [PlanExecute] (a planner, an executor and a replanner in a loop).
 ///
+/// The agentic path (**beta**, as upstream): [AgenticChatModelAgent] runs an
+/// `AgenticModel` (content blocks, server and MCP tools) with the same
+/// ReAct loop, middlewares ([AgenticChatModelAgentMiddleware]), interrupts
+/// and checkpoints, through an [AgenticRunner]; its events are
+/// [AgenticAgentEvent]s; an [AgenticAgentTool] lets an agent call an
+/// agentic agent. The actions, interrupt infos, resume parameters,
+/// run options, session values and the checkpoint format are those of the
+/// classic path.
+///
 /// Not ported, because Eino marks it as not recommended: agent transfer
 /// (sub-agents, `TransferToAgentAction`, `ExitTool`, run paths, `OutputKey`),
 /// the workflow agents (plan-execute uses private runners in their place)
@@ -50,6 +59,38 @@
 library;
 
 export 'compose.dart';
+export 'src/adk/agentic/agentic_agent.dart'
+    show
+        AgenticAgent,
+        AgenticAgentEvent,
+        AgenticAgentInput,
+        AgenticAgentOutput,
+        AgenticMessageVariant,
+        ResumableAgenticAgent,
+        agenticCompositeInterruptEvent,
+        agenticInterruptEvent,
+        agenticStatefulInterruptEvent,
+        getAgenticMessageFromEvent;
+export 'src/adk/agentic/agentic_agent_tool.dart' show AgenticAgentTool;
+export 'src/adk/agentic/agentic_callbacks.dart'
+    show
+        AgenticAgentCallbackInput,
+        AgenticAgentCallbackOutput,
+        typedAgenticAgentCallbackHandler;
+export 'src/adk/agentic/agentic_chat_model_agent.dart'
+    show
+        AgenticChatModelAgent,
+        AgenticChatModelAgentConfig,
+        AgenticGenModelInput,
+        defaultAgenticGenModelInput;
+export 'src/adk/agentic/agentic_context.dart'
+    show AgenticAgentContext, agenticMessageIdOf, ensureAgenticMessageId;
+export 'src/adk/agentic/agentic_middleware.dart'
+    show
+        AgenticChatModelAgentMiddleware,
+        AgenticChatModelAgentState,
+        AgenticModelContext;
+export 'src/adk/agentic/agentic_runner.dart' show AgenticRunner;
 export 'src/adk/eino/agent.dart';
 export 'src/adk/eino/agent_action.dart';
 export 'src/adk/eino/agent_callbacks.dart'
@@ -201,4 +242,8 @@ export 'src/adk/tools/review_edit_tool.dart'
 export 'src/callbacks/handler_builder.dart'
     show CallbackErrorHook, CallbackHandlerBuilder, CallbackHook, CallbackStreamHook;
 export 'src/callbacks/handler_helper.dart'
-    show AgentCallbackHandler, HandlerHelper, TypedCallbackHook;
+    show
+        AgentCallbackHandler,
+        AgenticAgentCallbackHandler,
+        HandlerHelper,
+        TypedCallbackHook;

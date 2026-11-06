@@ -39,6 +39,11 @@ const ParamsOneOf _defaultAgentToolParams = ParamsOneOf.params({
   ),
 });
 
+/// The parameters of an agent tool without an input schema, for the agent
+/// tools of both message types. Port of eino `defaultAgentToolParam`.
+@internal
+const ParamsOneOf defaultAgentToolParams = _defaultAgentToolParams;
+
 /// A tool that runs [agent]: the model of another agent calls it like any
 /// tool, and gets the agent's last message as the result.
 ///
@@ -158,7 +163,7 @@ final class AgentTool extends InvokableTool {
       if (fullChatHistoryAsInput) {
         input = await _reactChatHistory(ctx, agent.name);
       } else if (inputSchema == null) {
-        input = [Message.user(_requestOf(argumentsJson))];
+        input = [Message.user(agentToolRequestOf(argumentsJson))];
       } else {
         input = [Message.user(argumentsJson)];
       }
@@ -240,33 +245,36 @@ final class AgentTool extends InvokableTool {
     return (await output.getMessage()).content;
   }
 
-  static String _requestOf(String argumentsJson) {
-    final Object? decoded;
-    try {
-      decoded = jsonDecode(argumentsJson);
-    } on FormatException catch (error) {
-      throw ThreepioFormatException(
-        'agent tool arguments are not JSON: ${error.message}',
-        cause: error,
-      );
-    }
-    if (decoded is! Map) {
-      throw ThreepioFormatException(
-        'agent tool arguments must be a JSON object, got $argumentsJson',
-      );
-    }
-    final request = decoded['request'];
-    if (request == null) return '';
-    if (request is! String) {
-      throw ThreepioFormatException(
-        'agent tool argument "request" must be a string, got $request',
-      );
-    }
-    return request;
-  }
-
   @override
   String toString() => 'AgentTool(${agent.name})';
+}
+
+/// The `request` argument of an agent tool call without an input schema
+/// (eino's `agentToolRequest`), for the agent tools of both message types.
+@internal
+String agentToolRequestOf(String argumentsJson) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(argumentsJson);
+  } on FormatException catch (error) {
+    throw ThreepioFormatException(
+      'agent tool arguments are not JSON: ${error.message}',
+      cause: error,
+    );
+  }
+  if (decoded is! Map) {
+    throw ThreepioFormatException(
+      'agent tool arguments must be a JSON object, got $argumentsJson',
+    );
+  }
+  final request = decoded['request'];
+  if (request == null) return '';
+  if (request is! String) {
+    throw ThreepioFormatException(
+      'agent tool argument "request" must be a string, got $request',
+    );
+  }
+  return request;
 }
 
 /// The conversation of the calling agent, rewritten for the agent behind the

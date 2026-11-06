@@ -9,9 +9,12 @@ import '../components/document/loader.dart';
 import '../components/document/transformer.dart';
 import '../components/embedding/embedder.dart';
 import '../components/indexer/indexer.dart';
+import '../components/model/agentic_model.dart';
 import '../components/model/base_chat_model.dart';
+import '../components/prompt/agentic_chat_template.dart';
 import '../components/prompt/chat_template.dart';
 import '../components/retriever/retriever.dart';
+import 'agentic_tools_node.dart';
 import 'errors.dart';
 import 'graph.dart';
 import 'graph_branch.dart';
@@ -123,6 +126,33 @@ final class ChainBranch {
     NodeOptions? options,
   }) =>
       _add(key, toToolsNode(node, options));
+
+  /// Adds an agentic model. Port of eino `ChainBranch.AddAgenticModel`.
+  /// **Beta.**
+  ChainBranch addAgenticModel(
+    String key,
+    AgenticModel model, {
+    NodeOptions? options,
+  }) =>
+      _add(key, toAgenticModelNode(model, options));
+
+  /// Adds an agentic chat template. Port of eino
+  /// `ChainBranch.AddAgenticChatTemplate`. **Beta.**
+  ChainBranch addAgenticChatTemplate(
+    String key,
+    AgenticChatTemplate template, {
+    NodeOptions? options,
+  }) =>
+      _add(key, toAgenticChatTemplateNode(template, options));
+
+  /// Adds an agentic tools node. Port of eino
+  /// `ChainBranch.AddAgenticToolsNode`. **Beta.**
+  ChainBranch addAgenticToolsNode(
+    String key,
+    AgenticToolsNode node, {
+    NodeOptions? options,
+  }) =>
+      _add(key, toAgenticToolsNode(node, options));
 
   /// Adds a lambda. Port of eino `ChainBranch.AddLambda`.
   ///

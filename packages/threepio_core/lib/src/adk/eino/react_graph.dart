@@ -47,7 +47,7 @@ class ExceedMaxIterationsException extends ThreepioException {
 /// checkpoint compatibility as the deprecated `State`; here it is internal).
 /// Mutable; reached through `processState<ReactState>`.
 @internal
-final class ReactState {
+final class ReactState implements RunLocalValueHolder {
   /// The state at the start of a run of the agent [agentName].
   ReactState({this.agentName = '', this.remainingIterations = 20});
 
@@ -103,6 +103,7 @@ final class ReactState {
   List<Message> messages = [];
 
   /// The run-local values (`AgentContext.setRunLocalValue`).
+  @override
   Map<String, Object?>? extra;
 
   /// The tools the model is told about; `null` until a middleware sets them.

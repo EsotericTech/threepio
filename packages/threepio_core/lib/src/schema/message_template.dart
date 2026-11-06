@@ -163,6 +163,20 @@ Message formatMessage(
   );
 }
 
+/// [content] rendered with [vars] in the syntax [type]: the text formatting
+/// of [Message.format], shared with the agentic templates
+/// (`AgenticMessage.format`).
+///
+/// Throws [ThreepioFormatException] for a malformed template or a missing
+/// variable and [UnsupportedError] for [FormatType.goTemplate].
+@internal
+String formatTemplateText(
+  String content,
+  Map<String, Object?> vars,
+  FormatType type,
+) =>
+    _formatContent(content, vars, type);
+
 /// A text that is absent or empty is left alone, as in Eino.
 String? _formatSource(
   String? source,

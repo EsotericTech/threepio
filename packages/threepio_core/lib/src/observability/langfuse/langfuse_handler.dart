@@ -11,22 +11,28 @@ import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 import 'package:meta/meta.dart';
 
+import '../../adk/agentic/agentic_agent.dart';
+import '../../adk/agentic/agentic_callbacks.dart';
 import '../../adk/eino/agent_callbacks.dart';
 import '../../adk/eino/agent_event.dart';
 import '../../adk/eino/model_retry.dart';
 import '../../callbacks/callback_timing.dart';
 import '../../callbacks/component_callback_handler.dart';
 import '../../callbacks/run_info.dart';
+import '../../components/model/agentic_model.dart';
 import '../../components/model/cancel_token.dart';
 import '../../components/model/model_callbacks.dart';
 import '../../core/interrupt_signal.dart';
 import '../../core/run_context.dart';
 import '../../errors.dart';
+import '../../schema/agentic_message.dart';
+import '../../schema/agentic_message_concat.dart';
 import '../../schema/message.dart';
 import '../../schema/message_concat.dart';
 import '../../streaming/stream_reader.dart';
 import '../otlp/otlp_http_trace_exporter.dart';
 import '../otlp/otlp_json.dart';
+import 'langfuse_agentic_values.dart';
 import 'langfuse_values.dart';
 
 final _log = Logger('threepio.observability.langfuse');
@@ -213,6 +219,15 @@ final class LangfuseConfig {
 /// *tool*, a retriever a *retriever*, an embedder an *embedding*, a chat
 /// template a *chain*, everything else a *span*. A component that runs
 /// inside another is shown beneath it.
+///
+/// The components of the agentic path (**beta**) are shown as their classic
+/// counterparts are: an agentic model is a *generation* (its
+/// `AgenticMessage`s are written as JSON with `AgenticMessage.toJson`, the
+/// chunks of a stream joined with `concatAgenticMessages`), an agentic agent
+/// an *agent* (with the messages of its `AgenticAgentEvent`s), an agentic
+/// chat template a *chain*. A value in a message that `toJson` cannot encode
+/// (one of no JSON type and no registered type) is written as it is in the
+/// classic messages, with its own `toJson` or as its `toString()`.
 ///
 /// The observations are sent with OpenTelemetry's protocol over HTTP to
 /// `/api/public/otel/v1/traces`, one finished span per observation. The
@@ -612,6 +627,13 @@ final class LangfuseHandler extends ComponentCallbackHandler
         return ctx;
       }
     }
+    if (info.componentType == ComponentType.agenticAgent) {
+      final agenticOutput = AgenticAgentCallbackOutput.from(output);
+      if (agenticOutput != null) {
+        _endAgenticAgentOutput(state, agenticOutput.events);
+        return ctx;
+      }
+    }
     void finish() => state.end(
           _guarded(state, () => _setOutput(state, info, [output], null)),
         );
@@ -767,11 +789,88 @@ final class LangfuseHandler extends ComponentCallbackHandler
     }
   }
 
+  /// Reads the events of an agentic agent and ends its observation with its
+  /// messages and custom outputs. Port of the `ComponentOfAgenticAgent`
+  /// branch of `endAgentOutput` and of `collectAgenticMessages`; the twin of
+  /// [_endAgentOutput]. The events are the handler's own copy (the runner
+  /// gives every handler one), so reading them takes nothing from the run.
+  void _endAgenticAgentOutput(
+    _SpanState state,
+    StreamReader<AgenticAgentEvent> events,
+  ) {
+    final started = _async.run(() async {
+      final messages = <AgenticMessage>[];
+      final customized = <Object?>[];
+      try {
+        for (var event = await events.nextOrNull();
+            event != null;
+            event = await events.nextOrNull()) {
+          final error = event.error;
+          if (error != null) {
+            _guarded(state, () {
+              state.recordAgentError('agent output', error);
+              return '';
+            });
+          }
+          final output = event.output;
+          if (output == null) continue;
+          final variant = output.messageOutput;
+          if (variant != null) {
+            try {
+              messages.add(await variant.getMessage());
+            } on Object catch (error) {
+              _guarded(state, () {
+                state.recordAgentError('agent message', error);
+                return '';
+              });
+            }
+          }
+          final custom = output.customizedOutput;
+          if (custom != null) customized.add(custom);
+        }
+      } on Object catch (error) {
+        _guarded(state, () {
+          state.recordAgentError('agent output', error);
+          return '';
+        });
+      } finally {
+        // The handler's own copy: closing it lets go of what is left when
+        // the reading failed (after the end of the events it does nothing).
+        try {
+          await events.close();
+        } on Object catch (error, stackTrace) {
+          _log.warning(
+            'langfuse callback failed to close the agent events',
+            error,
+            stackTrace,
+          );
+        }
+      }
+      await state.inputDone.future;
+      state.end(
+        _guarded(
+          state,
+          () => _setAgentOutput(
+            state,
+            [for (final message in messages) agenticMessageJson(message)],
+            customized,
+          ),
+        ),
+      );
+    });
+    if (!started) {
+      unawaited(events.close());
+      state.end(state.span.output);
+    }
+  }
+
   /// Port of `setAgentOutput`: one value is written as it is, several as a
   /// list; the retry notifications of the agent's model go into metadata.
+  /// [messages] are the `Message`s of an agent or the `AgenticMessage`s of
+  /// an agentic agent.
   String _setAgentOutput(
     _SpanState state,
-    List<Message> messages,
+    List<Object> messages,
     List<Object?> customized,
   ) {
     Object? collapsed(List<Object?> values) =>
@@ -817,7 +916,7 @@ final class LangfuseHandler extends ComponentCallbackHandler
     var next = ctx
         .withValue(_stateKey, state)
         .withValue(_parentKey, state.span.context);
-    if (info.componentType == ComponentType.agent) {
+    if (_isAgent(info)) {
       next = next.withValue(_agentScopeKey, state);
       if (config.collapseAgentInternalSpans && info.name.isNotEmpty) {
         next = next.withValue(_activeAgentNameKey, info.name);
@@ -865,10 +964,16 @@ final class LangfuseHandler extends ComponentCallbackHandler
       span: span,
       run: run,
       enclosingAgent: enclosingAgent,
-      outermostAgent:
-          enclosingAgent == null && info.componentType == ComponentType.agent,
+      outermostAgent: enclosingAgent == null && _isAgent(info),
     );
   }
+
+  /// Whether [info] is an agent: a classic one (eino `ComponentOfAgent`) or
+  /// an agentic one (`ComponentOfAgenticAgent`), which the trace treats
+  /// alike (`markActiveAgent`, `startSpan`).
+  static bool _isAgent(RunInfo info) =>
+      info.componentType == ComponentType.agent ||
+      info.componentType == ComponentType.agenticAgent;
 
   /// Puts the first attributes on [span] and sets what is left of the
   /// budget. Port of `fitAttributes`.
@@ -907,8 +1012,15 @@ final class LangfuseHandler extends ComponentCallbackHandler
       };
 
   String _setInput(_SpanState state, RunInfo info, List<Object?> inputs) {
+    if (info.componentType == ComponentType.agenticModel) {
+      return _setAgenticModelInput(state, inputs);
+    }
     if (info.componentType != ComponentType.chatModel) {
-      return _setJson(state, 'langfuse.observation.input', collapseValues(inputs));
+      return _setJson(
+        state,
+        'langfuse.observation.input',
+        agenticJsonValue(collapseValues(inputs)),
+      );
     }
 
     ModelCallbackConfig? modelConfig;
@@ -949,11 +1061,14 @@ final class LangfuseHandler extends ComponentCallbackHandler
     List<Object?> outputs,
     DateTime? completionStart,
   ) {
+    if (info.componentType == ComponentType.agenticModel) {
+      return _setAgenticModelOutput(state, outputs, completionStart);
+    }
     if (info.componentType != ComponentType.chatModel) {
       return _setJson(
         state,
         'langfuse.observation.output',
-        collapseValues(outputs),
+        agenticJsonValue(collapseValues(outputs)),
       );
     }
 
@@ -1006,6 +1121,140 @@ final class LangfuseHandler extends ComponentCallbackHandler
     }
     return serialized;
   }
+
+  /// The input of an agentic model: its messages, its model and parameters,
+  /// its extras as metadata. Port of `setInput` for
+  /// `ComponentOfAgenticModel` (eino-ext `isGeneration`), reading the
+  /// payload with `AgenticModelCallbackInput.from` (eino
+  /// `model.ConvAgenticCallbackInput`) where [_setInput] reads a
+  /// `ModelCallbackInput`; the chunks of a streamed input are joined with
+  /// `concatAgenticMessagesArray`.
+  ///
+  /// eino-ext reads the input of an agentic model with
+  /// `model.ConvCallbackInput`, which knows only the classic payload, and so
+  /// writes `null`; this writes what the model was given.
+  String _setAgenticModelInput(_SpanState state, List<Object?> inputs) {
+    AgenticModelCallbackConfig? modelConfig;
+    Map<String, Object?>? extra;
+    final messageLists = <List<AgenticMessage>>[];
+    for (final input in inputs) {
+      final converted = AgenticModelCallbackInput.from(input);
+      if (converted == null) continue;
+      modelConfig = converted.config ?? modelConfig;
+      extra = converted.extra ?? extra;
+      if (converted.messages.isNotEmpty) messageLists.add(converted.messages);
+    }
+
+    final String serialized;
+    if (messageLists.isEmpty) {
+      // Not the input of an agentic model as this library reports it; shown
+      // as it is rather than not at all.
+      serialized = _setJson(
+        state,
+        'langfuse.observation.input',
+        agenticJsonValue(collapseValues(inputs)),
+      );
+    } else {
+      final List<AgenticMessage> messages;
+      try {
+        messages = concatAgenticMessagesArray(messageLists);
+      } on Object catch (error) {
+        state.recordError('model input', error);
+        return '';
+      }
+      serialized = _setJson(
+        state,
+        'langfuse.observation.input',
+        agenticJsonValue(messages),
+      );
+    }
+    _setModelConfig(state, _classicConfig(modelConfig));
+    _setMetadata(state, extra);
+    return serialized;
+  }
+
+  /// The output of an agentic model: its message (the chunks of a stream
+  /// joined with `concatAgenticMessages`), model, parameters, extras, token
+  /// usage and the time of its first chunk. Port of `setOutput` for
+  /// `ComponentOfAgenticModel`, reading the payload with
+  /// `AgenticModelCallbackOutput.from` (eino `model.ConvAgenticCallbackOutput`)
+  /// where [_setOutput] reads a `ModelCallbackOutput`.
+  ///
+  /// As in eino-ext, chunks that cannot be joined make the observation
+  /// fail; the classic path joins its chunks leniently instead, a tolerance
+  /// the agentic messages have no counterpart of. eino-ext reads the output
+  /// with `model.ConvCallbackOutput` and so writes `null` and no usage for
+  /// an agentic model; this writes what the model gave.
+  String _setAgenticModelOutput(
+    _SpanState state,
+    List<Object?> outputs,
+    DateTime? completionStart,
+  ) {
+    AgenticModelCallbackConfig? modelConfig;
+    TokenUsage? usage;
+    Map<String, Object?>? extra;
+    final chunks = <AgenticMessage>[];
+    for (final output in outputs) {
+      final converted = AgenticModelCallbackOutput.from(output);
+      if (converted == null) continue;
+      final message = converted.message;
+      if (message != null) chunks.add(message);
+      modelConfig = converted.config ?? modelConfig;
+      usage = converted.tokenUsage ?? usage;
+      extra = converted.extra ?? extra;
+    }
+
+    AgenticMessage? message;
+    if (chunks.isNotEmpty) {
+      try {
+        message = concatAgenticMessages(chunks);
+      } on Object catch (error) {
+        state.recordError('model output', error);
+        return '';
+      }
+    }
+
+    final String serialized;
+    if (message != null) {
+      serialized = _setJson(
+        state,
+        'langfuse.observation.output',
+        agenticMessageJson(message),
+      );
+    } else if (outputs.isNotEmpty && chunks.isEmpty) {
+      serialized = _setJson(
+        state,
+        'langfuse.observation.output',
+        agenticJsonValue(collapseValues(outputs)),
+      );
+    } else {
+      serialized = '';
+    }
+    _setModelConfig(state, _classicConfig(modelConfig));
+    _setMetadata(state, extra);
+    _setUsage(state, usage ?? message?.responseMeta?.tokenUsage);
+    if (completionStart != null) {
+      state.span.setString(
+        'langfuse.observation.completion_start_time',
+        completionStart.toUtc().toIso8601String(),
+      );
+    }
+    return serialized;
+  }
+
+  /// [config] in the shape [_setModelConfig] writes. Go's
+  /// `model.AgenticConfig` is `model.Config` without the stop words.
+  static ModelCallbackConfig? _classicConfig(
+    AgenticModelCallbackConfig? config,
+  ) =>
+      config == null
+          ? null
+          : ModelCallbackConfig(
+              model: config.model,
+              maxTokens: config.maxTokens,
+              temperature: config.temperature,
+              topP: config.topP,
+            );
 
   String _setJson(_SpanState state, String key, Object? value) {
     final encoded = encodeJson(value);
@@ -1172,12 +1421,18 @@ final class LangfuseHandler extends ComponentCallbackHandler
 
   static LangfuseObservationType _observationType(RunInfo info) =>
       switch (info.componentType) {
-        ComponentType.agent => LangfuseObservationType.agent,
-        ComponentType.chatModel => LangfuseObservationType.generation,
+        ComponentType.agent ||
+        ComponentType.agenticAgent =>
+          LangfuseObservationType.agent,
+        ComponentType.chatModel ||
+        ComponentType.agenticModel =>
+          LangfuseObservationType.generation,
         ComponentType.embedder => LangfuseObservationType.embedding,
         ComponentType.retriever => LangfuseObservationType.retriever,
         ComponentType.tool => LangfuseObservationType.tool,
-        ComponentType.promptTemplate => LangfuseObservationType.chain,
+        ComponentType.promptTemplate ||
+        ComponentType.agenticChatTemplate =>
+          LangfuseObservationType.chain,
         _ => LangfuseObservationType.span,
       };
 

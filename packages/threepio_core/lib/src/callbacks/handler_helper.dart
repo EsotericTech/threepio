@@ -8,11 +8,14 @@ import 'dart:async';
 import '../components/document/document_callbacks.dart';
 import '../components/embedding/embedding_callbacks.dart';
 import '../components/indexer/indexer_callbacks.dart';
+import '../components/model/agentic_model.dart';
 import '../components/model/model_callbacks.dart';
+import '../components/prompt/agentic_prompt_callbacks.dart';
 import '../components/prompt/prompt_callbacks.dart';
 import '../components/retriever/retriever_callbacks.dart';
 import '../components/tool/tool_callbacks.dart';
 import '../core/run_context.dart';
+import '../schema/agentic_message.dart';
 import '../schema/message.dart';
 import '../streaming/stream_reader.dart';
 import 'callback_timing.dart';
@@ -331,6 +334,123 @@ final class AgentCallbackHandler extends _TypedHooks<Object, Object> {
   Object? _output(Object? raw) => raw;
 }
 
+/// The hooks for agentic chat templates. Port of eino
+/// `AgenticPromptCallbackHandler`. **Beta.**
+///
+/// Eino v0.9.22 types these hooks with the payloads of the classic chat
+/// template (`prompt.CallbackInput`/`CallbackOutput`, converted with
+/// `prompt.ConvCallbackInput`/`ConvCallbackOutput`), which the agentic
+/// template never reports, so its hooks get `nil` except for the variables a
+/// graph node reports. Here they get what an agentic template reports:
+/// [AgenticPromptCallbackInput] and [AgenticPromptCallbackOutput] (read with
+/// their `from`, the ports of `prompt.ConvAgenticCallbackInput`/`Output`).
+final class AgenticPromptCallbackHandler extends _TypedHooks<
+    AgenticPromptCallbackInput, AgenticPromptCallbackOutput> {
+  /// Creates the handler from the functions it has.
+  const AgenticPromptCallbackHandler({
+    super.onStart,
+    super.onEnd,
+    super.onError,
+  });
+
+  @override
+  AgenticPromptCallbackInput? _input(Object? raw) =>
+      AgenticPromptCallbackInput.from(raw);
+
+  @override
+  AgenticPromptCallbackOutput? _output(Object? raw) =>
+      AgenticPromptCallbackOutput.from(raw);
+}
+
+/// The hooks for agentic models. Port of eino `AgenticModelCallbackHandler`.
+/// **Beta.**
+final class AgenticModelCallbackHandler extends _TypedHooks<
+    AgenticModelCallbackInput, AgenticModelCallbackOutput> {
+  /// Creates the handler from the functions it has.
+  const AgenticModelCallbackHandler({
+    super.onStart,
+    super.onEnd,
+    this.onEndWithStreamOutput,
+    super.onError,
+  });
+
+  /// Called after the model has started to stream its answer. Every item is
+  /// one chunk of it. The function has to close the stream.
+  final TypedCallbackStreamHook<AgenticModelCallbackOutput?>?
+      onEndWithStreamOutput;
+
+  @override
+  TypedCallbackStreamHook<AgenticModelCallbackOutput?>?
+      get _onEndWithStreamOutput => onEndWithStreamOutput;
+
+  @override
+  AgenticModelCallbackInput? _input(Object? raw) =>
+      AgenticModelCallbackInput.from(raw);
+
+  @override
+  AgenticModelCallbackOutput? _output(Object? raw) =>
+      AgenticModelCallbackOutput.from(raw);
+}
+
+/// The hooks for the node that executes the function tool calls of an
+/// agentic message. Port of eino `AgenticToolsNodeCallbackHandlers`.
+/// **Beta.**
+///
+/// The input is the agentic message with the tool calls; the output is the
+/// list of result messages, one per call. In a streamed chunk the entries of
+/// the calls the chunk says nothing about are messages without blocks
+/// (`AgenticToolsNode` explains why), where eino has `nil`.
+final class AgenticToolsNodeCallbackHandlers
+    extends _TypedHooks<AgenticMessage, List<AgenticMessage>> {
+  /// Creates the handler from the functions it has.
+  const AgenticToolsNodeCallbackHandlers({
+    super.onStart,
+    super.onEnd,
+    this.onEndWithStreamOutput,
+    super.onError,
+  });
+
+  /// Called after the node has started to stream the tool results. The
+  /// function has to close the stream.
+  final TypedCallbackStreamHook<List<AgenticMessage>?>? onEndWithStreamOutput;
+
+  @override
+  TypedCallbackStreamHook<List<AgenticMessage>?>? get _onEndWithStreamOutput =>
+      onEndWithStreamOutput;
+
+  @override
+  AgenticMessage? _input(Object? raw) => raw is AgenticMessage ? raw : null;
+
+  @override
+  List<AgenticMessage>? _output(Object? raw) => switch (raw) {
+        final List<AgenticMessage> messages => messages,
+        // A list that was not created as a list of agentic messages but
+        // holds nothing else.
+        final List<Object?> items when items.isNotEmpty &&
+            items.every((item) => item is AgenticMessage) =>
+          items.cast<AgenticMessage>(),
+        _ => null,
+      };
+}
+
+/// The hooks for agentic agents. Port of eino
+/// `AgenticAgentCallbackHandler`. **Beta.**
+///
+/// Like [AgentCallbackHandler]: an agentic agent reports its input when it
+/// starts and, when it ends, an output that holds the stream of its events;
+/// the payloads are passed on as they are reported (their types come with
+/// the agentic ADK).
+final class AgenticAgentCallbackHandler extends _TypedHooks<Object, Object> {
+  /// Creates the handler from the functions it has.
+  const AgenticAgentCallbackHandler({super.onStart, super.onEnd});
+
+  @override
+  Object? _input(Object? raw) => raw;
+
+  @override
+  Object? _output(Object? raw) => raw;
+}
+
 /// Puts one callback handler together from handlers for single kinds of
 /// components, each with the payload types of its kind.
 ///
@@ -404,6 +524,26 @@ final class HandlerHelper {
   /// Sets the handler for agents.
   HandlerHelper agent(AgentCallbackHandler handler) =>
       _set(ComponentType.agent, handler);
+
+  /// Sets the handler for agentic chat templates. Port of eino
+  /// `HandlerHelper.AgenticPrompt`. **Beta.**
+  HandlerHelper agenticPrompt(AgenticPromptCallbackHandler handler) =>
+      _set(ComponentType.agenticChatTemplate, handler);
+
+  /// Sets the handler for agentic models. Port of eino
+  /// `HandlerHelper.AgenticModel`. **Beta.**
+  HandlerHelper agenticModel(AgenticModelCallbackHandler handler) =>
+      _set(ComponentType.agenticModel, handler);
+
+  /// Sets the handler for agentic tools nodes. Port of eino
+  /// `HandlerHelper.AgenticToolsNode`. **Beta.**
+  HandlerHelper agenticToolsNode(AgenticToolsNodeCallbackHandlers handler) =>
+      _set(ComponentType.agenticToolsNode, handler);
+
+  /// Sets the handler for agentic agents. Port of eino
+  /// `HandlerHelper.AgenticAgent`. **Beta.**
+  HandlerHelper agenticAgent(AgenticAgentCallbackHandler handler) =>
+      _set(ComponentType.agenticAgent, handler);
 
   /// Sets the handler for graphs.
   HandlerHelper graph(ComponentCallbackHandler handler) =>

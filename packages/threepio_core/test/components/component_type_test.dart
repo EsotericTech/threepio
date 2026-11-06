@@ -54,6 +54,11 @@ void main() {
           ComponentType.workflow,
           ComponentType.lambda,
           ComponentType.toolsNode,
+          // P13, the agentic path (beta), appended after the P2 kinds.
+          ComponentType.agenticModel,
+          ComponentType.agenticChatTemplate,
+          ComponentType.agenticToolsNode,
+          ComponentType.agenticAgent,
         ],
       );
     });
@@ -80,6 +85,12 @@ void main() {
           ComponentType.custom: 'Unknown',
           // adk/interface.go
           ComponentType.agent: 'Agent',
+          // components/types.go, compose/types.go, adk/interface.go
+          // (agentic path, beta)
+          ComponentType.agenticModel: 'AgenticModel',
+          ComponentType.agenticChatTemplate: 'AgenticChatTemplate',
+          ComponentType.agenticToolsNode: 'AgenticToolsNode',
+          ComponentType.agenticAgent: 'AgenticAgent',
           // threepio only
           ComponentType.runnable: 'Runnable',
         },
