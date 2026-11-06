@@ -669,9 +669,10 @@ between the two API generations stay as they are until 1.0.
 
 ## License and acknowledgments
 
-MIT, see [LICENSE](LICENSE). Threepio ports
+Threepio's own code is MIT, see [LICENSE](LICENSE). Threepio ports
 [Eino](https://github.com/cloudwego/eino) and
 [eino-ext](https://github.com/cloudwego/eino-ext) by CloudWeGo, both under
 the Apache License 2.0; Go doc comments and tests were translated with their
-behaviour. Some older modules (memory, output parsers, chains) were inspired
+behaviour. The translated portions stay under the Apache License 2.0: see
+[LICENSE-APACHE](LICENSE-APACHE) and [NOTICE](NOTICE). Some older modules (memory, output parsers, chains) were inspired
 by [LangChain](https://github.com/langchain-ai/langchain).

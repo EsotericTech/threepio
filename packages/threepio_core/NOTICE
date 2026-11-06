@@ -1,0 +1,15 @@
+Threepio
+Copyright (c) 2024 EsotericTech
+
+Threepio's own code is licensed under the MIT License (see LICENSE).
+
+This package includes code translated from Go to Dart from:
+
+  Eino      https://github.com/cloudwego/eino
+  eino-ext  https://github.com/cloudwego/eino-ext
+  Copyright 2024 CloudWeGo Authors
+
+which are licensed under the Apache License, Version 2.0 (see LICENSE-APACHE).
+Those portions were modified: translated to Dart, adapted to Dart idioms and
+packages, and extended; their Go doc comments and tests were translated with
+their behaviour. The Apache License 2.0 continues to apply to them.
