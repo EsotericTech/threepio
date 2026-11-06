@@ -1,28 +1,31 @@
-import 'dart:async';
-import 'dart:convert';
-
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
-import '../../../../errors.dart';
+import '../../../../internal/call_cancellation.dart';
 import '../../../../internal/model_call_callbacks.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
-import '../../../../streaming/stream_utils.dart';
-import '../../../../streaming/stream_writer.dart';
 import '../../../component_type.dart';
 import '../../base_chat_model.dart';
 import '../../chat_model_options.dart';
+import '../../model_errors.dart';
+import '../../openai_compatible/client.dart';
+import '../../openai_compatible/errors.dart';
 import 'openai_config.dart';
-import 'openai_converters.dart';
+import 'openai_options.dart';
 
 /// OpenAI chat model implementation
 ///
-/// Provides integration with OpenAI's Chat Completions API, supporting
-/// both streaming and non-streaming responses, along with tool calling.
+/// Port of eino-ext `openai.NewChatModel` (over `libs/acl/openai`): OpenAI's
+/// and Azure OpenAI's Chat Completions API, complete and streamed, with tool
+/// calling (including `allowedToolNames`), structured output, reasoning
+/// effort, log probabilities, audio output, usage in streams, cancellation,
+/// and the payload and response modifiers of [OpenAIRequestOptions]. The
+/// request settings are in [OpenAIConfig]; failures are [OpenAIException]s.
 ///
 /// Example usage:
 /// ```dart
@@ -39,13 +42,25 @@ class OpenAIChatModel extends ToolCallingChatModel
     required this.config,
     this.httpClient,
     this.tools,
-  }) : _http = SharedHttpClient(httpClient, owner: 'OpenAIChatModel');
+  }) : _http = SharedHttpClient(httpClient, owner: 'OpenAIChatModel') {
+    _client = _newClient();
+  }
 
   /// A copy of [source] with [tools] bound, sharing its HTTP client.
   OpenAIChatModel._bound(OpenAIChatModel source, this.tools)
       : config = source.config,
         httpClient = source.httpClient,
-        _http = source._http;
+        _http = source._http,
+        _client = source._client;
+
+  OpenAICompatibleClient _newClient() => OpenAICompatibleClient(
+        http: _http,
+        errors: const OpenAIExceptionErrors(),
+        timeout: config.timeout,
+        idleTimeout: config.idleTimeout,
+        parser: OpenAICompatibleResponseParser(audioFormat: config.audio?.format),
+        requestIdKey: openAIRequestIdKey,
+      );
 
   /// OpenAI configuration
   final OpenAIConfig config;
@@ -61,7 +76,7 @@ class OpenAIChatModel extends ToolCallingChatModel
 
   final SharedHttpClient _http;
 
-  http.Client get _client => _http.client;
+  late final OpenAICompatibleClient _client;
 
   /// Releases the HTTP client this model created for itself.
   ///
@@ -105,48 +120,50 @@ class OpenAIChatModel extends ToolCallingChatModel
     // Get callback manager if available
     final callbackManager = mergedOptions.callbackManager as CallbackManager?;
 
-    if (callbackManager != null) {
-      // Execute with callbacks
-      final runInfo = RunInfo(
-        name: 'OpenAIChatModel',
-        type: 'OpenAIChatModel',
-        componentType: ComponentType.chatModel,
-        metadata: {
-          'model': mergedOptions.model ?? config.defaultModel,
-          ...?mergedOptions.metadata,
-        },
-      );
-
-      return await callbackManager.runWithCallbacks(
-        mergedOptions.getOrCreateContext(),
-        runInfo,
-        input,
-        () async {
-          // Build request body
-          final requestBody = _buildRequestBody(
-            input,
-            mergedOptions,
-            stream: false,
-          );
-
-          // Make API call
-          final response = await _makeRequest(requestBody);
-
-          // Parse response
-          return _parseCompletionResponse(response);
-        },
-      );
-    } else {
-      // Execute without callbacks
-      final requestBody = _buildRequestBody(
+    Future<Message> execute() async {
+      final requestOptions = mergedOptions.extension<OpenAIRequestOptions>();
+      final body = _buildRequestBody(
         input,
         mergedOptions,
+        requestOptions,
         stream: false,
       );
-
-      final response = await _makeRequest(requestBody);
-      return _parseCompletionResponse(response);
+      // One token for the call, whether it was given in the options, in the
+      // run context or in both.
+      final cancellation = CallCancellation.of(mergedOptions);
+      try {
+        return await _client.generate(
+          _url(body),
+          headers: _buildHeaders(requestOptions),
+          body: body,
+          input: input,
+          cancelToken: cancellation.token,
+          runContext: mergedOptions.runContext,
+          payloadModifier: requestOptions?.requestPayloadModifier,
+          responseModifier: requestOptions?.responseMessageModifier,
+        );
+      } finally {
+        cancellation.release();
+      }
     }
+
+    if (callbackManager == null) return execute();
+
+    final runInfo = RunInfo(
+      name: 'OpenAIChatModel',
+      type: 'OpenAIChatModel',
+      componentType: ComponentType.chatModel,
+      metadata: {
+        'model': mergedOptions.model ?? config.defaultModel,
+        ...?mergedOptions.metadata,
+      },
+    );
+    return callbackManager.runWithCallbacks(
+      mergedOptions.getOrCreateContext(),
+      runInfo,
+      input,
+      execute,
+    );
   }
 
   @override
@@ -169,17 +186,32 @@ class OpenAIChatModel extends ToolCallingChatModel
     List<Message> input,
     ChatModelOptions mergedOptions,
   ) async {
-    // Build request body
-    final requestBody = _buildRequestBody(
+    final requestOptions = mergedOptions.extension<OpenAIRequestOptions>();
+    final body = _buildRequestBody(
       input,
       mergedOptions,
+      requestOptions,
       stream: true,
     );
-
-    // Make streaming API call
-    final stream = await _makeStreamingRequest(requestBody);
-
-    return stream;
+    final cancellation = CallCancellation.of(mergedOptions);
+    var streaming = false;
+    try {
+      final reader = await _client.stream(
+        _url(body),
+        headers: _buildHeaders(requestOptions),
+        body: body,
+        input: input,
+        cancellation: cancellation,
+        runContext: mergedOptions.runContext,
+        payloadModifier: requestOptions?.requestPayloadModifier,
+        chunkModifier: requestOptions?.responseChunkMessageModifier,
+      );
+      // From here on the stream releases the cancellation, when it ends.
+      streaming = true;
+      return reader;
+    } finally {
+      if (!streaming) cancellation.release();
+    }
   }
 
   @override
@@ -188,246 +220,192 @@ class OpenAIChatModel extends ToolCallingChatModel
   }
 
   /// Merge options with bound tools
+  ///
+  /// The config's temperature, top-p and stop sequences are the defaults, so
+  /// that the callbacks report the settings the request is made with (Go's
+  /// `cbInput.Config`).
   ChatModelOptions _mergeOptions(ChatModelOptions? options) {
-    if (tools == null || tools!.isEmpty) {
-      return options ?? const ChatModelOptions();
-    }
-
-    final baseOptions = ChatModelOptions(tools: tools);
-    return options == null ? baseOptions : baseOptions.merge(options);
+    final bound = tools;
+    final base = ChatModelOptions(
+      temperature: config.temperature,
+      topP: config.topP,
+      stop: config.stop,
+      tools: bound == null || bound.isEmpty ? null : bound,
+    );
+    return base.merge(options);
   }
+
+  OpenAIEndpoint get _endpoint => OpenAIEndpoint(
+        baseUrl: config.baseUrl,
+        byAzure: config.byAzure,
+        apiVersion: config.apiVersion,
+        azureModelMapper: config.azureModelMapper,
+      );
+
+  Uri _url(Map<String, Object?> body) =>
+      _endpoint.url('/chat/completions', body['model']! as String);
 
   /// Build request body for API call
-  Map<String, dynamic> _buildRequestBody(
+  Map<String, Object?> _buildRequestBody(
     List<Message> messages,
-    ChatModelOptions options, {
+    ChatModelOptions options,
+    OpenAIRequestOptions? requestOptions, {
     required bool stream,
-  }) {
-    final body = <String, dynamic>{
-      'model': options.model ?? config.defaultModel,
-      'messages': messages.map(OpenAIConverters.messageToOpenAI).toList(),
-      'stream': stream,
-    };
-
-    // Add optional parameters
-    if (options.temperature != null) {
-      body['temperature'] = options.temperature;
-    }
-    if (options.maxTokens != null) {
-      body['max_tokens'] = options.maxTokens;
-    }
-    if (options.topP != null) {
-      body['top_p'] = options.topP;
-    }
-    if (options.stop != null && options.stop!.isNotEmpty) {
-      body['stop'] = options.stop;
-    }
-
-    // Add tools if present
-    if (options.tools != null && options.tools!.isNotEmpty) {
-      body['tools'] = options.tools!
-          .map((t) => OpenAIConverters.toolInfoToOpenAI(t))
-          .toList();
-
-      // Add tool choice if specified
-      if (options.toolChoice != null) {
-        body['tool_choice'] =
-            OpenAIConverters.toolChoiceToOpenAI(options.toolChoice!);
-      }
-    }
-
-    // Add extra options
-    if (options.extra != null) {
-      body.addAll(options.extra!);
-    }
-
-    return body;
-  }
-
-  /// Make API request
-  Future<Map<String, dynamic>> _makeRequest(
-    Map<String, dynamic> requestBody,
-  ) async {
-    final url = Uri.parse('${config.baseUrl}/chat/completions');
-    final headers = _buildHeaders();
-
-    // Outside the try: using a disposed model is a programming error,
-    // not a failed request.
-    final client = _client;
-
-    try {
-      final response = await client
-          .post(
-            url,
-            headers: headers,
-            body: jsonEncode(requestBody),
-          )
-          .timeout(config.timeout);
-
-      if (response.statusCode != 200) {
-        throw OpenAIException(
-          'API request failed with status ${response.statusCode}: ${response.body}',
-          statusCode: response.statusCode,
-          response: response.body,
-        );
-      }
-
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } on TimeoutException {
-      throw OpenAIException('Request timed out after ${config.timeout}');
-    } catch (e) {
-      if (e is OpenAIException) rethrow;
-      throw OpenAIException('Request failed: $e');
-    }
-  }
-
-  /// Make streaming API request
-  Future<StreamReader<Message>> _makeStreamingRequest(
-    Map<String, dynamic> requestBody,
-  ) async {
-    final url = Uri.parse('${config.baseUrl}/chat/completions');
-    final headers = _buildHeaders();
-
-    // Outside the try: using a disposed model is a programming error,
-    // not a failed request.
-    final client = _client;
-
-    try {
-      final request = http.Request('POST', url)
-        ..headers.addAll(headers)
-        ..body = jsonEncode(requestBody);
-
-      final response = await client.send(request).timeout(config.timeout);
-
-      if (response.statusCode != 200) {
-        final body = await response.stream.bytesToString();
-        throw OpenAIException(
-          'API request failed with status ${response.statusCode}: $body',
-          statusCode: response.statusCode,
-          response: body,
-        );
-      }
-
-      // Create stream reader from HTTP stream
-      return _createStreamReader(response.stream);
-    } on TimeoutException {
-      throw OpenAIException('Request timed out after ${config.timeout}');
-    } catch (e) {
-      if (e is OpenAIException) rethrow;
-      throw OpenAIException('Streaming request failed: $e');
-    }
-  }
-
-  /// Create StreamReader from HTTP byte stream
-  StreamReader<Message> _createStreamReader(Stream<List<int>> byteStream) {
-    final (reader, writer) = pipe<Message>();
-
-    // Process stream in background
-    _processStream(byteStream, writer);
-
-    return reader;
-  }
-
-  /// Process SSE stream
-  Future<void> _processStream(
-    Stream<List<int>> byteStream,
-    StreamWriter<Message> writer,
-  ) async {
-    try {
-      final stream = byteStream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .where((line) => line.startsWith('data: '));
-
-      await for (final line in stream) {
-        final data = line.substring(6).trim(); // Remove 'data: ' prefix
-
-        // Check for stream end
-        if (data == '[DONE]') {
-          break;
-        }
-
-        try {
-          final json = jsonDecode(data) as Map<String, dynamic>;
-          final message = _parseStreamChunk(json);
-          if (message != null) {
-            writer.send(message);
-          }
-        } catch (e) {
-          // Skip malformed chunks
-          continue;
-        }
-      }
-    } catch (e) {
-      writer.sendError(OpenAIException('Stream processing failed: $e'));
-    } finally {
-      await writer.close();
-    }
-  }
-
-  /// Parse completion response
-  Message _parseCompletionResponse(Map<String, dynamic> response) {
-    final choices = response['choices'] as List<dynamic>;
-    if (choices.isEmpty) {
-      throw OpenAIException('No choices in response');
-    }
-
-    final choice = choices.first as Map<String, dynamic>;
-    final messageData = choice['message'] as Map<String, dynamic>;
-    final usage = response['usage'] as Map<String, dynamic>?;
-
-    return OpenAIConverters.openAIToMessage(
-      messageData,
-      finishReason: choice['finish_reason'] as String?,
-      usage: usage,
-    );
-  }
-
-  /// Parse streaming chunk
-  Message? _parseStreamChunk(Map<String, dynamic> chunk) {
-    final choices = chunk['choices'] as List<dynamic>?;
-    if (choices == null || choices.isEmpty) {
-      return null;
-    }
-
-    final choice = choices.first as Map<String, dynamic>;
-    final delta = choice['delta'] as Map<String, dynamic>?;
-    if (delta == null || delta.isEmpty) {
-      return null;
-    }
-
-    return OpenAIConverters.openAIDeltaToMessage(
-      delta,
-      finishReason: choice['finish_reason'] as String?,
-    );
-  }
+  }) =>
+      buildChatCompletionBody(
+        input: messages,
+        options: options,
+        settings: OpenAIChatSettings(
+          model: config.defaultModel,
+          temperature: config.temperature,
+          topP: config.topP,
+          stop: config.stop,
+          maxCompletionTokens: config.maxCompletionTokens,
+          presencePenalty: config.presencePenalty,
+          frequencyPenalty: config.frequencyPenalty,
+          responseFormat: config.responseFormat,
+          seed: config.seed,
+          logitBias: config.logitBias,
+          user: config.user,
+          logProbs: config.logProbs,
+          topLogProbs: config.topLogProbs,
+          reasoningEffort: config.reasoningEffort,
+          extraFields: config.extraFields,
+          modalities: config.modalities,
+          audio: config.audio,
+        ),
+        stream: stream,
+        requestOptions: requestOptions,
+      );
 
   /// Build request headers
-  Map<String, String> _buildHeaders() {
+  Map<String, String> _buildHeaders(OpenAIRequestOptions? requestOptions) {
     final headers = <String, String>{
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer ${config.apiKey}',
+      ..._endpoint.authHeaders(config.apiKey),
     };
 
     if (config.organization != null) {
       headers['OpenAI-Organization'] = config.organization!;
     }
 
+    headers.addAll(requestOptions?.extraHeaders ?? config.customHeaders ?? {});
     return headers;
   }
 }
 
+/// How [OpenAIChatModel] and `OpenAICompatibleChatModel` report failures:
+/// as [OpenAIException]s.
+@internal
+final class OpenAIExceptionErrors implements OpenAICompatibleErrors {
+  /// The one instance.
+  const OpenAIExceptionErrors();
+
+  @override
+  Object httpError(int statusCode, String body) =>
+      OpenAIException.fromHttp(statusCode, body);
+
+  @override
+  Object timeout(Duration timeout) =>
+      OpenAIException('Request timed out after $timeout', isRetryable: true);
+
+  @override
+  Object requestFailed(Object error, {required bool streaming}) =>
+      OpenAIException(
+        streaming ? 'Streaming request failed: $error' : 'Request failed: $error',
+        isRetryable: true,
+        cause: error,
+      );
+
+  @override
+  Object streamIdle(Duration idleTimeout) =>
+      OpenAIException('Stream idle for $idleTimeout', isRetryable: true);
+
+  @override
+  Object streamFailed(Object error) => OpenAIException(
+        'Stream processing failed: $error',
+        isRetryable: true,
+        cause: error,
+      );
+
+  @override
+  Object chunkFailed(Object error) => switch (error) {
+        OpenAICompatibleChunkError(:final detail) => OpenAIException(
+            error.message,
+            errorCode: detail.code,
+            isRetryable: _retryableCode(detail.code) ||
+                detail.code == 'rate_limit_exceeded' ||
+                detail.type == 'server_error' ||
+                detail.type == 'rate_limit_error',
+            isModelUnavailable: detail.code == 'model_not_found' ||
+                looksLikeModelUnavailable(null, detail.message),
+            cause: error,
+          ),
+        OpenAIException() => error,
+        _ => OpenAIException(
+            'failed to build message from stream chunk: $error',
+            cause: error,
+          ),
+      };
+
+  @override
+  Object responseFailed(Object error) => switch (error) {
+        OpenAIException() => error,
+        FormatException(:final message) =>
+          OpenAIException(message, cause: error),
+        _ => OpenAIException('$error', cause: error),
+      };
+
+  static bool _retryableCode(Object? code) =>
+      isRetryableHttpStatus(code is int ? code : int.tryParse('$code'));
+}
+
 /// OpenAI API exception
-class OpenAIException implements ThreepioException {
-  OpenAIException(this.message, {this.statusCode, this.response});
+///
+/// Classified for `RetryingChatModel` and `FailoverChatModel`: 408, 429 and
+/// 5xx responses, timeouts and transport failures are retryable; a 404 or a
+/// "model not found" message means the model is unavailable.
+class OpenAIException implements ChatModelException {
+  OpenAIException(
+    this.message, {
+    this.statusCode,
+    this.response,
+    this.errorCode,
+    bool? isRetryable,
+    bool? isModelUnavailable,
+    this.cause,
+  })  : isRetryable = isRetryable ?? isRetryableHttpStatus(statusCode),
+        isModelUnavailable =
+            isModelUnavailable ?? looksLikeModelUnavailable(statusCode, message);
+
+  /// An exception for a response with [statusCode] and [body], classified.
+  factory OpenAIException.fromHttp(int statusCode, String body) {
+    final detail = ProviderErrorDetail.parse(body);
+    return OpenAIException(
+      'API request failed with status $statusCode: $body',
+      statusCode: statusCode,
+      response: body,
+      errorCode: detail.code,
+      isModelUnavailable: looksLikeModelUnavailable(statusCode, detail.message),
+    );
+  }
 
   @override
   final String message;
   final int? statusCode;
   final String? response;
 
+  /// The `error.code` of the response, when the provider sent one.
+  final Object? errorCode;
+
   @override
-  Object? get cause => null;
+  final bool isRetryable;
+
+  @override
+  final bool isModelUnavailable;
+
+  @override
+  final Object? cause;
 
   @override
   String toString() =>

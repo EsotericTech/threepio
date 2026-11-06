@@ -78,10 +78,36 @@ export 'streaming.dart';
 // Provider exports
 export 'src/components/model/providers/gemini/gemini_chat_model.dart';
 export 'src/components/model/providers/gemini/gemini_config.dart';
-export 'src/components/model/providers/openai/openai_chat_model.dart';
+export 'src/components/model/providers/gemini/gemini_message_extras.dart'
+    hide
+        geminiVideoMetaDataKey,
+        geminiThoughtSignatureKey,
+        geminiSpecialPartKey,
+        geminiGroundMetadataKey,
+        geminiDisplayNameKey,
+        geminiThoughtSignatureBase64;
+export 'src/components/model/providers/gemini/gemini_options.dart';
+export 'src/components/model/providers/openai/openai_chat_model.dart'
+    hide OpenAIExceptionErrors;
 export 'src/components/model/providers/openai/openai_converters.dart'
-    show reasoningDetailsKey;
+    show reasoningDetailsKey, openAIGeneratedAudioIdKey;
 export 'src/components/model/providers/openai/openai_config.dart';
+export 'src/components/model/providers/openai/openai_options.dart';
+export 'src/components/model/providers/openrouter/openrouter_cache_control.dart';
 export 'src/components/model/providers/openrouter/openrouter_chat_model.dart';
 export 'src/components/model/providers/openrouter/openrouter_config.dart';
 export 'src/components/model/providers/openrouter/openrouter_options.dart';
+// OpenAI-compatible endpoints (DeepSeek, Qwen, Ark, …), Claude and Ollama
+export 'src/components/model/openai_compatible/client.dart'
+    show openAIRequestIdKey, openAIAudioTranscriptKey;
+export 'src/components/model/openai_compatible/errors.dart';
+export 'src/components/model/openai_compatible/presets.dart';
+export 'src/components/model/providers/claude/claude_chat_model.dart';
+export 'src/components/model/providers/claude/claude_config.dart';
+export 'src/components/model/providers/claude/claude_message_extras.dart';
+export 'src/components/model/providers/claude/claude_options.dart';
+export 'src/components/model/providers/ollama/ollama_chat_model.dart';
+export 'src/components/model/providers/ollama/ollama_config.dart';
+export 'src/components/model/providers/ollama/ollama_options.dart';
+export 'src/components/embedding/gemini_embedder.dart';
+export 'src/components/embedding/ollama_embedder.dart' hide OllamaEmbedResponse;

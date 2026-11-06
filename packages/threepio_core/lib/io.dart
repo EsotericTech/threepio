@@ -16,4 +16,9 @@
 /// `package:threepio_core/legacy_graph.dart`.
 library;
 
+export 'src/adk/filesystem/local_backend.dart'
+    show LocalFilesystemBackend, LocalMultiModalReadConfig;
+export 'src/adk/filesystem/local_shell.dart' show LocalShell, CommandValidator;
+export 'src/components/embedding/file_embedding_cache.dart';
+export 'src/components/tool/mcp/stdio_transport.dart';
 export 'src/compose/stores/file_checkpoint_store.dart';

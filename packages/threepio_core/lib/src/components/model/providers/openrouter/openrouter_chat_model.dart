@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -11,14 +10,13 @@ import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
-import '../../../../streaming/stream_utils.dart';
-import '../../../../streaming/stream_writer.dart';
 import '../../../component_type.dart';
 import '../../base_chat_model.dart';
-import '../../cancel_token.dart';
 import '../../chat_model_options.dart';
 import '../../model_errors.dart';
+import '../../openai_compatible/client.dart';
 import '../openai/openai_converters.dart';
+import 'openrouter_cache_control.dart';
 import 'openrouter_config.dart';
 import 'openrouter_options.dart';
 import 'openrouter_response_parser.dart';
@@ -56,14 +54,25 @@ class OpenRouterChatModel extends ToolCallingChatModel
     this.httpClient,
     this.tools,
     this.responseParser = const OpenRouterResponseParser(),
-  }) : _http = SharedHttpClient(httpClient, owner: 'OpenRouterChatModel');
+  }) : _http = SharedHttpClient(httpClient, owner: 'OpenRouterChatModel') {
+    _client = OpenAICompatibleClient(
+      http: _http,
+      errors: const _OpenRouterErrors(),
+      timeout: config.timeout,
+      idleTimeout: config.idleTimeout,
+      parser: responseParser,
+      // OpenRouter streams its chunks as they come, as it always has.
+      mergeEmptyChunks: false,
+    );
+  }
 
   /// A copy of [source] with [tools] bound, sharing its HTTP client.
   OpenRouterChatModel._bound(OpenRouterChatModel source, this.tools)
       : config = source.config,
         httpClient = source.httpClient,
         responseParser = source.responseParser,
-        _http = source._http;
+        _http = source._http,
+        _client = source._client;
 
   /// OpenRouter configuration
   final OpenRouterConfig config;
@@ -82,7 +91,7 @@ class OpenRouterChatModel extends ToolCallingChatModel
 
   final SharedHttpClient _http;
 
-  http.Client get _client => _http.client;
+  late final OpenAICompatibleClient _client;
 
   /// Releases the HTTP client this model created for itself.
   ///
@@ -130,8 +139,14 @@ class OpenRouterChatModel extends ToolCallingChatModel
       // run context or in both.
       final cancellation = CallCancellation.of(mergedOptions);
       try {
-        final response = await _makeRequest(requestBody, cancellation.token);
-        return responseParser.parseCompletionResponse(response);
+        return await _client.generate(
+          _url,
+          headers: _buildHeaders(),
+          body: requestBody,
+          input: input,
+          cancelToken: cancellation.token,
+          runContext: mergedOptions.runContext,
+        );
       } finally {
         cancellation.release();
       }
@@ -179,7 +194,14 @@ class OpenRouterChatModel extends ToolCallingChatModel
     final cancellation = CallCancellation.of(mergedOptions);
     var streaming = false;
     try {
-      final reader = await _makeStreamingRequest(requestBody, cancellation);
+      final reader = await _client.stream(
+        _url,
+        headers: _buildHeaders(),
+        body: requestBody,
+        input: input,
+        cancellation: cancellation,
+        runContext: mergedOptions.runContext,
+      );
       // From here on the stream releases the cancellation, when it ends.
       streaming = true;
       return reader;
@@ -210,7 +232,10 @@ class OpenRouterChatModel extends ToolCallingChatModel
   }) {
     final body = <String, dynamic>{
       'model': options.model ?? config.defaultModel,
-      'messages': messages.map(OpenAIConverters.messageToOpenAI).toList(),
+      'messages': [
+        for (final message in messages)
+          _withCacheControl(message, OpenAIConverters.messageToOpenAI(message)),
+      ],
       'stream': stream,
     };
 
@@ -225,8 +250,15 @@ class OpenRouterChatModel extends ToolCallingChatModel
       body['tools'] =
           options.tools!.map(OpenAIConverters.toolInfoToOpenAI).toList();
       if (options.toolChoice != null) {
-        body['tool_choice'] =
-            OpenAIConverters.toolChoiceToOpenAI(options.toolChoice!);
+        final allowed = options.allowedToolNames ?? const <String>[];
+        // Restricted to some tools: eino-ext's `allowed_tools` form.
+        body['tool_choice'] = allowed.isEmpty
+            ? OpenAIConverters.toolChoiceToOpenAI(options.toolChoice!)
+            : openAIToolChoice(
+                options.toolChoice!,
+                allowedToolNames: allowed,
+                toolNames: [for (final t in options.tools!) t.function.name],
+              );
       }
     }
 
@@ -242,182 +274,77 @@ class OpenRouterChatModel extends ToolCallingChatModel
     return body;
   }
 
-  /// Make a non-streaming API request
-  Future<Map<String, dynamic>> _makeRequest(
-    Map<String, dynamic> requestBody,
-    CancelToken? cancelToken,
-  ) async {
-    cancelToken?.throwIfCancelled();
-    final url = Uri.parse('${config.baseUrl}/chat/completions');
+  Uri get _url => Uri.parse('${config.baseUrl}/chat/completions');
 
-    // Outside the try: using a disposed model is a programming error,
-    // not a failed request.
-    final client = _client;
-
-    try {
-      final request = client.post(
-        url,
-        headers: _buildHeaders(),
-        body: jsonEncode(requestBody),
-      );
-      final response = cancelToken == null
-          ? await request.timeout(config.timeout)
-          : await Future.any<http.Response>([
-              request.timeout(config.timeout),
-              cancelToken.whenCancelled.then(
-                (_) => throw CancelledException(cancelToken.reason),
-              ),
-            ]);
-
-      if (response.statusCode != 200) {
-        throw OpenRouterException.fromHttp(response.statusCode, response.body);
+  /// [wire] (the converted [message]) with the cache breakpoints of
+  /// [message] and its parts, as eino-ext's OpenRouter payload modifier puts
+  /// them: on content parts when there are parts, else on the message when it
+  /// has plain content.
+  static Map<String, dynamic> _withCacheControl(
+    Message message,
+    Map<String, dynamic> wire,
+  ) {
+    final userParts = message.userInputMultiContent ?? const [];
+    final assistantParts = message.assistantGenMultiContent ?? const [];
+    if (userParts.isNotEmpty) {
+      final content = wire['content'];
+      if (content is! List) return wire;
+      for (var i = 0; i < userParts.length && i < content.length; i++) {
+        final control = userParts[i].openRouterCacheControl;
+        if (control != null) {
+          content[i] = <String, dynamic>{
+            ...content[i] as Map<String, dynamic>,
+            'cache_control': control.toJson(),
+          };
+        }
       }
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } on TimeoutException {
-      throw OpenRouterException(
-        'Request timed out after ${config.timeout}',
-        isRetryable: true,
-      );
-    } on CancelledException {
-      rethrow;
-    } on OpenRouterException {
-      rethrow;
-    } catch (e) {
-      throw OpenRouterException('Request failed: $e', isRetryable: true);
+    } else if (assistantParts.isNotEmpty) {
+      // OpenRouter sends an assistant message's plain content. Only when one
+      // of its parts is a breakpoint are the parts sent, as eino-ext sends
+      // them, so that the breakpoint has a place.
+      if (!assistantParts.any((p) => p.openRouterCacheControl != null)) {
+        return wire;
+      }
+      final parts = <Map<String, dynamic>>[
+        if (message.content.isNotEmpty &&
+            !assistantParts.any((p) => p.type == ChatMessagePartType.text))
+          {'type': 'text', 'text': message.content},
+        for (final part in assistantParts)
+          if (_outputPartToWire(part) case final wirePart?)
+            {
+              ...wirePart,
+              if (part.openRouterCacheControl case final control?)
+                'cache_control': control.toJson(),
+            },
+      ];
+      if (parts.isNotEmpty) wire['content'] = parts;
+    } else if (message.content.isNotEmpty) {
+      final control = message.openRouterCacheControl;
+      if (control != null) wire['cache_control'] = control.toJson();
     }
+    return wire;
   }
 
-  /// Make a streaming API request
-  ///
-  /// Once the stream is being read, [cancellation] is released when it ends.
-  /// When this method throws, releasing it is left to the caller.
-  Future<StreamReader<Message>> _makeStreamingRequest(
-    Map<String, dynamic> requestBody,
-    CallCancellation cancellation,
-  ) async {
-    final cancelToken = cancellation.token;
-    cancelToken?.throwIfCancelled();
-    final url = Uri.parse('${config.baseUrl}/chat/completions');
-
-    // Outside the try: using a disposed model is a programming error,
-    // not a failed request.
-    final client = _client;
-
-    try {
-      final request = http.Request('POST', url)
-        ..headers.addAll(_buildHeaders())
-        ..body = jsonEncode(requestBody);
-
-      final response = await client.send(request).timeout(config.timeout);
-
-      if (response.statusCode != 200) {
-        final body = await response.stream.bytesToString();
-        throw OpenRouterException.fromHttp(response.statusCode, body);
-      }
-
-      final (reader, writer) = pipe<Message>();
-      unawaited(
-        _processStream(response.stream, writer, cancelToken)
-            .whenComplete(cancellation.release),
-      );
-      return reader;
-    } on TimeoutException {
-      throw OpenRouterException(
-        'Request timed out after ${config.timeout}',
-        isRetryable: true,
-      );
-    } on OpenRouterException {
-      rethrow;
-    } catch (e) {
-      throw OpenRouterException(
-        'Streaming request failed: $e',
-        isRetryable: true,
-      );
+  /// An assistant output part as a content part, or `null` for kinds a
+  /// content part cannot carry.
+  static Map<String, dynamic>? _outputPartToWire(MessageOutputPart part) {
+    switch (part.type) {
+      case ChatMessagePartType.text:
+        return {'type': 'text', 'text': part.text ?? ''};
+      case ChatMessagePartType.imageUrl:
+        final image = part.image;
+        final url = image?.url ??
+            (image?.base64Data != null && image?.mimeType != null
+                ? 'data:${image!.mimeType};base64,${image.base64Data}'
+                : null);
+        if (url == null) return null;
+        return {
+          'type': 'image_url',
+          'image_url': {'url': url},
+        };
+      default:
+        return null;
     }
-  }
-
-  /// Process the SSE stream into message deltas.
-  ///
-  /// Stops on `[DONE]`, on a provider error chunk, when [cancelToken] fires,
-  /// or when no chunk arrives within `config.idleTimeout`.
-  Future<void> _processStream(
-    Stream<List<int>> byteStream,
-    StreamWriter<Message> writer,
-    CancelToken? cancelToken,
-  ) async {
-    StreamSubscription<String>? subscription;
-    final done = Completer<void>();
-    Timer? idleTimer;
-
-    void finish([Object? error]) {
-      if (done.isCompleted) return;
-      idleTimer?.cancel();
-      if (error != null) writer.sendError(error);
-      done.complete();
-    }
-
-    void armIdleTimer() {
-      idleTimer?.cancel();
-      idleTimer = Timer(config.idleTimeout, () {
-        finish(
-          OpenRouterException(
-            'Stream idle for ${config.idleTimeout}',
-            isRetryable: true,
-          ),
-        );
-      });
-    }
-
-    final lines = byteStream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter());
-
-    subscription = lines.listen(
-      (line) {
-        armIdleTimer();
-        if (!line.startsWith('data:')) return;
-        final data = line.substring(5).trim();
-        if (data.isEmpty) return;
-        if (data == '[DONE]') {
-          finish();
-          return;
-        }
-        Map<String, dynamic> json;
-        try {
-          json = jsonDecode(data) as Map<String, dynamic>;
-        } on FormatException {
-          return; // partial/malformed line, skip
-        }
-        try {
-          final message = responseParser.parseStreamChunk(json);
-          if (message != null) writer.send(message);
-        } on OpenRouterParseException catch (e) {
-          finish(
-            OpenRouterException(
-              e.message,
-              errorCode: e.code,
-              isRetryable: _isRetryableCode(e.code),
-              isModelUnavailable: _isModelUnavailable(e.code, e.message),
-            ),
-          );
-        }
-      },
-      onError: (Object error, StackTrace stackTrace) => finish(
-        OpenRouterException('Stream failed: $error', isRetryable: true),
-      ),
-      onDone: finish,
-      cancelOnError: true,
-    );
-    armIdleTimer();
-
-    final cancelFuture = cancelToken?.whenCancelled.then(
-      (_) => finish(CancelledException(cancelToken.reason)),
-    );
-
-    await done.future;
-    await subscription.cancel();
-    cancelFuture?.ignore();
-    await writer.close();
   }
 
   Map<String, String> _buildHeaders() {
@@ -429,6 +356,58 @@ class OpenRouterChatModel extends ToolCallingChatModel
     if (config.siteName != null) headers['X-Title'] = config.siteName!;
     return headers;
   }
+
+}
+
+/// How [OpenRouterChatModel] reports failures: as [OpenRouterException]s,
+/// with the texts and classification it always had.
+final class _OpenRouterErrors implements OpenAICompatibleErrors {
+  const _OpenRouterErrors();
+
+  @override
+  Object httpError(int statusCode, String body) =>
+      OpenRouterException.fromHttp(statusCode, body);
+
+  @override
+  Object timeout(Duration timeout) =>
+      OpenRouterException('Request timed out after $timeout', isRetryable: true);
+
+  @override
+  Object requestFailed(Object error, {required bool streaming}) =>
+      OpenRouterException(
+        streaming ? 'Streaming request failed: $error' : 'Request failed: $error',
+        isRetryable: true,
+        cause: error,
+      );
+
+  @override
+  Object streamIdle(Duration idleTimeout) =>
+      OpenRouterException('Stream idle for $idleTimeout', isRetryable: true);
+
+  @override
+  Object streamFailed(Object error) => OpenRouterException(
+        'Stream failed: $error',
+        isRetryable: true,
+        cause: error,
+      );
+
+  @override
+  Object chunkFailed(Object error) => switch (error) {
+        OpenRouterParseException(:final message, :final code) =>
+          OpenRouterException(
+            message,
+            errorCode: code,
+            isRetryable: _isRetryableCode(code),
+            isModelUnavailable: _isModelUnavailable(code, message),
+            cause: error,
+          ),
+        _ => OpenRouterException('Invalid stream chunk: $error', cause: error),
+      };
+
+  /// What the parser throws for a complete response reaches the caller as it
+  /// is, as it always did.
+  @override
+  Object responseFailed(Object error) => error;
 
   static bool _isRetryableCode(Object? code) {
     final c = code is int ? code : int.tryParse('$code');
@@ -455,6 +434,7 @@ class OpenRouterException implements ChatModelException {
     this.errorCode,
     this.isRetryable = false,
     this.isModelUnavailable = false,
+    this.cause,
   });
 
   /// Builds an exception from a non-200 HTTP response, classifying it.
@@ -508,8 +488,9 @@ class OpenRouterException implements ChatModelException {
   /// The account has no credits.
   bool get isPaymentRequired => statusCode == 402 || errorCode == 402;
 
+  /// The failure this exception reports, when there was one.
   @override
-  Object? get cause => null;
+  final Object? cause;
 
   @override
   String toString() =>

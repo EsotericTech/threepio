@@ -1,5 +1,6 @@
 import '../../../../errors.dart';
 import '../../../../schema/message.dart';
+import '../../openai_compatible/client.dart';
 import '../../response_parser.dart';
 import '../openai/openai_converters.dart';
 
@@ -64,6 +65,7 @@ class OpenRouterResponseParser implements ResponseParser {
       responseMeta: ResponseMeta(
         finishReason: choice['finish_reason'] as String?,
         usage: usage != null ? _usageFromMap(usage) : null,
+        logProbs: parseOpenAILogProbs(choice['logprobs']),
       ),
     );
   }
@@ -99,11 +101,13 @@ class OpenRouterResponseParser implements ResponseParser {
 
     final message = parseDelta(delta, finishReason: finishReason) ??
         const Message(role: RoleType.assistant);
-    if (usage == null) return message;
+    final logProbs = parseOpenAILogProbs(choice['logprobs']);
+    if (usage == null && logProbs == null) return message;
     return message.copyWith(
       responseMeta: ResponseMeta(
         finishReason: finishReason ?? message.responseMeta?.finishReason,
-        usage: _usageFromMap(usage),
+        usage: usage == null ? null : _usageFromMap(usage),
+        logProbs: logProbs,
       ),
     );
   }

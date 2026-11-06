@@ -23,7 +23,11 @@ middlewares, retry and failover of the model), on which the Kortney runtime
 now runs, its run control (cancel, the turn loop, the filesystem backend),
 its eight built-in middlewares and its prebuilt agents (deep agent,
 plan-execute-replan), and the retrieval flows of the Eino package `flow`
-(multi-query, parent and router retrievers, the parent indexer).
+(multi-query, parent and router retrievers, the parent indexer), and the first
+wave of eino-ext: the chat model providers (OpenAI, OpenRouter, Claude,
+Gemini, Ollama, OpenAI-compatible endpoints), embedders and an embedding
+cache, the MCP client with its tools and prompt template, and the local
+filesystem backend.
 
 ### Fixed
 
@@ -254,6 +258,113 @@ plan-execute-replan), and the retrieval flows of the Eino package `flow`
   `FusionFuncLambda`, every retrieval as a retriever named after its
   implementation (`MockRetriever`, `VectorRetriever`), the multi-query
   rewrite as the chain `QueryRewrite`.
+- **OpenAI-compatible providers** (port of eino-ext `libs/acl/openai`,
+  `model/openai`, `model/openrouter`, `model/qwen`, `model/deepseek`,
+  `embedding/openai`, `embedding/dashscope`):
+  - One client for every Chat Completions API (internal): request building,
+    server-sent events with an idle timeout, usage in streams
+    (`stream_options.include_usage`), cancellation through
+    `ChatModelOptions.cancelToken` and `runContext`, classification of
+    failures (`isRetryable`, `isModelUnavailable`), payload and response
+    modifiers, extra headers and fields. `OpenAIChatModel` and
+    `OpenRouterChatModel` both run on it.
+  - `OpenAIConfig` gains Eino's `ChatModelConfig` fields: `byAzure`,
+    `apiVersion`, `azureModelMapper` (Azure OpenAI routing with an `api-key`
+    header), `temperature`, `topP`, `stop`, `maxCompletionTokens`,
+    `presencePenalty`, `frequencyPenalty`, `responseFormat` (the existing
+    `ResponseFormat`), `seed`, `logitBias`, `user`, `logProbs`,
+    `topLogProbs`, `reasoningEffort` (the existing `ReasoningEffort`),
+    `extraFields`, `customHeaders`, `modalities` + `audio`
+    (`OpenAIModality`, `OpenAIAudioConfig`), `idleTimeout`. All optional; the
+    existing constructor calls are unchanged.
+  - `OpenAIRequestOptions` (Eino `WithExtraFields`, `WithExtraHeader`,
+    `WithReasoningEffort`, `WithMaxCompletionTokens`,
+    `WithRequestPayloadModifier`, `WithResponseMessageModifier`,
+    `WithResponseChunkMessageModifier`) in `ChatModelOptions.extensions`;
+    the modifier types `RequestPayloadModifier`, `ResponseMessageModifier`,
+    `ResponseChunkMessageModifier`.
+  - `OpenAIChatModel` now cancels, parses `reasoning_content`, log
+    probabilities, cache-write and reasoning tokens and generated audio,
+    honours `allowedToolNames` (Eino's `allowed_tools` tool choice), and
+    keeps the response id in `extra['openai-request-id']`.
+  - `OpenRouterRequestOptions` gains `models` (fallback list), `metadata`,
+    `reasoningEnabled`, `reasoningSummary` (`ReasoningSummary`),
+    `cacheControl` (`OpenRouterCacheControl`, `OpenRouterCacheControlTtl`),
+    `logprobs` and `topLogprobs`; cache breakpoints on single messages and
+    parts with `withOpenRouterCacheControl()` (Eino
+    `EnableMessageContentCacheControl`,
+    `EnableMessageInputPartCacheControl`,
+    `EnableMessageOutputPartCacheControl`); `allowedToolNames`; log
+    probabilities in responses.
+  - `OpenAICompatibleChatModel` with `OpenAICompatibleConfig` and the presets
+    `OpenAICompatibleConfig.deepSeek` (`DeepSeekThinking`; chat prefix
+    completion with `withDeepSeekPrefix()`), `.qwen` (`enableThinking`,
+    `qwenThinkingFields`) and `.ark` (the OpenAI-compatible Ark endpoint), or
+    any other compatible server.
+  - `OpenAIEmbedder` gains `dimensions`, `encodingFormat`
+    (`EmbeddingEncodingFormat`; base64 vectors are decoded), `user`, Azure
+    routing, cancellation through `options.runContext`, and
+    `OpenAIEmbedder.dashScope` (Eino `dashscope.NewEmbedder`).
+  - Shared helpers for provider errors: `isRetryableHttpStatus`,
+    `looksLikeModelUnavailable`, `ProviderErrorDetail`.
+- **Claude** (port of eino-ext `model/claude`, Anthropic Messages API only;
+  Bedrock and Vertex are not ported): `ClaudeChatModel`, `ClaudeConfig`
+  (`ClaudeThinkingConfig` with `ClaudeThinkingEnabled`, `ClaudeThinkingAdaptive`,
+  `ClaudeThinkingDisabled`; `ClaudeCacheControl`, `ClaudeCacheTtl`,
+  `ClaudeResponseFormat`, `ClaudeToolSearchAlgorithm`), `ClaudeRequestOptions`
+  (Eino `WithTopK`, `WithThinkingConfig`, `WithDisableParallelToolUse`,
+  `WithAutoCacheControl`, `WithResponseFormat`, `WithRequestTimeout`,
+  `WithCustomHeaders`), `ClaudeException`, and the message helpers
+  `claudeThinking`, `withClaudeCacheControl()` (messages and tools),
+  `claudeCacheCreationInputTokens`, `claudeToolSearchEvents`. Tool use,
+  thinking with its signature round trip, cache breakpoints (also
+  automatic), structured output, server-side tool search events, streaming.
+- **Ollama** (port of eino-ext `model/ollama` and `embedding/ollama`):
+  `OllamaChatModel` with `OllamaConfig` (`OllamaFormat`, `OllamaOptions`,
+  `OllamaThinkValue`/`OllamaThinkLevel`, `keepAlive`), `OllamaRequestOptions`
+  (`WithSeed`), `OllamaException`, the request metrics as `msg.ollamaMetrics`
+  (and in the callback output's `extra['ollama_metrics']`, as Eino reports
+  them), and `OllamaEmbedder` with `OllamaEmbedderConfig`.
+- **Gemini** (port of eino-ext `model/gemini` and `embedding/gemini`):
+  `GeminiRequestOptions` (thinking, cached content, custom headers, extra
+  fields, response schema and modalities, safety settings, image config,
+  media resolution, `topK`, log probabilities) and the same knobs plus the
+  server tools (code execution, Google Search and Search retrieval, URL
+  context, file search, Google Maps, computer use) on `GeminiConfig`;
+  thought parts as `reasoningContent` and thought signatures kept and sent
+  back; `createPrefixCache` (`GeminiCachedContent`); the message helpers of
+  `gemini_message_extras.dart`; cancellation; `GeminiEmbedder` with
+  `GeminiEmbeddingConfig` and `GeminiEmbeddingTaskType`.
+- **Embedding cache** (port of eino-ext `embedding/cache`): `CachingEmbedder`
+  over an `EmbeddingCache` (`InMemoryEmbeddingCache`; `FileEmbeddingCache` in
+  `io.dart`, standing in for the Redis backend) with a `CacheKeyGenerator`
+  (`SimpleCacheKeyGenerator`, `HashCacheKeyGenerator` with an injected hash
+  function).
+- **Embedders report to callbacks**: `OpenAIEmbedder`, `OllamaEmbedder` and
+  `GeminiEmbedder` fire `EmbeddingCallbackInput`/`Output` (with the token
+  usage) to the handlers of `options.runContext` and the global ones, and
+  are `TypedComponent`/`CallbackAwareComponent`.
+- **MCP** (port of eino-ext `tool/mcp`, `tool/mcp/officialmcp` and
+  `prompt/mcp`), in `components.dart`: `McpClient` (JSON-RPC 2.0:
+  `initialize`, `tools/list` with pagination, `tools/call`, `prompts/list`,
+  `prompts/get`, `ping`) with the protocol types (`McpTool`,
+  `McpCallToolResult`, the sealed `McpContent`, `McpPrompt`, …) and
+  `McpException`; transports `StreamableHttpTransport` (JSON and SSE replies,
+  sessions, resumption) and `SseTransport`, and `StdioTransport` in
+  `io.dart`; `McpToolkit.getTools(ctx, …)` with Eino's tool-name list and
+  mapper, list mode and page limit, metadata mode, description and result
+  policies and result handlers, returning tools that are both
+  `InvokableTool` (text) and `EnhancedInvokableTool` (multimodal
+  `ToolResult`); `McpSession` (connect from a server config, reconnect once on
+  a connection error); `McpPromptTemplate`, a `ChatTemplate` backed by
+  `prompts/get`.
+- **Local filesystem backend** (port of eino-ext `adk/backend/local`), in
+  `io.dart`: `LocalFilesystemBackend` (one class, like Go's `Local`, that is
+  a `FilesystemBackend`, `MultiModalReader`, `Shell` and `StreamingShell`):
+  `lsInfo`, `read`, `grepRaw` (ripgrep's behaviour, emulated in-process),
+  `globInfo`, `write`, `edit`, image and PDF reads with Eino's size limits
+  (`LocalMultiModalReadConfig`), and commands through `/bin/sh -c` with an
+  optional `CommandValidator`; `LocalShell` runs commands on its own.
 - **Filesystem**: `FileReadBackend` and `FileWriteBackend`, the read and write
   halves of `FilesystemBackend` (which implements both), and
   `FileNotFoundException`, which a backend throws for a missing file that the
@@ -595,6 +706,54 @@ plan-execute-replan), and the retrieval flows of the Eino package `flow`
   `Runner`/`ChatModelAgent` runtime under `test/adk/golden/`.
 
 ### Changed
+
+- **`OpenAIChatModel`** runs on the shared OpenAI-compatible client. Visible
+  differences: a stream holds back messages without content, tool calls or
+  reasoning and merges them into the next one (as Eino does; the first frame
+  of parallel tool calls can be empty), and emits the final usage-only chunk
+  (the request asks for it with `stream_options.include_usage`); an `error`
+  object inside a stream now fails it (malformed lines are still skipped);
+  zero `max_tokens`/`top_p` are no longer sent (Go's `omitempty`); the
+  request is cancelled by the call's cancel token; `OpenAIException`
+  implements `ChatModelException` (408/429/5xx, timeouts and transport
+  failures are retryable, 404 or an unknown model is "model unavailable") and
+  has the new optional `errorCode`, `isRetryable`, `isModelUnavailable` and
+  `cause` constructor parameters.
+- **`OpenRouterChatModel`** runs on the same client with its own request
+  builder, parser, chunking and error texts, so its requests and streams are
+  unchanged. Small runtime differences: a cancel while the response headers
+  are awaited throws `CancelledException` from `stream()` at once (it used to
+  arrive as a stream error once the headers came); an exception thrown while
+  a stream chunk is parsed ends the stream with a non-retryable
+  `OpenRouterException('Invalid stream chunk: …')` (it escaped as an uncaught
+  error and the stream went on), and a chunk that is not a JSON object is
+  skipped; a stream whose reader was closed stops reading the response.
+  `OpenRouterException` has an optional `cause`.
+- **`OpenAIConverters.messageToOpenAI`**: a base64 image becomes a data URL
+  (it was sent without a URL), base64 audio becomes an `input_audio` part
+  and a video a `video_url` part (both threw `UnimplementedError`); an image
+  part with neither a URL nor base64 data is an `ArgumentError` (it was sent
+  with `url: null`); a tool call without a type (assembled from stream
+  fragments) is sent as a `function` call.
+- **`OpenAIEmbedder`** sends `encoding_format` (`float` by default, as Eino),
+  fires the new callback chain, and no longer copies the `callbackManager`
+  and `context` entries that `withCallbacks` keeps in `extra` into the
+  request body (which made the request fail).
+- **`GeminiChatModel`** (Eino-faithful or fixes): bound tools imply
+  `ToolChoice.allowed`, so `toolConfig` `AUTO` is sent with function
+  declarations and callbacks report the choice; `reasoningContent` and
+  assistant media are sent back; any tool-role message becomes a
+  `functionResponse` named after `toolName`, else `toolCallId`; chunks with
+  only a finish reason or usage are emitted; a malformed stream chunk fails
+  the stream (it was skipped); errors on non-JSON bodies keep the HTTP
+  status; timeouts and transport failures are retryable; an explicit
+  `mimeType` on URL media wins over the guess; a `models/` prefix on the model
+  name is not doubled; empty input is an `ArgumentError`; base64 data and file
+  ids on input parts are used; no `x-goog-api-key` header is sent when the
+  key is empty. `GeminiException` (moved to `gemini_errors.dart`, still
+  exported from `gemini_chat_model.dart`) implements `ChatModelException`.
+- **`ModelCallCallbacks`** (internal) can add a provider's `extra` to the
+  callback output.
 
 - New dependencies: `clock` (the cancel timeouts and TurnLoop deadlines read
   `clock.now()`, so that `package:fake_async` drives them), `glob` (2.2 or
@@ -1079,6 +1238,95 @@ plan-execute-replan), and the retrieval flows of the Eino package `flow`
   - *Not ported*: `flow/agent/react` and `flow/agent/multiagent/host`, which
     Eino's guides tell users to replace with the ADK (`ChatModelAgent`,
     `AgentTool`); the legacy `Agent` of the umbrella library stays as it is.
+- **Differences from Eino in the ext providers (wave 1).**
+  - *No SDKs*: every provider speaks the REST API with `package:http`. The
+    retries the Go SDKs do by themselves are left to `RetryingChatModel`.
+    Bedrock, Vertex, Ollama request signing and credentials from environment
+    variables are not ported.
+  - *Errors*: contradictory settings (a forced tool choice without tools, an
+    unknown allowed tool, an audio modality without audio settings, Qwen's
+    and DeepSeek's unsupported tool choices) are `ArgumentError`s with Go's
+    messages; bad input data is a `ThreepioFormatException`; HTTP and stream
+    failures are the provider's `ChatModelException`. Transport and HTTP
+    failures of a stream are thrown by `stream()` itself, so that the retry
+    and failover decorators can act (Go reports some through the stream).
+    `CancelledException` passes through unwrapped.
+  - *Modifiers*: the payload and response modifiers of
+    `OpenAIRequestOptions` take and return decoded JSON maps, synchronously
+    (Go: raw bytes).
+  - *OpenAI-compatible messages* are converted leniently: user parts on any
+    role, unsupported assistant output parts skipped (Go fails), and the
+    audio MIME-type table without Go's swapped `audio/mpeg`/`audio/x-wav`
+    entries. The reasoning is in `Message.reasoningContent` only (Go also
+    copies it to `extra['reasoning-content']`); the response id is set once
+    per stream (Go on every chunk, with a concat function). Tools keep their
+    serialization (Go sorts `required` arrays). `withTools` does not set
+    `ToolChoice.allowed` on the OpenAI-compatible models (Go does; the wire
+    is the same, only the callback input differs). A generated audio's id is
+    on the first audio part of a stream only (Go repeats it on every part and
+    deduplicates it in a concat function; threepio's concat joins strings). A
+    reader closed early is noticed when the next line arrives. OpenRouter
+    does not parse log probabilities on its image response paths.
+  - *OpenRouter* keeps threepio's request builder (Go's `allowed_tools` tool
+    choice only with `allowedToolNames`), streams its chunks without merging
+    empty ones, keeps `reasoning_details` under `extra['reasoning_details']`,
+    and throws `OpenRouterException` for an in-stream error instead of Go's
+    `GetStreamTerminatedError`. An assistant message's output parts are sent
+    as content parts only when one of them is a cache breakpoint.
+  - *Claude*: `model` and `maxTokens` are required; `timeout` (10 minutes)
+    and `idleTimeout` (90 s, `null` for none) have defaults; a model is
+    unavailable only on HTTP 404 or `not_found_error`;
+    `additionalRequestFields` follows sjson's path rules (a scalar met
+    mid-path is replaced); a last event without its blank line is still
+    read (the SDK drops it); `disableAutoCacheControl` stands
+    for Go's `WithAutoCacheControl(nil)`; a streamed server-side tool search
+    is recorded when its block ends (Go records it with empty input and then
+    treats its input fragments as an ordinary tool call); an event without an
+    `event:` line is routed by its `type`; `ChatModelOptions.extra` is not
+    used (use `additionalRequestFields`). Kept as Go: thinking is sent back
+    only with text and signature, `redacted_thinking` blocks are dropped,
+    `web_search` results throw.
+  - *Ollama*: the chat model defaults to `http://localhost:11434`;
+    `maxTokens` becomes `options.num_predict` (Go ignores it); the config's
+    sampling settings are the defaults of every call; zero values are sent;
+    `tool_name` is sent for tool results; `allowedToolNames` is an
+    `ArgumentError` and the tool choice is ignored, as in Go; blank NDJSON
+    lines are skipped; for `stream()` the `timeout` bounds the response
+    headers only (`idleTimeout` bounds silence); the metrics are also in
+    `Message.extra`, as nanosecond integers; the embedder also reports
+    `prompt_eval_count` as token usage and sends the call's model (Go sends
+    the configured one).
+  - *Gemini* keeps threepio's wire choices that its tests pin (snake_case
+    `inline_data`/`file_data`, text tool results as `{"result": …}`, system
+    messages joined, lowercase finish reasons, the text in `Message.content`
+    with its thought signature in `Message.extra`, images as data URLs);
+    streamed text signatures are attached to the finish chunk (Go fails to
+    concatenate two); `toolConfig` is only sent with function declarations;
+    thought parts are concatenated (Go keeps the last); Vertex-only settings
+    are `ArgumentError`s.
+  - *Embedding cache*: `HashCacheKeyGenerator` hashes the key text (Go's
+    `hasher.Sum(b)` appends the digest of empty input to the text instead) and
+    takes the hash as a function; an expiration of zero or less means no
+    limit; an inner embedder that returns fewer vectors than texts is an error
+    (Go panics); `CachingEmbedder` is not callback-aware, as in Go.
+  - *MCP*: one `McpToolkit` covers both Go packages (officialmcp's errors and
+    policies; the older package's custom headers and `_meta`); its tools are
+    also `EnhancedInvokableTool`s; a tool error (`isError`) throws
+    `McpToolkitException` unless `errorAsError: false`, as officialmcp does;
+    the client asks for protocol `2025-11-25` and accepts the three earlier
+    revisions; input schemas are mapped onto threepio's `JSONSchema`, which
+    cannot hold every keyword (the raw schema is kept with
+    `McpMetadataMode.full`); policy output has a fixed key order;
+    `McpPromptTemplate` uses the new multi-content fields.
+  - *Local backend*: a missing file is a plain `ThreepioException` with Go's
+    text (`file not found: <path>`; never `FileNotFoundException`, so the
+    agents.md middleware fails on it as Go's does); `grepRaw` searches in
+    Dart instead of running `rg`, sorted by path, without `.gitignore`
+    support or `\p{…}` classes; paged PDF reads are not supported (no
+    PDFium), whole PDFs and images are; a cancelled command ends with
+    `CancelledException` (Go: `context canceled`, exit code -1); `read`
+    with no limit reads 2000 lines, as Go; bytes that are not UTF-8 are read
+    as U+FFFD.
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

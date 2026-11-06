@@ -2,29 +2,47 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 
 import '../../../../callbacks/callback_manager.dart';
 import '../../../../callbacks/run_info.dart';
+import '../../../../core/interrupt_signal.dart';
 import '../../../../errors.dart';
+import '../../../../internal/call_cancellation.dart';
 import '../../../../internal/model_call_callbacks.dart';
+import '../../../../internal/provider_http.dart';
 import '../../../../internal/shared_http_client.dart';
 import '../../../../schema/message.dart';
 import '../../../../schema/tool_info.dart';
 import '../../../../streaming/stream_reader.dart';
-import '../../../../streaming/stream_utils.dart';
-import '../../../../streaming/stream_writer.dart';
 import '../../../component_type.dart';
 import '../../base_chat_model.dart';
+import '../../cancel_token.dart';
 import '../../chat_model_options.dart';
+import '../../openai_compatible/sse.dart';
 import 'gemini_config.dart';
 import 'gemini_converters.dart';
+import 'gemini_errors.dart';
+import 'gemini_message_extras.dart';
+import 'gemini_options.dart';
 import 'gemini_response_parser.dart';
+
+export 'gemini_errors.dart' show GeminiException;
 
 /// Google Gemini chat model implementation
 ///
 /// Provides integration with Google's Gemini API, supporting
 /// both streaming and non-streaming responses, multimodal content,
 /// tool/function calling, and Imagen image generation.
+///
+/// Port of eino-ext `gemini.ChatModel` (`NewChatModel`, `Generate`,
+/// `Stream`, `WithTools`, `CreatePrefixCache`) over the Gemini REST API:
+/// thinking with thought summaries in `Message.reasoningContent` and thought
+/// signatures kept and sent back, server tools (code execution, Google
+/// Search, URL context, file search, Google Maps, computer use), cached
+/// content, custom headers and extra body fields
+/// ([GeminiRequestOptions]), structured output, log probabilities, and
+/// cancellation through the options' cancel token or run context.
 ///
 /// Example usage:
 /// ```dart
@@ -62,6 +80,17 @@ import 'gemini_response_parser.dart';
 /// final response = await toolModel.generate([
 ///   Message.user('What is the weather in Tokyo?'),
 /// ]);
+/// ```
+///
+/// Thinking example:
+/// ```dart
+/// final reply = await model.generate(
+///   messages,
+///   options: GeminiRequestOptions(
+///     thinkingConfig: const GeminiThinkingConfig(includeThoughts: true),
+///   ).toOptions(),
+/// );
+/// print(reply.reasoningContent);
 /// ```
 ///
 /// Imagen image generation example:
@@ -164,36 +193,50 @@ class GeminiChatModel extends ToolCallingChatModel
       return _generateWithImagen(input, mergedOptions, model);
     }
 
+    if (input.isEmpty) {
+      throw ArgumentError.value(input, 'input', 'gemini input is empty');
+    }
+
+    Future<Message> execute() async {
+      final requestBody = _buildRequestBody(input, mergedOptions);
+      // One token for the call, whether it was given in the options, in the
+      // run context or in both.
+      final cancellation = CallCancellation.of(mergedOptions);
+      try {
+        final response = await _post(
+          Uri.parse(
+            '${config.baseUrl}/${_modelResource(model)}:generateContent',
+          ),
+          requestBody,
+          headers: mergedOptions.extension<GeminiRequestOptions>()?.customHeaders,
+          cancelToken: cancellation.token,
+        );
+        return _responseParser.parseCompletionResponse(response);
+      } finally {
+        cancellation.release();
+      }
+    }
+
     // Get callback manager if available
     final callbackManager = mergedOptions.callbackManager as CallbackManager?;
+    if (callbackManager == null) return execute();
 
-    if (callbackManager != null) {
-      // Execute with callbacks
-      final runInfo = RunInfo(
-        name: 'GeminiChatModel',
-        type: 'GeminiChatModel',
-        componentType: ComponentType.chatModel,
-        metadata: {
-          'model': model,
-          ...?mergedOptions.metadata,
-        },
-      );
-
-      return await callbackManager.runWithCallbacks(
-        mergedOptions.getOrCreateContext(),
-        runInfo,
-        input,
-        () async {
-          final requestBody = _buildRequestBody(input, mergedOptions);
-          final response = await _makeRequest(requestBody, mergedOptions);
-          return _responseParser.parseCompletionResponse(response);
-        },
-      );
-    } else {
-      final requestBody = _buildRequestBody(input, mergedOptions);
-      final response = await _makeRequest(requestBody, mergedOptions);
-      return _responseParser.parseCompletionResponse(response);
-    }
+    // Execute with callbacks
+    final runInfo = RunInfo(
+      name: 'GeminiChatModel',
+      type: 'GeminiChatModel',
+      componentType: ComponentType.chatModel,
+      metadata: {
+        'model': model,
+        ...?mergedOptions.metadata,
+      },
+    );
+    return callbackManager.runWithCallbacks(
+      mergedOptions.getOrCreateContext(),
+      runInfo,
+      input,
+      execute,
+    );
   }
 
   @override
@@ -208,13 +251,176 @@ class GeminiChatModel extends ToolCallingChatModel
       typeName: componentTypeName,
       defaultModel: config.defaultModel,
       input: input,
-      stream: () {
-        // Build request body
-        final requestBody = _buildRequestBody(input, mergedOptions);
+      stream: () => _stream(input, mergedOptions),
+    );
+  }
 
-        // Make streaming API call
-        return _makeStreamingRequest(requestBody, mergedOptions);
-      },
+  /// Opens the stream of one call.
+  ///
+  /// Every `data:` line of the response is one `GenerateContentResponse`
+  /// and becomes one message, as each chunk does in Go's `Stream`. The
+  /// stream ends with a [CancelledException] when the call is cancelled,
+  /// with a [GeminiException] for an error chunk or a failed body, with a
+  /// [GeminiParseException] when the prompt was blocked, and with a
+  /// [ThreepioFormatException] for a chunk that is not JSON.
+  Future<StreamReader<Message>> _stream(
+    List<Message> input,
+    ChatModelOptions mergedOptions,
+  ) async {
+    if (input.isEmpty) {
+      throw ArgumentError.value(input, 'input', 'gemini input is empty');
+    }
+    final model = mergedOptions.model ?? config.defaultModel;
+    final body = _buildRequestBody(input, mergedOptions);
+    final cancellation = CallCancellation.of(mergedOptions);
+    var streaming = false;
+    try {
+      final response = await _openStream(
+        Uri.parse(
+          '${config.baseUrl}/${_modelResource(model)}'
+          ':streamGenerateContent?alt=sse',
+        ),
+        body,
+        headers: mergedOptions.extension<GeminiRequestOptions>()?.customHeaders,
+        cancelToken: cancellation.token,
+      );
+
+      final (reader, writer) = pipe<Message>();
+      var nextPartIndex = 0;
+      String? pendingSignature;
+      unawaited(
+        pumpSse<Message>(
+          bytes: response.stream,
+          writer: writer,
+          cancelToken: cancellation.token,
+          streamError: (error) => GeminiException(
+            'Stream processing failed: $error',
+            cause: error,
+            isRetryable: true,
+            isModelUnavailable: false,
+          ),
+          onEvent: (event) {
+            final data = event.data.trim();
+            if (data.isEmpty) return PumpAction.next;
+            if (data == '[DONE]') return PumpAction.stop;
+            var message = _parseStreamChunk(data);
+            if (message == null) return PumpAction.next;
+            // The thought signature of the text is held back until the chunk
+            // that ends the response: `concatMessages` joins the strings of
+            // `extra`, and two signatures joined are no signature at all.
+            final signature = message.extra?[geminiThoughtSignatureKey];
+            if (signature is String) {
+              pendingSignature = signature;
+              final rest = {...message.extra!}..remove(geminiThoughtSignatureKey);
+              message = message.copyWith(extra: rest.isEmpty ? null : rest);
+            }
+            if (pendingSignature != null &&
+                message.responseMeta?.finishReason != null) {
+              message = message.copyWith(
+                extra: {
+                  ...?message.extra,
+                  geminiThoughtSignatureKey: pendingSignature,
+                },
+              );
+              pendingSignature = null;
+            }
+            if (!_isEmptyChunk(message)) {
+              writer.send(_indexSpecialParts(message, () => nextPartIndex++));
+            }
+            return PumpAction.next;
+          },
+        ).whenComplete(cancellation.release),
+      );
+      // From here on the stream releases the cancellation, when it ends.
+      streaming = true;
+      return reader;
+    } finally {
+      if (!streaming) cancellation.release();
+    }
+  }
+
+  /// The message of one `data:` line, or `null` when the chunk has none.
+  Message? _parseStreamChunk(String data) {
+    final Object? json;
+    try {
+      json = jsonDecode(data);
+    } on FormatException catch (error) {
+      throw ThreepioFormatException(
+        'malformed Gemini stream chunk: ${error.message}',
+        source: data,
+        cause: error,
+      );
+    }
+    if (json is! Map<String, dynamic>) {
+      throw ThreepioFormatException(
+        'malformed Gemini stream chunk: not a JSON object',
+        source: data,
+      );
+    }
+
+    final error = json['error'];
+    if (error is Map) {
+      final code = error['code'];
+      throw GeminiException(
+        '${error['message'] ?? 'Unknown error'}',
+        code: code is int ? code : int.tryParse('$code'),
+        status: error['status'] is String ? error['status'] as String : null,
+      );
+    }
+
+    final candidates = json['candidates'];
+    if (candidates is! List || candidates.isEmpty) {
+      final feedback = json['promptFeedback'];
+      final blockReason = feedback is Map ? feedback['blockReason'] : null;
+      if (blockReason is String) {
+        throw GeminiParseException(
+          'Content blocked: $blockReason',
+          blockReason: blockReason,
+        );
+      }
+      final usage = json['usageMetadata'];
+      return usage is Map<String, dynamic>
+          ? Message(
+              role: RoleType.assistant,
+              responseMeta:
+                  ResponseMeta(usage: GeminiConverters.usageToSchema(usage)),
+            )
+          : null;
+    }
+    final candidate = candidates.first;
+    if (candidate is! Map<String, dynamic>) return null;
+    return GeminiConverters.geminiChunkToMessage(
+      candidate,
+      usageMetadata: json['usageMetadata'] as Map<String, dynamic>?,
+    );
+  }
+
+  /// Whether a streamed chunk carries nothing at all.
+  static bool _isEmptyChunk(Message message) =>
+      message.content.isEmpty &&
+      (message.reasoningContent?.isEmpty ?? true) &&
+      message.toolCalls == null &&
+      message.assistantGenMultiContent == null &&
+      message.responseMeta == null &&
+      message.extra == null;
+
+  /// Gives each code execution part of a streamed chunk a position of its
+  /// own, so that `concatMessages` keeps the parts apart instead of joining
+  /// neighbouring text parts.
+  static Message _indexSpecialParts(Message message, int Function() next) {
+    final parts = message.assistantGenMultiContent;
+    if (parts == null ||
+        !parts.any((part) => part.extra?[geminiSpecialPartKey] != null)) {
+      return message;
+    }
+    return message.copyWith(
+      assistantGenMultiContent: [
+        for (final part in parts)
+          if (part.extra?[geminiSpecialPartKey] == null)
+            part
+          else
+            part.copyWith(streamingMeta: MessageStreamingMeta(index: next())),
+      ],
     );
   }
 
@@ -223,29 +429,97 @@ class GeminiChatModel extends ToolCallingChatModel
     return GeminiChatModel._bound(this, tools);
   }
 
+  /// Creates a prefix cache from [prefixMessages] and the request settings,
+  /// to be used by later calls through
+  /// `GeminiRequestOptions.cachedContentName`.
+  ///
+  /// Port of eino-ext `ChatModel.CreatePrefixCache`: the messages are
+  /// assembled as `generate` assembles them, and the system instruction, the
+  /// tools, the tool config and the contents are written into a cached
+  /// content (`POST {baseUrl}/cachedContents`) that lives as
+  /// `GeminiConfig.cache` says. Custom headers and extra fields are not
+  /// sent, as in Go.
+  Future<GeminiCachedContent> createPrefixCache(
+    List<Message> prefixMessages, {
+    ChatModelOptions? options,
+  }) async {
+    final mergedOptions = _mergeOptions(options);
+    final model = mergedOptions.model ?? config.defaultModel;
+    final request =
+        _buildRequestBody(prefixMessages, mergedOptions, forCache: true);
+    final contents = request['contents'] as List<Object?>;
+    final ttl = config.cache?.ttl;
+    final expireTime = config.cache?.expireTime;
+    final body = <String, dynamic>{
+      'model': _modelResource(model),
+      if (contents.isNotEmpty) 'contents': contents,
+      if (request['systemInstruction'] != null)
+        'systemInstruction': request['systemInstruction'],
+      if (request['tools'] != null) 'tools': request['tools'],
+      if (request['toolConfig'] != null) 'toolConfig': request['toolConfig'],
+      if (ttl != null && ttl != Duration.zero)
+        'ttl': '${(ttl.inMicroseconds / Duration.microsecondsPerSecond).round()}s',
+      if (expireTime != null) 'expireTime': expireTime.toUtc().toIso8601String(),
+    };
+    final cancellation = CallCancellation.of(mergedOptions);
+    try {
+      final response = await _post(
+        Uri.parse('${config.baseUrl}/cachedContents'),
+        body,
+        cancelToken: cancellation.token,
+      );
+      return GeminiCachedContent.fromJson(response);
+    } finally {
+      cancellation.release();
+    }
+  }
+
   /// Merge options with bound tools
+  ///
+  /// The defaults of [config] (temperature, max tokens, top-p) go first, the
+  /// bound tools with [ToolChoice.allowed] (as Go's `WithTools` binds them),
+  /// then what the call sets.
   ChatModelOptions _mergeOptions(ChatModelOptions? options) {
-    if (tools == null || tools!.isEmpty) {
+    final hasTools = tools != null && tools!.isNotEmpty;
+    if (!hasTools &&
+        config.temperature == null &&
+        config.maxTokens == null &&
+        config.topP == null) {
       return options ?? const ChatModelOptions();
     }
 
-    final baseOptions = ChatModelOptions(tools: tools);
+    final baseOptions = ChatModelOptions(
+      temperature: config.temperature,
+      maxTokens: config.maxTokens,
+      topP: config.topP,
+      tools: hasTools ? tools : null,
+      toolChoice: hasTools ? ToolChoice.allowed : null,
+    );
     return options == null ? baseOptions : baseOptions.merge(options);
   }
 
   /// Build request body for API call
+  ///
+  /// Port of eino-ext `genInputAndConf` (with the REST mapping the genai SDK
+  /// applies): the options of the call win over [config]; the
+  /// [GeminiRequestOptions] of the call win over the older allow-listed
+  /// `extra` keys (`topK`, `candidateCount`, `responseMimeType`,
+  /// `responseSchema`, `responseModalities`, `safetySettings`), which win over
+  /// [config]. Extra fields are merged last.
   Map<String, dynamic> _buildRequestBody(
     List<Message> messages,
-    ChatModelOptions options,
-  ) {
+    ChatModelOptions options, {
+    bool forCache = false,
+  }) {
+    final requestOptions = options.extension<GeminiRequestOptions>();
+    final extra = options.extra;
+
     // Extract system instruction and filter messages
     final (systemInstruction, filteredMessages) =
         GeminiConverters.extractSystemInstruction(messages);
 
     final body = <String, dynamic>{
-      'contents': filteredMessages
-          .map((m) => GeminiConverters.messageToGemini(m))
-          .toList(),
+      'contents': GeminiConverters.messagesToGemini(filteredMessages),
     };
 
     // Add system instruction if present
@@ -271,190 +545,294 @@ class GeminiChatModel extends ToolCallingChatModel
     if (options.stop != null && options.stop!.isNotEmpty) {
       generationConfig['stopSequences'] = options.stop;
     }
+    final topK = requestOptions?.topK ?? extra?['topK'] ?? config.topK;
+    if (topK != null) generationConfig['topK'] = topK;
 
     // Handle extra options for Gemini-specific settings
-    if (options.extra != null) {
-      if (options.extra!['topK'] != null) {
-        generationConfig['topK'] = options.extra!['topK'];
+    if (extra != null) {
+      if (extra['candidateCount'] != null) {
+        generationConfig['candidateCount'] = extra['candidateCount'];
       }
-      if (options.extra!['candidateCount'] != null) {
-        generationConfig['candidateCount'] = options.extra!['candidateCount'];
+      if (extra['responseMimeType'] != null) {
+        generationConfig['responseMimeType'] = extra['responseMimeType'];
       }
-      if (options.extra!['responseMimeType'] != null) {
-        generationConfig['responseMimeType'] =
-            options.extra!['responseMimeType'];
-      }
-      if (options.extra!['responseSchema'] != null) {
-        generationConfig['responseSchema'] = options.extra!['responseSchema'];
-      }
-      // Image generation support
-      if (options.extra!['responseModalities'] != null) {
-        generationConfig['responseModalities'] =
-            options.extra!['responseModalities'];
+      if (extra['responseSchema'] != null) {
+        generationConfig['responseSchema'] = extra['responseSchema'];
       }
     }
+
+    final responseJsonSchema =
+        requestOptions?.responseJsonSchema ?? config.responseJsonSchema;
+    if (responseJsonSchema != null) {
+      generationConfig['responseMimeType'] = 'application/json';
+      generationConfig['responseJsonSchema'] = responseJsonSchema;
+    }
+
+    // Image generation support
+    final modalities = requestOptions?.responseModalities;
+    if (modalities != null && modalities.isNotEmpty) {
+      generationConfig['responseModalities'] =
+          modalities.map((m) => m.wireValue).toList();
+    } else if (extra?['responseModalities'] != null) {
+      generationConfig['responseModalities'] = extra!['responseModalities'];
+    } else if (config.responseModalities?.isNotEmpty ?? false) {
+      generationConfig['responseModalities'] =
+          config.responseModalities!.map((m) => m.wireValue).toList();
+    }
+
+    if (config.mediaResolution != null) {
+      generationConfig['mediaResolution'] = config.mediaResolution!.wireValue;
+    }
+    final thinkingConfig =
+        requestOptions?.thinkingConfig ?? config.thinkingConfig;
+    if (thinkingConfig != null) {
+      generationConfig['thinkingConfig'] = thinkingConfig.toJson();
+    }
+    final imageConfig = requestOptions?.imageConfig ?? config.imageConfig;
+    if (imageConfig != null) {
+      generationConfig['imageConfig'] = imageConfig.toJson();
+    }
+    if (requestOptions?.responseLogprobs ?? config.responseLogprobs) {
+      generationConfig['responseLogprobs'] = true;
+    }
+    final logprobs = requestOptions?.logprobs ?? config.logprobs;
+    if (logprobs != null) generationConfig['logprobs'] = logprobs;
 
     if (generationConfig.isNotEmpty) {
       body['generationConfig'] = generationConfig;
     }
 
-    // Add tools if present
-    if (options.tools != null && options.tools!.isNotEmpty) {
-      body['tools'] = [
+    // Function declarations first, then the server tools, in Go's order.
+    final tools = <Map<String, dynamic>>[
+      if (options.tools != null && options.tools!.isNotEmpty)
         {
-          'functionDeclarations': options.tools!
-              .map((t) => GeminiConverters.toolInfoToGemini(t))
-              .toList(),
-        }
-      ];
+          'functionDeclarations':
+              options.tools!.map(GeminiConverters.toolInfoToGemini).toList(),
+        },
+      if (config.enableCodeExecution) {'codeExecution': <String, Object?>{}},
+      if (config.enableGoogleSearch != null)
+        {'googleSearch': config.enableGoogleSearch!.toJson()},
+      if (config.enableGoogleSearchRetrieval != null)
+        {'googleSearchRetrieval': config.enableGoogleSearchRetrieval!.toJson()},
+      if (config.enableComputerUse != null)
+        {'computerUse': config.enableComputerUse!.toJson()},
+      if (config.enableUrlContext != null)
+        {'urlContext': config.enableUrlContext!.toJson()},
+      if (config.enableFileSearch != null)
+        {'fileSearch': config.enableFileSearch!.toJson()},
+      if (config.enableGoogleMaps != null)
+        {'googleMaps': config.enableGoogleMaps!.toJson()},
+    ];
+    if (tools.isNotEmpty) body['tools'] = tools;
 
-      // Add tool choice if specified
-      if (options.toolChoice != null) {
-        body['toolConfig'] = {
-          'functionCallingConfig': {
-            'mode': GeminiConverters.toolChoiceToGemini(options.toolChoice!),
-          },
-        };
-      }
+    // Validated as Go's populateToolChoice validates it, but only sent with
+    // function declarations: the API rejects a function calling config
+    // without them (and threepio never sent one).
+    final toolConfig = GeminiConverters.toolConfigToGemini(
+      options.toolChoice,
+      allowedToolNames: options.allowedToolNames,
+      tools: tools,
+    );
+    if (toolConfig != null && (options.tools?.isNotEmpty ?? false)) {
+      body['toolConfig'] = toolConfig;
     }
 
     // Add safety settings if provided
-    if (options.extra?['safetySettings'] != null) {
-      body['safetySettings'] = options.extra!['safetySettings'];
+    final safetySettings = extra?['safetySettings'] ??
+        ((config.safetySettings?.isNotEmpty ?? false)
+            ? config.safetySettings!.map((s) => s.toJson()).toList()
+            : null);
+    if (safetySettings != null) body['safetySettings'] = safetySettings;
+
+    final labels = requestOptions?.labels;
+    if (labels != null && labels.isNotEmpty) {
+      // This model talks to the Gemini API, which rejects labels.
+      throw ArgumentError.value(
+        labels,
+        'labels',
+        'labels are only supported on the Vertex AI backend',
+      );
     }
 
-    return body;
+    final cachedContentName = requestOptions?.cachedContentName;
+    if (cachedContentName != null && cachedContentName.isNotEmpty) {
+      body['cachedContent'] = _cachedContentResource(cachedContentName);
+      // The system instruction and the tools are part of the cache.
+      body
+        ..remove('systemInstruction')
+        ..remove('tools')
+        ..remove('toolConfig');
+    }
+
+    final extraFields = requestOptions?.extraFields;
+    if (forCache || extraFields == null) return body;
+    return _mergeJson(body, extraFields);
   }
 
-  /// Make API request
-  Future<Map<String, dynamic>> _makeRequest(
-    Map<String, dynamic> requestBody,
-    ChatModelOptions options,
-  ) async {
-    final model = options.model ?? config.defaultModel;
-    final url = Uri.parse('${config.baseUrl}/models/$model:generateContent');
-    final headers = _buildHeaders();
+  /// The resource name of [model] (`models/…`), as genai's `tModel` writes
+  /// it for the Gemini API.
+  static String _modelResource(String model) =>
+      model.startsWith('models/') || model.startsWith('tunedModels/')
+          ? model
+          : 'models/$model';
+
+  /// The resource name of a cached content, as genai's
+  /// `tCachedContentName` writes it for the Gemini API.
+  static String _cachedContentResource(String name) =>
+      name.contains('/') ? name : 'cachedContents/$name';
+
+  /// [extra] merged into [base], maps recursively and the values of [extra]
+  /// winning: what genai's `recursiveMapMerge` does with `ExtraBody`. Neither
+  /// argument is changed.
+  static Map<String, dynamic> _mergeJson(
+    Map<String, dynamic> base,
+    Map<String, Object?> extra,
+  ) {
+    final result = Map<String, dynamic>.of(base);
+    extra.forEach((key, value) {
+      final existing = result[key];
+      result[key] = existing is Map && value is Map
+          ? _mergeJson(
+              Map<String, dynamic>.from(existing),
+              Map<String, Object?>.from(value),
+            )
+          : value;
+    });
+    return result;
+  }
+
+  /// Sends [body] to [url] and returns the JSON of the response.
+  ///
+  /// Throws a [CancelledException] when [cancelToken] fires first, and a
+  /// [GeminiException] for an error response, a timeout or a failed
+  /// transport (the last two retryable).
+  Future<Map<String, dynamic>> _post(
+    Uri url,
+    Map<String, dynamic> body, {
+    Map<String, String>? headers,
+    CancelToken? cancelToken,
+  }) async {
+    final encoded = jsonEncode(body);
 
     // Outside the try: using a disposed model is a programming error,
     // not a failed request.
     final client = _client;
 
+    final http.Response response;
     try {
-      final response = await client
-          .post(
-            url,
-            headers: headers,
-            body: jsonEncode(requestBody),
-          )
-          .timeout(config.timeout);
-
-      if (response.statusCode != 200) {
-        final errorBody = jsonDecode(response.body) as Map<String, dynamic>;
-        throw GeminiException.fromResponse(
-          response.statusCode,
-          errorBody,
-        );
-      }
-
-      return jsonDecode(response.body) as Map<String, dynamic>;
+      response = await sendRequest(
+        client,
+        url,
+        headers: _buildHeaders(headers),
+        body: encoded,
+        timeout: config.timeout,
+        cancelToken: cancelToken,
+      );
     } on TimeoutException {
-      throw GeminiException('Request timed out after ${config.timeout}');
-    } catch (e) {
-      if (e is GeminiException) rethrow;
-      throw GeminiException('Request failed: $e');
+      throw GeminiException(
+        'Request timed out after ${config.timeout}',
+        isRetryable: true,
+        isModelUnavailable: false,
+      );
+    } on CancelledException {
+      rethrow;
+    } catch (error) {
+      if (isInterrupt(error)) rethrow;
+      throw GeminiException(
+        'Request failed: $error',
+        cause: error,
+        isRetryable: true,
+        isModelUnavailable: false,
+      );
     }
-  }
 
-  /// Make streaming API request
-  Future<StreamReader<Message>> _makeStreamingRequest(
-    Map<String, dynamic> requestBody,
-    ChatModelOptions options,
-  ) async {
-    final model = options.model ?? config.defaultModel;
-    final url = Uri.parse(
-      '${config.baseUrl}/models/$model:streamGenerateContent?alt=sse',
+    if (response.statusCode != 200) {
+      throw GeminiException.fromHttp(response.statusCode, response.body);
+    }
+    try {
+      final json = jsonDecode(response.body);
+      if (json is Map<String, dynamic>) return json;
+    } on FormatException catch (error) {
+      throw GeminiException(
+        'Response is not JSON: ${error.message}',
+        statusCode: response.statusCode,
+        cause: error,
+      );
+    }
+    throw GeminiException(
+      'Response is not a JSON object',
+      statusCode: response.statusCode,
     );
-    final headers = _buildHeaders();
+  }
+
+  /// Sends [body] to [url] and returns the response once its headers are
+  /// there; the body is left to the caller. Throws like [_post].
+  Future<http.StreamedResponse> _openStream(
+    Uri url,
+    Map<String, dynamic> body, {
+    Map<String, String>? headers,
+    CancelToken? cancelToken,
+  }) async {
+    final encoded = jsonEncode(body);
 
     // Outside the try: using a disposed model is a programming error,
     // not a failed request.
     final client = _client;
 
+    final http.StreamedResponse response;
     try {
-      final request = http.Request('POST', url)
-        ..headers.addAll(headers)
-        ..body = jsonEncode(requestBody);
+      response = await sendStreamingRequest(
+        client,
+        url,
+        headers: _buildHeaders(headers),
+        body: encoded,
+        timeout: config.timeout,
+        cancelToken: cancelToken,
+      );
+    } on TimeoutException {
+      throw GeminiException(
+        'Request timed out after ${config.timeout}',
+        isRetryable: true,
+        isModelUnavailable: false,
+      );
+    } on CancelledException {
+      rethrow;
+    } catch (error) {
+      if (isInterrupt(error)) rethrow;
+      throw GeminiException(
+        'Streaming request failed: $error',
+        cause: error,
+        isRetryable: true,
+        isModelUnavailable: false,
+      );
+    }
 
-      final response = await client.send(request).timeout(config.timeout);
-
-      if (response.statusCode != 200) {
-        final body = await response.stream.bytesToString();
-        final errorBody = jsonDecode(body) as Map<String, dynamic>;
-        throw GeminiException.fromResponse(
-          response.statusCode,
-          errorBody,
+    if (response.statusCode != 200) {
+      final String errorBody;
+      try {
+        errorBody = await response.stream.bytesToString();
+      } catch (error) {
+        throw GeminiException(
+          'API request failed with status ${response.statusCode}',
+          statusCode: response.statusCode,
+          cause: error,
         );
       }
-
-      // Create stream reader from HTTP stream
-      return _createStreamReader(response.stream);
-    } on TimeoutException {
-      throw GeminiException('Request timed out after ${config.timeout}');
-    } catch (e) {
-      if (e is GeminiException) rethrow;
-      throw GeminiException('Streaming request failed: $e');
+      throw GeminiException.fromHttp(response.statusCode, errorBody);
     }
-  }
-
-  /// Create StreamReader from HTTP byte stream
-  StreamReader<Message> _createStreamReader(Stream<List<int>> byteStream) {
-    final (reader, writer) = pipe<Message>();
-
-    // Process stream in background
-    _processStream(byteStream, writer);
-
-    return reader;
-  }
-
-  /// Process SSE stream
-  Future<void> _processStream(
-    Stream<List<int>> byteStream,
-    StreamWriter<Message> writer,
-  ) async {
-    try {
-      final stream = byteStream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .where((line) => line.startsWith('data: '));
-
-      await for (final line in stream) {
-        final data = line.substring(6).trim(); // Remove 'data: ' prefix
-
-        if (data.isEmpty) continue;
-
-        try {
-          final json = jsonDecode(data) as Map<String, dynamic>;
-          final message = _responseParser.parseStreamChunk(json);
-          if (message != null) {
-            writer.send(message);
-          }
-        } catch (e) {
-          // Skip malformed chunks
-          continue;
-        }
-      }
-    } catch (e) {
-      writer.sendError(GeminiException('Stream processing failed: $e'));
-    } finally {
-      await writer.close();
-    }
+    return response;
   }
 
   /// Build request headers
-  Map<String, String> _buildHeaders() {
+  ///
+  /// [custom] headers go first; the headers the model manages win over them
+  /// (the request's header map ignores case). As in the genai SDK, the API
+  /// key header is only sent when there is a key.
+  Map<String, String> _buildHeaders([Map<String, String>? custom]) {
     return {
+      ...?custom,
       'Content-Type': 'application/json',
-      'x-goog-api-key': config.apiKey,
+      if (config.apiKey.isNotEmpty) 'x-goog-api-key': config.apiKey,
     };
   }
 
@@ -686,49 +1064,65 @@ class GeminiChatModel extends ToolCallingChatModel
   }
 }
 
-/// Gemini API exception
-class GeminiException implements ThreepioException {
-  GeminiException(
-    this.message, {
-    this.statusCode,
-    this.code,
-    this.status,
+/// A prefix cache made by [GeminiChatModel.createPrefixCache].
+///
+/// Port of genai `CachedContent`. Pass [name] as
+/// `GeminiRequestOptions.cachedContentName` to use it.
+@immutable
+final class GeminiCachedContent {
+  /// A cached content called [name].
+  const GeminiCachedContent({
+    required this.name,
+    this.displayName,
+    this.model,
+    this.createTime,
+    this.updateTime,
+    this.expireTime,
+    this.totalTokenCount,
   });
 
-  factory GeminiException.fromResponse(
-    int statusCode,
-    Map<String, dynamic> body,
-  ) {
-    final error = body['error'] as Map<String, dynamic>?;
-    if (error != null) {
-      return GeminiException(
-        error['message'] as String? ?? 'Unknown error',
-        statusCode: statusCode,
-        code: error['code'] as int?,
-        status: error['status'] as String?,
-      );
+  /// Reads the REST `CachedContent` object.
+  factory GeminiCachedContent.fromJson(Map<String, dynamic> json) {
+    DateTime? time(String key) {
+      final value = json[key];
+      return value is String ? DateTime.tryParse(value) : null;
     }
-    return GeminiException(
-      'API request failed with status $statusCode',
-      statusCode: statusCode,
+
+    final usage = json['usageMetadata'];
+    return GeminiCachedContent(
+      name: json['name'] as String? ?? '',
+      displayName: json['displayName'] as String?,
+      model: json['model'] as String?,
+      createTime: time('createTime'),
+      updateTime: time('updateTime'),
+      expireTime: time('expireTime'),
+      totalTokenCount:
+          usage is Map ? (usage['totalTokenCount'] as num?)?.toInt() : null,
     );
   }
 
-  @override
-  final String message;
-  final int? statusCode;
-  final int? code;
-  final String? status;
+  /// The resource name, `cachedContents/…`.
+  final String name;
+
+  /// The display name, if one was given.
+  final String? displayName;
+
+  /// The model the cache was made for (`models/…`).
+  final String? model;
+
+  /// When the cache was created.
+  final DateTime? createTime;
+
+  /// When the cache was last updated.
+  final DateTime? updateTime;
+
+  /// When the cache expires.
+  final DateTime? expireTime;
+
+  /// How many tokens the cache holds.
+  final int? totalTokenCount;
 
   @override
-  Object? get cause => null;
-
-  @override
-  String toString() {
-    final parts = ['GeminiException: $message'];
-    if (statusCode != null) parts.add('statusCode: $statusCode');
-    if (code != null) parts.add('code: $code');
-    if (status != null) parts.add('status: $status');
-    return parts.join(', ');
-  }
+  String toString() => 'GeminiCachedContent(name: $name, model: $model, '
+      'expireTime: $expireTime, totalTokenCount: $totalTokenCount)';
 }

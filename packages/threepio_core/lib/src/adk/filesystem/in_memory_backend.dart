@@ -174,7 +174,7 @@ final class InMemoryBackend implements FilesystemBackend {
     final isAbsolutePattern = request.pattern.startsWith('/');
     // Compiled at the first file, as eino's doublestar meets a bad pattern
     // only when it matches.
-    _GlobMatcher? glob;
+    GlobMatcher? glob;
     final result = <FileInfo>[];
 
     for (final MapEntry(key: filePath, value: entry) in _files.entries) {
@@ -191,7 +191,7 @@ final class InMemoryBackend implements FilesystemBackend {
             ? filePath.substring(1)
             : _withoutPrefix(filePath, '$basePath/');
       }
-      glob ??= _GlobMatcher(request.pattern);
+      glob ??= GlobMatcher(request.pattern);
       if (glob.matches(matchPath)) result.add(_infoOf(matchPath, entry));
     }
     result.sort((a, b) => a.path.compareTo(b.path));
@@ -243,7 +243,7 @@ final class InMemoryBackend implements FilesystemBackend {
           filePath,
     ];
     if (request.glob.isNotEmpty && candidates.isNotEmpty) {
-      final glob = _GlobMatcher(request.glob);
+      final glob = GlobMatcher(request.glob);
       final byPath =
           request.glob.contains('/') || request.glob.contains('**');
       candidates = [
@@ -407,12 +407,14 @@ final class InMemoryBackend implements FilesystemBackend {
 /// `**` segment, or with a `*` segment followed by the rest of the path; an
 /// absolute pattern never matches a relative path; and `a/**` also matches
 /// `a` itself.
-final class _GlobMatcher {
-  factory _GlobMatcher(String pattern) {
+/// Shared with `LocalFilesystemBackend`, which matches the same way.
+@internal
+final class GlobMatcher {
+  factory GlobMatcher(String pattern) {
     final relative = !pattern.startsWith('/');
     final translated = pattern.isEmpty ? '' : globSyntaxOf(pattern);
     if (translated.isEmpty) {
-      return _GlobMatcher._(relative, null, null, false, null);
+      return GlobMatcher._(relative, null, null, false, null);
     }
     final absolute = relative ? '/$translated' : translated;
     final directory = absolute.endsWith('/**') && absolute.length > 3
@@ -421,9 +423,9 @@ final class _GlobMatcher {
     // `*/rest`: the `*` can match the empty first segment of an absolute
     // path, whose remainder must then match `rest`.
     final starRest = relative && translated.startsWith('*/')
-        ? _GlobMatcher(pattern.substring(2))
+        ? GlobMatcher(pattern.substring(2))
         : null;
-    return _GlobMatcher._(
+    return GlobMatcher._(
       relative,
       _compile(absolute),
       directory,
@@ -432,7 +434,7 @@ final class _GlobMatcher {
     );
   }
 
-  _GlobMatcher._(
+  GlobMatcher._(
     this._relative,
     this._glob,
     this._directory,
@@ -450,7 +452,7 @@ final class _GlobMatcher {
   final bool _crossesRoot;
 
   /// For a relative pattern `*/rest`: the matcher of `rest`.
-  final _GlobMatcher? _starRest;
+  final GlobMatcher? _starRest;
 
   static Glob _compile(String pattern) {
     try {

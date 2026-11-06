@@ -5,10 +5,25 @@ import '../../../../schema/tool_info.dart';
 /// blocks so they can be echoed back on the next request.
 const String reasoningDetailsKey = 'reasoning_details';
 
+/// Key under `MessageOutputPart.extra` of a generated audio part holding the
+/// audio's id, which is sent back to refer to it (eino-ext
+/// `openai-audio-id`).
+const String openAIGeneratedAudioIdKey = 'openai-audio-id';
+
 /// Converters between Threepio schema and OpenAI API format
 class OpenAIConverters {
   /// Convert Message to OpenAI message format
-  static Map<String, dynamic> messageToOpenAI(Message message) {
+  ///
+  /// With [goCompatible] (the OpenAI and OpenAI-compatible models; OpenRouter
+  /// keeps the older form) an assistant message also carries what eino-ext's
+  /// `libs/acl/openai` sends: its `reasoning_content`, the text parts of
+  /// `assistantGenMultiContent` as content parts when it has no plain
+  /// content, and the id of a generated audio (`audio.id`) in place of its
+  /// content. Parts eino-ext rejects there are skipped instead.
+  static Map<String, dynamic> messageToOpenAI(
+    Message message, {
+    bool goCompatible = false,
+  }) {
     final result = <String, dynamic>{
       'role': _roleToOpenAI(message.role),
     };
@@ -53,7 +68,44 @@ class OpenAIConverters {
       result['tool_call_id'] = message.toolCallId;
     }
 
+    if (goCompatible && message.role == RoleType.assistant) {
+      _addGeneratedContent(message, result);
+    }
+
     return result;
+  }
+
+  /// The parts of an assistant message eino-ext's `libs/acl/openai` sends
+  /// back (`buildMessageFromAssistantGenMultiContent`).
+  static void _addGeneratedContent(
+    Message message,
+    Map<String, dynamic> result,
+  ) {
+    var reasoning = message.reasoningContent ?? '';
+    final parts = message.assistantGenMultiContent ?? const [];
+    final textParts = <Map<String, dynamic>>[];
+    String? audioId;
+    for (final part in parts) {
+      switch (part.type) {
+        case ChatMessagePartType.text:
+          textParts.add({'type': 'text', 'text': part.text ?? ''});
+        case ChatMessagePartType.reasoning:
+          final text = part.reasoning?.text ?? '';
+          if (text.isNotEmpty) reasoning = text;
+        case ChatMessagePartType.audioUrl:
+          final id = part.extra?[openAIGeneratedAudioIdKey];
+          if (id is String && id.isNotEmpty) audioId ??= id;
+        default:
+          break;
+      }
+    }
+    if (reasoning.isNotEmpty) result['reasoning_content'] = reasoning;
+    if (audioId != null) {
+      result.remove('content');
+      result['audio'] = {'id': audioId};
+    } else if (message.content.isEmpty && textParts.isNotEmpty) {
+      result['content'] = textParts;
+    }
   }
 
   /// Convert OpenAI message to Message
@@ -192,11 +244,17 @@ class OpenAIConverters {
           'text': part.text,
         };
       case ChatMessagePartType.imageUrl:
+        final image = part.image;
+        if (image == null) {
+          throw ArgumentError(
+            "the 'image' field is required for parts of type 'image_url'",
+          );
+        }
         return {
           'type': 'image_url',
           'image_url': {
-            'url': part.image!.common.url,
-            if (part.image!.detail != null) 'detail': part.image!.detail!.name,
+            'url': _urlOrDataUrl(image.common, 'image'),
+            if (image.detail != null) 'detail': image.detail!.name,
           },
         };
       case ChatMessagePartType.fileUrl:
@@ -216,9 +274,43 @@ class OpenAIConverters {
           },
         };
       case ChatMessagePartType.audioUrl:
+        final audio = part.audio?.common;
+        if (audio == null) {
+          throw ArgumentError(
+            "the 'audio' field is required for parts of type 'audio_url'",
+          );
+        }
+        if (audio.base64Data != null) {
+          final format = _audioFormats[audio.mimeType];
+          if (format == null) {
+            throw ArgumentError(
+              "the 'format' field is required when type is audio_url: "
+              'unsupported audio MIME type ${audio.mimeType}',
+            );
+          }
+          return {
+            'type': 'input_audio',
+            'input_audio': {'data': audio.base64Data, 'format': format},
+          };
+        }
+        if (audio.url != null) {
+          throw ArgumentError(
+            'for user role, audio message part does not accept URL, only '
+            'base64 data is supported',
+          );
+        }
+        throw ArgumentError('audio message part must have url or base64 data');
       case ChatMessagePartType.videoUrl:
-        throw UnimplementedError(
-            'OpenAI does not support ${part.type} in standard API');
+        final video = part.video?.common;
+        if (video == null) {
+          throw ArgumentError(
+            "the 'video' field is required for parts of type 'video_url'",
+          );
+        }
+        return {
+          'type': 'video_url',
+          'video_url': {'url': _urlOrDataUrl(video, 'video')},
+        };
       case ChatMessagePartType.reasoning:
       case ChatMessagePartType.toolSearchResult:
         throw UnsupportedError(
@@ -227,11 +319,44 @@ class OpenAIConverters {
     }
   }
 
+  /// The URL of a media part, or a data URL made of its base64 data and MIME
+  /// type (eino-ext requires the MIME type with base64 data).
+  static String _urlOrDataUrl(MessagePartCommon common, String kind) {
+    if (common.url != null) return common.url!;
+    final data = common.base64Data;
+    if (data == null) {
+      throw ArgumentError('$kind message part must have url or base64 data');
+    }
+    final mimeType = common.mimeType;
+    if (mimeType == null || mimeType.isEmpty) {
+      throw ArgumentError('mimetype is required when using base64data');
+    }
+    return 'data:$mimeType;base64,$data';
+  }
+
+  /// Audio MIME types → the `input_audio` formats OpenAI accepts. eino-ext's
+  /// table maps `audio/mpeg` to `wav` and `audio/x-wav` to `mp3`, which is
+  /// swapped; this one is not.
+  static const _audioFormats = {
+    'audio/wav': 'wav',
+    'audio/vnd.wav': 'wav',
+    'audio/vnd.wave': 'wav',
+    'audio/wave': 'wav',
+    'audio/x-pn-wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/mpeg': 'mp3',
+    'audio/mpeg3': 'mp3',
+    'audio/x-mpeg-3': 'mp3',
+    'audio/mp3': 'mp3',
+  };
+
   /// Convert ToolCall to OpenAI format
   static Map<String, dynamic> _toolCallToOpenAI(ToolCall toolCall) {
     return {
       'id': toolCall.id,
-      'type': toolCall.type,
+      // A call assembled from stream fragments may carry no type; the API
+      // only knows function calls (eino-ext always sends `function`).
+      'type': toolCall.type.isEmpty ? 'function' : toolCall.type,
       'function': {
         'name': toolCall.function.name,
         'arguments': toolCall.function.arguments,

@@ -22,7 +22,12 @@ import '../streaming/stream_reader.dart';
 /// context still reports to the handlers of `GlobalCallbacks`, as every call
 /// does in Go, where there is always a context.
 final class ModelCallCallbacks {
-  ModelCallCallbacks._(this._ctx, this._config);
+  ModelCallCallbacks._(this._ctx, this._config, this._outputExtra);
+
+  /// What a provider adds to `ModelCallbackOutput.extra` for a message
+  /// (eino-ext providers fill `model.CallbackOutput.Extra`, Ollama with its
+  /// metrics for example). `null` adds nothing.
+  final Map<String, Object?>? Function(Message message)? _outputExtra;
 
   /// Sets the callbacks of a call up, or returns `null` when nobody listens.
   ///
@@ -32,6 +37,7 @@ final class ModelCallCallbacks {
     ChatModelOptions options, {
     required String typeName,
     String? defaultModel,
+    Map<String, Object?>? Function(Message message)? outputExtra,
   }) {
     final base = options.runContext ??
         (GlobalCallbacks.isEmpty ? null : RunContext.background());
@@ -41,6 +47,7 @@ final class ModelCallCallbacks {
     return ModelCallCallbacks._(
       ctx,
       ModelCallbackConfig.fromOptions(options, defaultModel: defaultModel),
+      outputExtra,
     );
   }
 
@@ -55,9 +62,14 @@ final class ModelCallCallbacks {
     required List<Message> input,
     required Future<Message> Function() generate,
     String? defaultModel,
+    Map<String, Object?>? Function(Message message)? outputExtra,
   }) async {
-    final callbacks =
-        of(options, typeName: typeName, defaultModel: defaultModel);
+    final callbacks = of(
+      options,
+      typeName: typeName,
+      defaultModel: defaultModel,
+      outputExtra: outputExtra,
+    );
     if (callbacks == null) return generate();
 
     await callbacks._start(input, options);
@@ -82,9 +94,14 @@ final class ModelCallCallbacks {
     required List<Message> input,
     required Future<StreamReader<Message>> Function() stream,
     String? defaultModel,
+    Map<String, Object?>? Function(Message message)? outputExtra,
   }) async {
-    final callbacks =
-        of(options, typeName: typeName, defaultModel: defaultModel);
+    final callbacks = of(
+      options,
+      typeName: typeName,
+      defaultModel: defaultModel,
+      outputExtra: outputExtra,
+    );
     if (callbacks == null) return stream();
 
     await callbacks._start(input, options);
@@ -118,5 +135,6 @@ final class ModelCallCallbacks {
         message: message,
         config: _config,
         tokenUsage: message.responseMeta?.usage,
+        extra: _outputExtra?.call(message),
       );
 }

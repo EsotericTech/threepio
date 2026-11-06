@@ -8,6 +8,64 @@ enum ReasoningEffort { none, minimal, low, medium, high, xhigh }
 /// Output modalities a model may produce (OpenRouter `modalities`).
 enum OutputModality { text, image, audio }
 
+/// How much of the reasoning OpenRouter summarises (`reasoning.summary`).
+///
+/// Port of eino-ext `openrouter.Summary`.
+enum ReasoningSummary { auto, concise, detailed }
+
+/// How long a prompt-cache entry lives (`cache_control.ttl`).
+///
+/// Port of eino-ext `openrouter.CacheControlTTL`.
+enum OpenRouterCacheControlTtl {
+  /// Five minutes, the default.
+  fiveMinutes('5m'),
+
+  /// One hour.
+  oneHour('1h');
+
+  const OpenRouterCacheControlTtl(this.wireValue);
+
+  /// The value sent in `ttl`.
+  final String wireValue;
+}
+
+/// A prompt-cache breakpoint (`cache_control`), always of type `ephemeral`.
+///
+/// Port of eino-ext `openrouter.CacheControl`. Set it for the whole request
+/// with [OpenRouterRequestOptions.cacheControl], or on single messages and
+/// parts with the `withOpenRouterCacheControl` extensions
+/// (`openrouter_cache_control.dart`).
+@immutable
+class OpenRouterCacheControl {
+  const OpenRouterCacheControl({
+    this.ttl = OpenRouterCacheControlTtl.fiveMinutes,
+  });
+
+  /// Reads the JSON form; `null` for anything else.
+  static OpenRouterCacheControl? fromJson(Object? json) {
+    if (json is! Map || json['type'] != 'ephemeral') return null;
+    final ttl = OpenRouterCacheControlTtl.values
+        .where((t) => t.wireValue == json['ttl'])
+        .firstOrNull;
+    return OpenRouterCacheControl(
+      ttl: ttl ?? OpenRouterCacheControlTtl.fiveMinutes,
+    );
+  }
+
+  /// How long the entry lives.
+  final OpenRouterCacheControlTtl ttl;
+
+  /// The `cache_control` object.
+  Map<String, Object?> toJson() => {'type': 'ephemeral', 'ttl': ttl.wireValue};
+
+  @override
+  bool operator ==(Object other) =>
+      other is OpenRouterCacheControl && other.ttl == ttl;
+
+  @override
+  int get hashCode => ttl.hashCode;
+}
+
 /// Provider-routing preferences (OpenRouter `provider` object).
 @immutable
 class ProviderRouting {
@@ -61,6 +119,10 @@ class ResponseFormat {
   /// Plain JSON object output without a schema.
   const ResponseFormat.jsonObject() : _json = const {'type': 'json_object'};
 
+  /// Plain text output, the default (eino-ext
+  /// `ChatCompletionResponseFormatTypeText`).
+  const ResponseFormat.text() : _json = const {'type': 'text'};
+
   /// JSON constrained by [schema] (an object schema). [strict] asks the
   /// provider to enforce the schema exactly.
   factory ResponseFormat.jsonSchema({
@@ -110,6 +172,13 @@ class OpenRouterRequestOptions {
     this.parallelToolCalls,
     this.includeUsage = true,
     this.extra,
+    this.models,
+    this.metadata,
+    this.reasoningEnabled,
+    this.reasoningSummary,
+    this.cacheControl,
+    this.logprobs,
+    this.topLogprobs,
   });
 
   /// Reasoning effort; `none` disables reasoning where supported.
@@ -140,15 +209,43 @@ class OpenRouterRequestOptions {
   /// Any other request fields, merged last.
   final Map<String, dynamic>? extra;
 
+  /// Models to fall back to, in order, when the first one fails (`models`;
+  /// eino-ext `WithModels`).
+  final List<String>? models;
+
+  /// Key-value pairs stored with the generation (`metadata`; eino-ext
+  /// `WithMetadata`).
+  final Map<String, String>? metadata;
+
+  /// Turns reasoning on or off (`reasoning.enabled`).
+  final bool? reasoningEnabled;
+
+  /// How the reasoning is summarised (`reasoning.summary`).
+  final ReasoningSummary? reasoningSummary;
+
+  /// A cache breakpoint for the whole request (`cache_control`; eino-ext
+  /// `WithCacheControl`).
+  final OpenRouterCacheControl? cacheControl;
+
+  /// Return the log probabilities of the output tokens (`logprobs`).
+  final bool? logprobs;
+
+  /// How many most likely tokens to return per position (`top_logprobs`).
+  final int? topLogprobs;
+
   /// Request-body fields for these options.
   Map<String, dynamic> toRequestFields() => {
         if (reasoningEffort != null ||
             reasoningMaxTokens != null ||
-            excludeReasoning != null)
+            excludeReasoning != null ||
+            reasoningEnabled != null ||
+            reasoningSummary != null)
           'reasoning': {
             if (reasoningEffort != null) 'effort': reasoningEffort!.name,
             if (reasoningMaxTokens != null) 'max_tokens': reasoningMaxTokens,
             if (excludeReasoning != null) 'exclude': excludeReasoning,
+            if (reasoningEnabled != null) 'enabled': reasoningEnabled,
+            if (reasoningSummary != null) 'summary': reasoningSummary!.name,
           },
         if (modalities != null)
           'modalities': modalities!.map((m) => m.name).toList(),
@@ -156,6 +253,11 @@ class OpenRouterRequestOptions {
         if (responseFormat != null) 'response_format': responseFormat!.toJson(),
         if (parallelToolCalls != null) 'parallel_tool_calls': parallelToolCalls,
         if (includeUsage) 'usage': {'include': true},
+        if (models != null) 'models': models,
+        if (metadata != null) 'metadata': metadata,
+        if (cacheControl != null) 'cache_control': cacheControl!.toJson(),
+        if (logprobs != null) 'logprobs': logprobs,
+        if (topLogprobs != null) 'top_logprobs': topLogprobs,
         ...?extra,
       };
 
