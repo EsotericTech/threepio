@@ -33,6 +33,12 @@
 /// The library also exports what its signatures need: `compose.dart` (and
 /// with it the schema types, streams and component contracts).
 ///
+/// The built-in middlewares (port of `adk/middlewares`): put them in
+/// `ChatModelAgentConfig.handlers`, in this order when several are used:
+/// [PatchToolCallsMiddleware], [SummarizationMiddleware],
+/// [AgentsMdMiddleware], [ToolReductionMiddleware], [FilesystemMiddleware],
+/// [SkillMiddleware], [PlanTaskMiddleware] ([ToolSearchMiddleware] anywhere).
+///
 /// Not ported, because Eino marks it as not recommended: agent transfer
 /// (sub-agents, `TransferToAgentAction`, `ExitTool`, run paths, `OutputKey`)
 /// and the workflow agents; use [AgentTool] instead.
@@ -103,6 +109,72 @@ export 'src/adk/eino/turn_loop.dart'
 export 'src/adk/filesystem/backend.dart';
 export 'src/adk/filesystem/in_memory_backend.dart' show InMemoryBackend;
 export 'src/adk/filesystem/requests.dart';
+export 'src/adk/middlewares/agents_md/agents_md.dart'
+    show AgentsMdMiddleware, AgentsMdWarningCallback;
+export 'src/adk/middlewares/filesystem/filesystem.dart'
+    show FilesystemMiddleware, FilesystemToolConfig, FilesystemToolDescriptions;
+export 'src/adk/middlewares/patch_tool_calls/patch_tool_calls.dart'
+    show PatchToolCallsMiddleware, PatchedToolResult, PatchedToolResultGenerator;
+export 'src/adk/middlewares/plan_task/plan_task.dart'
+    show DeleteRequest, PlanTaskBackend, PlanTaskMiddleware;
+export 'src/adk/middlewares/reduction/reduction.dart'
+    show
+        ClearHandler,
+        ClearMessageRewriter,
+        ClearPostProcess,
+        ClearResult,
+        OffloadFilePathGenerator,
+        ReductionTokenCounter,
+        ToolDetail,
+        ToolReductionConfig,
+        ToolReductionMiddleware,
+        TruncHandler,
+        TruncResult;
+export 'src/adk/middlewares/skill/filesystem_backend.dart' show FilesystemSkillBackend;
+export 'src/adk/middlewares/skill/skill.dart'
+    show
+        AgentHub,
+        AgentHubOptions,
+        ModelHub,
+        Skill,
+        SkillBackend,
+        SkillContentBuilder,
+        SkillContextMode,
+        SkillForkMessagesBuilder,
+        SkillForkResultFormatter,
+        SkillFrontMatter,
+        SkillMiddleware,
+        SkillSubAgentInput,
+        SkillSubAgentOutput,
+        SkillSystemPromptBuilder,
+        SkillToolDescriptionBuilder,
+        SkillToolParamsBuilder;
+export 'src/adk/middlewares/summarization/customized_action.dart'
+    show
+        AfterSummarizeAction,
+        BeforeSummarizeAction,
+        GenerateSummaryAction,
+        GenerateSummaryPhase,
+        SummarizationAction,
+        SummarizationActionType;
+export 'src/adk/middlewares/summarization/finalizer_builder.dart'
+    show PreserveSkillsConfig, SummaryFinalizerBuilder, defaultSummaryFinalize;
+export 'src/adk/middlewares/summarization/summarization.dart'
+    show
+        SummarizationCallback,
+        SummarizationFailoverConfig,
+        SummarizationFailoverContext,
+        SummarizationMiddleware,
+        SummarizationModelInputBuilder,
+        SummarizationRetryConfig,
+        SummarizationTokenCounter,
+        SummarizationTrigger,
+        SummaryAttemptPredicate,
+        SummaryBackoff,
+        SummaryFailoverModelGetter,
+        SummaryFinalizer,
+        TokenCounterInput;
+export 'src/adk/middlewares/tool_search/tool_search.dart' show ToolSearchMiddleware;
 export 'src/adk/tools/approvable_tool.dart' show ApprovableTool, ApprovalInfo, ApprovalResult;
 export 'src/adk/tools/graph_tool.dart' show GraphTool, GraphToolOptions;
 export 'src/adk/tools/follow_up_tool.dart'

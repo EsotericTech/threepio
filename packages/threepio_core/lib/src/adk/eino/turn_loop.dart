@@ -1077,8 +1077,9 @@ final class TurnLoop<T> {
   /// With [PushOption.preempt] or [PushOption.preemptTimeout] the push also
   /// cancels the turn it sees; `resolved` completes once that cancel was
   /// submitted, or at once when there is no such turn (also before [run]).
-  /// For any other push `resolved` is complete already.
-  ({bool accepted, Future<void> resolved}) push(
+  /// For any other push, and for a push that is not accepted, `resolved` is
+  /// `null`, as eino returns a nil channel there.
+  ({bool accepted, Future<void>? resolved}) push(
     T item, {
     List<PushOption<T>> options = const [],
   }) {
@@ -1090,14 +1091,12 @@ final class TurnLoop<T> {
     return _pushWithConfig(item, config);
   }
 
-  static final Future<void> _resolved = Future.value();
-
-  ({bool accepted, Future<void> resolved}) _rejected(T item) {
+  ({bool accepted, Future<void>? resolved}) _rejected(T item) {
     _appendLate(item);
-    return (accepted: false, resolved: _resolved);
+    return (accepted: false, resolved: null);
   }
 
-  ({bool accepted, Future<void> resolved}) _pushWithStrategy(
+  ({bool accepted, Future<void>? resolved}) _pushWithStrategy(
     T item,
     _PushConfig<T> strategyConfig,
   ) {
@@ -1116,7 +1115,7 @@ final class TurnLoop<T> {
 
       if (!config.preempt) {
         if (!_buffer.trySend(item)) return _rejected(item);
-        return (accepted: true, resolved: _resolved);
+        return (accepted: true, resolved: null);
       }
       if (_stopped) return _rejected(item);
       if (!_buffer.trySend(item)) return _rejected(item);
@@ -1126,14 +1125,14 @@ final class TurnLoop<T> {
     }
   }
 
-  ({bool accepted, Future<void> resolved}) _pushWithConfig(
+  ({bool accepted, Future<void>? resolved}) _pushWithConfig(
     T item,
     _PushConfig<T> config,
   ) {
     if (_stopped) return _rejected(item);
     if (!config.preempt) {
       if (!_buffer.trySend(item)) return _rejected(item);
-      return (accepted: true, resolved: _resolved);
+      return (accepted: true, resolved: null);
     }
     final snapshot = _preemptCtrl.beginPush();
     try {

@@ -40,6 +40,7 @@ import 'interrupt.dart';
 import 'middleware_context.dart';
 import 'react_graph.dart';
 import 'run_options.dart';
+import 'tool_info_context.dart';
 
 /// Effectively no limit on the steps of the agent's graph; `maxIterations`
 /// bounds the loop (eino uses `math.MaxInt`).
@@ -338,7 +339,7 @@ final class ChatModelAgent implements ResumableAgent, TypedComponent {
         tools: List.of(agent.tools),
         toolMiddlewares: defaults.toolMiddlewares,
         returnDirectly: Set.of(agent.returnDirectly),
-        toolInfos: await _toolInfosOf(agent.tools),
+        toolInfos: await _toolInfosOf(agent.tools, ctx),
         toolSearchTool: agent.toolSearchTool,
         toolUpdated: true,
         rebuildGraph:
@@ -644,8 +645,13 @@ List<CallOption> _composeOptionsOf(ChatModelAgentRunOptions options) {
   ];
 }
 
-Future<List<ToolInfo>> _toolInfosOf(List<BaseTool> tools) async => [
-      for (final tool in tools) await tool.info(),
+/// The infos of [tools]; with [ctx], a tool that can build its info from
+/// the run's context does (Go passes the context to every `Info`).
+Future<List<ToolInfo>> _toolInfosOf(List<BaseTool> tools, [RunContext? ctx]) async => [
+      for (final tool in tools)
+        await (ctx != null && tool is RunContextToolInfo
+            ? (tool as RunContextToolInfo).infoWithContext(ctx)
+            : tool.info()),
     ];
 
 /// The cancel context of a run and whether the agent owns it (marks it done

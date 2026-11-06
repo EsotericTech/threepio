@@ -20,7 +20,8 @@ Eino `compose` package: runnables, lambdas, graphs, chains, workflows and the
 tools node, with interrupt, checkpoint and resume, and the core of the Eino
 `adk` package (agents, the runner, interrupt and resume of agents,
 middlewares, retry and failover of the model), on which the Kortney runtime
-now runs.
+now runs, its run control (cancel, the turn loop, the filesystem backend) and
+its eight built-in middlewares.
 
 ### Fixed
 
@@ -157,6 +158,49 @@ now runs.
   - `GraphTool.invokable<I, O>` / `GraphTool.streamable<I, O>`: a compose
     graph, chain or workflow as a tool of an agent, with interrupt and resume
     of the graph inside; `GraphToolOptions` for its call options.
+- **ADK middlewares** (port of Eino `adk/middlewares`), in
+  `package:threepio_core/adk.dart`; each is a `ChatModelAgentMiddleware` for
+  `ChatModelAgentConfig.handlers`, with Eino's English and Chinese prompts
+  copied verbatim (the language of `setAdkLanguage`):
+  - `PatchToolCallsMiddleware` (`PatchedToolResult`,
+    `PatchedToolResultGenerator`): answers tool calls that have no tool
+    message before the model sees the history.
+  - `AgentsMdMiddleware`: puts agents.md files (with `@path` imports, at most
+    five levels, each file once, byte budgets for all files and for each
+    file) in front of the conversation as one user message, loaded once per
+    run.
+  - `SummarizationMiddleware` (`SummarizationTrigger`,
+    `SummarizationRetryConfig`, `SummarizationFailoverConfig`,
+    `SummarizationFailoverContext`, `TokenCounterInput`,
+    `SummarizationAction` events): replaces a history that is over a token
+    or message count by a summary written by a model, keeping the user's
+    latest messages; `summarize(ctx, state)` for doing it at any time;
+    `SummaryFinalizerBuilder` with `preserveSkills(PreserveSkillsConfig)` and
+    `defaultSummaryFinalize` for the new history.
+  - `ToolReductionMiddleware` (`ToolReductionConfig`, `ToolDetail`,
+    `TruncResult`, `ClearResult`): cuts large tool results as they come
+    (streams too) and offloads them to a `FileWriteBackend`, and clears old
+    tool results when the conversation gets too long; handlers per tool.
+  - `FilesystemMiddleware` (`FilesystemToolConfig`,
+    `FilesystemToolDescriptions`): the tools `ls`, `read_file` (or a
+    multimodal one for images and PDF pages), `write_file`, `edit_file`,
+    `glob`, `grep` and `execute` (with a `Shell` or `StreamingShell`) on a
+    `FilesystemBackend`.
+  - `SkillMiddleware` (`SkillBackend`, `FilesystemSkillBackend`, `Skill`,
+    `SkillFrontMatter`, `SkillContextMode`, `AgentHub`, `ModelHub`,
+    `SkillSubAgentInput`, `SkillSubAgentOutput`): a `skill` tool that loads
+    SKILL.md files and runs a skill inline, or in a sub-agent with or without
+    the conversation.
+  - `PlanTaskMiddleware` (`PlanTaskBackend`, `DeleteRequest`): the tools
+    `TaskCreate`, `TaskGet`, `TaskUpdate` and `TaskList` over one JSON file
+    per task, with dependencies (cycles refused).
+  - `ToolSearchMiddleware.create(dynamicTools:, useModelToolSearch:)`: hides
+    tools until the model finds them with `tool_search`, or hands them to a
+    model with native tool search.
+- **Filesystem**: `FileReadBackend` and `FileWriteBackend`, the read and write
+  halves of `FilesystemBackend` (which implements both), and
+  `FileNotFoundException`, which a backend throws for a missing file
+  (`InMemoryBackend` does).
 - **Langfuse**: the observation of an agent ends with the messages and custom
   outputs of its events; retry notifications of its model
   (`WillRetryException`) are kept as `eino_retry_events` metadata instead of
@@ -501,6 +545,15 @@ now runs.
 - The engine's `ChatModelAgent` installs a tool middleware of its own inside
   the user's tool middlewares; it changes nothing unless the run was started
   with `withCancel()`.
+- New dependency: `yaml` (the front matter of SKILL.md files); it was already
+  a transitive dependency.
+- `TurnLoop.push` returns `resolved` as `Future<void>?`: `null` for a push
+  that does not preempt and for a push that is not accepted, where Eino
+  returns a nil channel (it was an already completed future). Code that
+  awaited it keeps working (`await null` completes); code that passes it on
+  as a `Future<void>` adds `!` for a preemptive push.
+- `InMemoryBackend` throws `FileNotFoundException` (a `ThreepioException`
+  with the same message) for a missing file.
 
 - **Kortney runtime** (`Runner`, `ChatModelAgent`, `AgentHandler`,
   `ContextualTool` of the umbrella library): the loop now runs on the
@@ -766,9 +819,9 @@ now runs.
     `StreamCanceledException` through: the agent ends tool streams with it
     on an immediate cancel (its own middleware sits inside the user's).
   - *TurnLoop*: checkpoints are JSON, items go through `TypeRegistry` (JSON
-    values or registered types). `push` returns `resolved`, an already
-    completed future for a push that does not preempt (Go returns a nil
-    channel). Push strategies are synchronous. A preempt or stop takes effect
+    values or registered types). `push` returns `resolved`, which is `null`
+    where Go returns a nil channel (a push that does not preempt, or is not
+    accepted). Push strategies are synchronous. A preempt or stop takes effect
     through a watcher that runs in a microtask after the push or stop call.
     A loop whose context is cancelled exits with a `CancelledException`
     (Go: `context.Canceled` or `context.DeadlineExceeded`). Invalid
@@ -788,6 +841,62 @@ now runs.
   - *GraphTool* (an eino-examples package in Go) takes `params` and a
     `fromJson` function where Go infers the schema from the input struct; the
     graph's checkpoint in the tool's interrupt state is Base64.
+- **Differences from Eino in the middleware port.**
+  - *Not ported*, because Eino deprecates them: the filesystem middleware's
+    `Config`/`NewMiddleware` path with its large tool result offloading (use
+    `ToolReductionMiddleware`) and the `Custom*ToolDesc` fields (use
+    `FilesystemToolConfig.desc`); `reduction.NewClearToolResult` and
+    `NewToolResultMiddleware`; `skill.New` and `Config.UseChinese`;
+    `patchtoolcalls.Config.PatchedContentGenerator`. The agentic-message
+    variants (`NewTyped[*schema.AgenticMessage]`) belong to the agentic port.
+  - *Construction*: a configuration Go's `New` rejects makes the constructor
+    throw `ArgumentError` with Go's text. `ToolSearchMiddleware.create` is
+    asynchronous because a tool's `info()` is. `SkillMiddleware` builds a
+    custom system prompt once, with a background context (Go: the context
+    given to `New`).
+  - *Missing files*: the agents.md middleware skips a file whose read throws
+    `FileNotFoundException` (Go: an error wrapping `os.ErrNotExist`); since
+    `InMemoryBackend` throws it, a missing file is a warning with that
+    backend too (Eino's in-memory backend does not wrap `os.ErrNotExist`, so
+    the same setup fails in Go).
+  - *Lengths* (budgets, truncation points, token estimates) are UTF-8 byte
+    counts, as in Go. The default token estimators measure a tool the way Go
+    does (its name and description, not its parameters).
+  - *`SkillMiddleware.wrapModel`* is synchronous in Dart: the model a skill
+    switched to is asked of the `ModelHub` when it is called, so a hub
+    failure surfaces from that call.
+  - *Errors* are thrown (`ThreepioException` with Go's text, the wrapped
+    error as `cause`). The summarization middleware's attempts still treat a
+    model failure as a value that `shouldRetry`/`shouldFailover` decide on,
+    as Go does.
+  - *Messages are immutable*: where Go edits messages in place (the clear
+    phase of the reduction middleware, the summary's content type), the Dart
+    port puts changed copies in the state's message list.
+  - *Filesystem tools*: the parameter schemas Go infers from struct tags are
+    written out (same names, descriptions and required fields; `replace_all`
+    has no `default: false`, which `ParameterInfo` cannot express). `grep`
+    sorts by path and line with a stable sort, as Go's `sort.SliceStable`.
+    `FilesystemMiddleware`'s `customSystemPrompt` has no default text, as in
+    Eino v0.9.22. The streaming `execute` tool releases the command's stream
+    when its consumer closes early.
+  - *Tool arguments* are decoded with exact key names (Go's `encoding/json`
+    also accepts other capitalisations) and accept a whole-number float for
+    an integer field.
+  - *Run context of tool infos*: Dart's `BaseTool.info()` takes no context.
+    The skill tool also implements an internal context-aware variant, which
+    the `ChatModelAgent` uses for the tools middlewares add, so its skill
+    list is built with the run's context (session values) as in Go.
+  - *Reduction history*: within a run the cleared results stay in the
+    agent's state; Go also edits the caller's message objects in place, so a
+    caller who feeds the original history to a new run gets it cleared (and
+    offloaded) again in Dart. Carry the history forward from the agent's
+    final state.
+  - *Tool search, model-native mode without static tools*: the tools the
+    model is told about stay empty on later calls; in Go a nil list makes
+    the engine refill it with every tool.
+  - *Summarization events* register `SummarizationAction` with
+    `TypeRegistry` when a `SummarizationMiddleware` is created (Go: at
+    package initialisation).
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

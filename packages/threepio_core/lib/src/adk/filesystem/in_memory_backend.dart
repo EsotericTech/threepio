@@ -100,7 +100,7 @@ final class InMemoryBackend implements FilesystemBackend {
     final filePath = normalizePath(request.filePath);
     final entry = _files[filePath];
     if (entry == null) {
-      throw ThreepioException('file not found: $filePath');
+      throw FileNotFoundException(filePath);
     }
 
     // 1-based offset to a 0-based line index; below 1 means the first line.
@@ -202,7 +202,7 @@ final class InMemoryBackend implements FilesystemBackend {
     final filePath = normalizePath(request.filePath);
     final entry = _files[filePath];
     if (entry == null) {
-      throw ThreepioException('file not found: $filePath');
+      throw FileNotFoundException(filePath);
     }
     final old = request.oldString;
     if (old.isEmpty) {

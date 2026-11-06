@@ -948,10 +948,8 @@ void main() {
     expect(genResumeCalledDuringStrategy, isFalse,
         reason: 'GenResume should wait for in-flight PushStrategy to finish');
     expect(pushed.accepted, isTrue);
-    // Go: a nil ack; here a future that is complete already.
-    final acked = _completionOf(pushed.resolved);
-    await Future<void>.delayed(Duration.zero);
-    expect(acked(), isTrue);
+    // Go: assert.Nil(t, ack) — a push without preempt has no `resolved`.
+    expect(pushed.resolved, isNull);
 
     store.gate!.complete();
     final exit = await loop.wait();

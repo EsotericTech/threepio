@@ -430,7 +430,7 @@ void main() {
             ],
           );
           if (r.accepted) {
-            await _waitOrFail(r.resolved, 'ack channel not closed within timeout');
+            await _waitOrFail(r.resolved!, 'ack channel not closed within timeout');
           }
         }),
     ]);
@@ -486,7 +486,7 @@ void main() {
 
     final r = loop.push('between-turns', options: [PushOption.preempt(_anySafePoint)]);
     expect(r.accepted, isTrue);
-    await _waitOrFail(r.resolved, 'ack should be closed');
+    await _waitOrFail(r.resolved!, 'ack should be closed');
     expect(cancelCount, 0, reason: 'between-turn preempt must not submit cancel');
 
     await _waitOrFail(secondTurnDone.future, 'between-turn item was not processed');
@@ -845,9 +845,9 @@ void main() {
       ],
     );
     expect(r.accepted, isTrue);
-    // Go: the ack is nil since the strategy returned no preempt; a Dart push
-    // without preempt returns an already-completed `resolved`.
-    await _waitOrFail(r.resolved, 'resolved should be complete');
+    // Go: assert.Nil(t, ack, "ack should be nil since strategy returned no
+    // preempt").
+    expect(r.resolved, isNull, reason: 'ack should be nil since strategy returned no preempt');
 
     await _waitOrFail(agentDone.future, 'agent did not complete normally');
     expect(agentCancelled, isFalse);
@@ -887,8 +887,10 @@ void main() {
       ],
     );
     expect(r.accepted, isTrue);
-    // Go: the ack is nil (no preempt); Dart's `resolved` is complete.
-    await _waitOrFail(r.resolved, 'resolved should be complete');
+    // Go: assert.Nil(t, ack, "ack should be nil since nested strategy was
+    // stripped (no preempt)").
+    expect(r.resolved, isNull,
+        reason: 'ack should be nil since nested strategy was stripped (no preempt)');
 
     await _waitOrFail(agentDone.future, 'agent did not complete normally');
 
@@ -968,7 +970,7 @@ void main() {
         final cc = await _waitOrFail(probe.firstContext, 'agent did not start');
 
         final r = loop.push('urgent', options: [PushOption<String>.preempt(safePoints)]);
-        await _waitOrFail(r.resolved, 'preempt was not resolved');
+        await _waitOrFail(r.resolved!, 'preempt was not resolved');
         expect(cc.shouldCancel, isTrue);
         expect(cc.mode, safePoints);
 

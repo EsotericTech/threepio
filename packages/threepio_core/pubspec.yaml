@@ -31,6 +31,8 @@ dependencies:
   # POSIX paths of the in-memory filesystem backend, whatever the platform.
   path: ^1.8.0
   uuid: ^4.2.0
+  # The YAML front matter of SKILL.md files (skill middleware).
+  yaml: ^3.1.0
 
   # Templates (Jinja2 for `FormatType.jinja2`)
   jinja: ^0.6.0

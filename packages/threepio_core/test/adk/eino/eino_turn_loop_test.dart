@@ -899,7 +899,7 @@ void main() {
       ],
     );
     expect(pushed.accepted, isTrue);
-    final acked = _completionOf(pushed.resolved);
+    final acked = _completionOf(pushed.resolved!);
     await Future<void>.delayed(Duration.zero);
     expect(acked(), isFalse, reason: 'ack should still be open');
     allowGenInput.complete();

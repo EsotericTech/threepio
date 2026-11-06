@@ -6,20 +6,56 @@
 library;
 
 import '../../core/run_context.dart';
+import '../../errors.dart';
 import '../../streaming/stream_reader.dart';
 import 'requests.dart';
+
+/// A file that does not exist.
+///
+/// The Dart counterpart of a Go error that wraps `os.ErrNotExist`: the
+/// agents.md middleware skips a missing file (with a warning) only when its
+/// backend reports it this way, and fails on any other error. Backends
+/// should throw it for a missing file; `InMemoryBackend` does.
+final class FileNotFoundException extends ThreepioException {
+  /// [path] does not exist; [message] defaults to `file not found: <path>`.
+  const FileNotFoundException(this.path, {String? message, super.cause})
+      : super(message ?? 'file not found: $path');
+
+  /// The path that was not found.
+  final String path;
+}
+
+/// The read half of a file store: what the agents.md middleware needs.
+///
+/// Port of eino `agentsmd.Backend`. Every [FilesystemBackend] is one.
+abstract interface class FileReadBackend {
+  /// The content of a file, or of a range of its lines. A missing file is a
+  /// [FileNotFoundException]. Port of `Backend.Read`.
+  Future<FileContent> read(RunContext ctx, ReadRequest request);
+}
+
+/// The write half of a file store: what the tool reduction middleware needs
+/// to offload results.
+///
+/// Port of eino `reduction.Backend`. Every [FilesystemBackend] is one.
+abstract interface class FileWriteBackend {
+  /// Creates a file or replaces its content. Port of `Backend.Write`.
+  Future<void> write(RunContext ctx, WriteRequest request);
+}
 
 /// A pluggable file store: list, read, search, find, write and edit files.
 ///
 /// Port of eino `filesystem.Backend`. Every method takes a request object, so
 /// that fields can be added later without breaking implementations. Methods
-/// fail by throwing (for example a `ThreepioException` for a missing file).
-abstract interface class FilesystemBackend {
+/// fail by throwing (a [FileNotFoundException] for a missing file).
+abstract interface class FilesystemBackend
+    implements FileReadBackend, FileWriteBackend {
   /// The entries directly under [request]'s path. Port of `Backend.LsInfo`.
   Future<List<FileInfo>> lsInfo(RunContext ctx, LsInfoRequest request);
 
   /// The content of a file, or of a range of its lines. Port of
   /// `Backend.Read`.
+  @override
   Future<FileContent> read(RunContext ctx, ReadRequest request);
 
   /// The lines of files that match a regular expression, with context lines
@@ -30,6 +66,7 @@ abstract interface class FilesystemBackend {
   Future<List<FileInfo>> globInfo(RunContext ctx, GlobInfoRequest request);
 
   /// Creates a file or replaces its content. Port of `Backend.Write`.
+  @override
   Future<void> write(RunContext ctx, WriteRequest request);
 
   /// Replaces text in a file. Port of `Backend.Edit`.
