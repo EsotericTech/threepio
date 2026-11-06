@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import '../../core/run_context.dart';
+import '../../flow/retriever/router_retriever.dart';
 import '../../schema/document.dart';
 import '../../schema/message.dart';
 import '../embedding/embedder.dart';
@@ -27,6 +31,11 @@ import 'retriever.dart';
 /// final docs = await routerRetriever.retrieve('What is the vacation policy?');
 /// // -> Routes to 'hr' retriever
 /// ```
+///
+/// [RouterRetriever.fromConfig] builds the retriever as Eino does instead
+/// (`flow/retriever/router`): a router function picks any number of the
+/// retrievers, all of them are asked at the same time, and the results are
+/// fused by reciprocal rank.
 class RouterRetriever implements Retriever {
   RouterRetriever({
     required this.routes,
@@ -36,6 +45,49 @@ class RouterRetriever implements Retriever {
     this.fusionStrategy,
     this.maxRoutes = 3,
   });
+
+  /// A router retriever as Eino builds it: [router] picks the names of the
+  /// [retrievers] to ask (all of them, in the order of [retrievers], when no
+  /// router is given), the query is retrieved from each at the same time, and
+  /// [fusion] joins the results by name (reciprocal rank fusion when no
+  /// fusion is given).
+  ///
+  /// Port of eino `router.NewRetriever`:
+  ///
+  /// ```dart
+  /// final retriever = RouterRetriever.fromConfig(
+  ///   retrievers: {'docs': docsRetriever, 'faq': faqRetriever},
+  ///   router: (ctx, query) => query.endsWith('?') ? ['faq'] : ['docs', 'faq'],
+  /// );
+  /// ```
+  ///
+  /// The result is a [Retriever], not a [RouterRetriever] (Eino's
+  /// constructor returns the `retriever.Retriever` interface too): it has
+  /// none of this class's settings and no fallback. The options of
+  /// `retrieve` go to every retrieval. It reports its steps to the callback
+  /// handlers of the run (`options.runContext`): the router as the lambda
+  /// `RouterLambda`, every retrieval as a retriever, the fusion as the
+  /// lambda `FusionFuncLambda`; its implementation name is `Router`. A
+  /// router that picks no retriever, or a name that is not one of
+  /// [retrievers], fails the call with a `ThreepioException`.
+  ///
+  /// Eino v0.9.22 computes the "all retrievers" router but does not use it
+  /// (a missing router fails there at the first call); here it is used.
+  ///
+  /// Throws [ArgumentError] when [retrievers] is empty.
+  static Retriever fromConfig({
+    required Map<String, Retriever> retrievers,
+    FutureOr<List<String>> Function(RunContext ctx, String query)? router,
+    FutureOr<List<Document>> Function(
+      RunContext ctx,
+      Map<String, List<Document>> result,
+    )? fusion,
+  }) =>
+      FlowRouterRetriever(
+        retrievers: retrievers,
+        router: router,
+        fusion: fusion,
+      );
 
   /// Named routes to specialized retrievers.
   final Map<String, Retriever> routes;

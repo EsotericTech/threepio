@@ -44,6 +44,10 @@ export 'src/components/vector_store/vector_store_exports.dart';
 // Orchestration: runnables, lambdas, graphs, chains and the tools node (port
 // of the Eino package `compose`).
 export 'compose.dart';
+// Retrieval flows: the multi-query, parent and router retrievers as Eino
+// builds them, the parent indexer and concurrent retrieval (port of the Eino
+// package `flow`).
+export 'flow.dart';
 // The state graph that predates the compose port. Its five checkpoint names
 // that compose uses for its own contracts are left out here; they are in
 // `package:threepio_core/legacy_graph.dart`.

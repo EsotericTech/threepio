@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import '../../core/run_context.dart';
+import '../../flow/retriever/parent_retriever.dart';
 import '../../schema/document.dart';
 import 'retriever.dart';
 
@@ -112,6 +116,11 @@ class InMemoryParentDocumentStore implements ParentDocumentStore {
 /// // Retrieve - searches chunks, returns parents
 /// final parents = await parentRetriever.retrieve('specific function name');
 /// ```
+///
+/// [ParentRetriever.fromConfig] builds the retriever as Eino does instead
+/// (`flow/retriever/parent`): the parent ids are read from the chunks'
+/// metadata and the parents fetched by a function of yours; `ParentIndexer`
+/// writes those ids when it stores the chunks.
 class ParentRetriever implements Retriever {
   ParentRetriever({
     required this.baseRetriever,
@@ -121,6 +130,43 @@ class ParentRetriever implements Retriever {
     this.deduplicateParents = true,
     this.parentScoreStrategy = ParentScoreStrategy.maxChildScore,
   });
+
+  /// A parent retriever as Eino builds it: [retriever] finds the
+  /// sub-documents, their parent ids are read from their metadata under
+  /// [parentIdKey] (in order, each once; a sub-document without one is
+  /// skipped), and [origDocGetter] fetches the parents by those ids.
+  ///
+  /// Port of eino `parent.NewRetriever`:
+  ///
+  /// ```dart
+  /// final retriever = ParentRetriever.fromConfig(
+  ///   retriever: chunkRetriever,
+  ///   parentIdKey: 'source_doc_id',
+  ///   origDocGetter: (ctx, ids) => documentStore.getByIds(ids),
+  /// );
+  /// ```
+  ///
+  /// The result is a [Retriever], not a [ParentRetriever] (Eino's
+  /// constructor returns the `retriever.Retriever` interface too): it has
+  /// none of this class's settings, scores nothing and returns what
+  /// [origDocGetter] returns, as it is. The options of `retrieve` go to
+  /// [retriever]; [origDocGetter] gets the run's context
+  /// (`options.runContext`, or a fresh one) and is called even when no
+  /// sub-document has a parent id. `ParentIndexer` stores sub-documents
+  /// with the parent id this retriever reads.
+  static Retriever fromConfig({
+    required Retriever retriever,
+    required String parentIdKey,
+    required FutureOr<List<Document>> Function(
+      RunContext ctx,
+      List<String> ids,
+    ) origDocGetter,
+  }) =>
+      FlowParentRetriever(
+        retriever: retriever,
+        parentIdKey: parentIdKey,
+        origDocGetter: origDocGetter,
+      );
 
   /// Base retriever for searching chunks.
   final Retriever baseRetriever;

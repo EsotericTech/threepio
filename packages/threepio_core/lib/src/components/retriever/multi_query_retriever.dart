@@ -1,4 +1,5 @@
 import '../../core/run_context.dart';
+import '../../flow/retriever/multi_query_retriever.dart';
 import '../../schema/document.dart';
 import '../../schema/message.dart';
 import '../embedding/embedder.dart';
@@ -7,6 +8,9 @@ import 'fusion/deduplication.dart';
 import 'fusion/result_fusion.dart';
 import 'fusion/scored_document.dart';
 import 'retriever.dart';
+
+export '../../flow/retriever/multi_query_retriever.dart'
+    show MultiQueryRetrieverConfig;
 
 /// A retriever that generates multiple query variants using an LLM
 /// and fuses the results.
@@ -32,6 +36,10 @@ import 'retriever.dart';
 /// // All queries run in parallel, results fused with RRF
 /// final docs = await multiRetriever.retrieve('How do I debug?');
 /// ```
+///
+/// [MultiQueryRetriever.fromConfig] builds the retriever as Eino does
+/// instead (`flow/retriever/multiquery`): its own prompt, a handler in place
+/// of the model if wanted, and fusion by document id.
 class MultiQueryRetriever implements Retriever {
   MultiQueryRetriever({
     required this.baseRetriever,
@@ -43,6 +51,47 @@ class MultiQueryRetriever implements Retriever {
     this.queryGenerationPrompt,
     this.parseQueriesFunction,
   });
+
+  /// A multi-query retriever as Eino builds it: the queries come from a
+  /// chat model or a handler, at most [MultiQueryRetrieverConfig.maxQueries]
+  /// of them are retrieved from the original retriever at the same time, and
+  /// the results are fused (by default each document id once, first come
+  /// first served).
+  ///
+  /// Port of eino `multiquery.NewRetriever`:
+  ///
+  /// ```dart
+  /// final retriever = await MultiQueryRetriever.fromConfig(
+  ///   ctx,
+  ///   MultiQueryRetrieverConfig(
+  ///     origRetriever: vectorRetriever,
+  ///     rewriteModel: chatModel,
+  ///   ),
+  /// );
+  /// final docs = await retriever.retrieve('how to build agent with eino');
+  /// ```
+  ///
+  /// The chain that writes the queries is compiled here, under [ctx], which
+  /// is why this is asynchronous (Go's `NewRetriever(ctx, config)` compiles
+  /// it too; the retrievals use the context of each call instead). The
+  /// result is a [Retriever], not a [MultiQueryRetriever] (Eino's
+  /// constructor returns the `retriever.Retriever` interface too): it has
+  /// none of this class's settings and behaves as described at
+  /// [MultiQueryRetrieverConfig]. It reports its steps to the callback
+  /// handlers of the run (`options.runContext`): the rewrite as the chain
+  /// `QueryRewrite`, every retrieval as a retriever, the fusion as the
+  /// lambda `FusionFuncLambda`. Its implementation name is `MultiQuery`.
+  /// Unlike Eino's, it passes the options of `retrieve` on to the original
+  /// retriever (all of them, so a legacy `callbackManager` and its `context`
+  /// map reach every one of the concurrent retrievals).
+  ///
+  /// Throws [ArgumentError] when [config] has neither a rewrite model nor a
+  /// rewrite handler.
+  static Future<Retriever> fromConfig(
+    RunContext ctx,
+    MultiQueryRetrieverConfig config,
+  ) =>
+      FlowMultiQueryRetriever.create(ctx, config);
 
   /// The base retriever to use for each query.
   final Retriever baseRetriever;

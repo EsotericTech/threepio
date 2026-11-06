@@ -24,12 +24,10 @@ import '../../../schema/message_concat.dart';
 import '../../../schema/tool_info.dart';
 import '../../../streaming/stream_reader.dart';
 import '../../eino/agent.dart';
-import '../../eino/agent_action.dart';
 import '../../eino/agent_context.dart';
 import '../../eino/agent_event.dart';
 import '../../eino/run_options.dart';
 import 'executor.dart';
-import 'loop_runner.dart';
 import 'plan.dart';
 import 'plan_execute.dart';
 import 'planner.dart';
@@ -227,7 +225,7 @@ final class ReplannerAgent implements Agent {
             // Answer: the loop ends.
             if (call.name == respondTool.name) {
               writer.send(
-                AgentEvent(action: AgentAction(customizedAction: LoopBreak(name))),
+                AgentEvent(action: PlanExecute.breakLoopAction(name)),
               );
               return message;
             }

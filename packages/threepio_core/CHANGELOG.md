@@ -22,7 +22,8 @@ tools node, with interrupt, checkpoint and resume, and the core of the Eino
 middlewares, retry and failover of the model), on which the Kortney runtime
 now runs, its run control (cancel, the turn loop, the filesystem backend),
 its eight built-in middlewares and its prebuilt agents (deep agent,
-plan-execute-replan).
+plan-execute-replan), and the retrieval flows of the Eino package `flow`
+(multi-query, parent and router retrievers, the parent indexer).
 
 ### Fixed
 
@@ -215,6 +216,44 @@ plan-execute-replan).
     replanner revises the plan or answers; Eino's prompts, plan and respond
     tools and session keys; an interrupt inside the executor is resumed
     there.
+  - `PlanExecute.breakLoopAction(agentName)` (port of `adk.NewBreakLoopAction`):
+    the action with which a custom replanner (or any agent in the loop) ends
+    the loop. It is the only public piece of Eino's workflow agents, which
+    stay internal.
+- **Retrieval flows** (port of Eino `flow/retriever` and `flow/indexer`), in
+  the new library `package:threepio_core/flow.dart` (also exported by the
+  umbrella library):
+  - `MultiQueryRetriever.fromConfig(ctx, MultiQueryRetrieverConfig(...))`
+    (`multiquery.NewRetriever`): a chat model (with Eino's prompt unless
+    another template is given) or a handler writes several queries, at most
+    `maxQueries` (5) of them are retrieved from `origRetriever` at the same
+    time, and the results are fused (by default each document id once). The
+    rewrite runs as the compose chain `QueryRewrite`; the call is
+    asynchronous because that chain is compiled (under `ctx`).
+  - `ParentRetriever.fromConfig(retriever:, parentIdKey:, origDocGetter:)`
+    (`parent.NewRetriever`): finds sub-documents and returns their parents,
+    fetched by the parent ids in the sub-documents' metadata.
+  - `RouterRetriever.fromConfig(retrievers:, router:, fusion:)`
+    (`router.NewRetriever`): a router picks retrievers (all of them by
+    default), each is asked at the same time, and the results are fused by
+    reciprocal rank (by default).
+  - `ParentIndexer(indexer:, transformer:, parentIdKey:, subIdGenerator:)`
+    (`parent.NewIndexer`): splits documents with a transformer, gives the
+    pieces ids of their own and their parent's id in the metadata, and
+    stores them.
+  - `concurrentRetrieve(ctx, tasks)` and `RetrieveTask`
+    (`utils.ConcurrentRetrieveWithCallback`): runs retrievals side by side,
+    each reported to the callback handlers as a retriever; results and
+    errors are left in the tasks.
+
+  The three retrievers are static methods of the existing classes, whose
+  constructors and behaviour are unchanged, and return a plain `Retriever`
+  that works on its own and as a graph or chain node. They report their
+  inner steps to the callback handlers of the run (`options.runContext`):
+  the router and the fusion as the lambdas `RouterLambda` and
+  `FusionFuncLambda`, every retrieval as a retriever named after its
+  implementation (`MockRetriever`, `VectorRetriever`), the multi-query
+  rewrite as the chain `QueryRewrite`.
 - **Filesystem**: `FileReadBackend` and `FileWriteBackend`, the read and write
   halves of `FilesystemBackend` (which implements both), and
   `FileNotFoundException`, which a backend throws for a missing file that the
@@ -586,6 +625,23 @@ plan-execute-replan).
   and a tools node asks a tool whose description depends on the run (the
   skill tool, the deep agent's `task` tool) with the context it is created
   or called with.
+- **`VectorRetriever` fires the new callback chain** (as eino-ext's
+  retrievers do): `retrieve` and `retrieveWithScores` report a
+  `RetrieverCallbackInput` (query, `topK`, score threshold) and a
+  `RetrieverCallbackOutput` (the documents), or the error, to the handlers
+  of `options.runContext` and the global handlers, and call the embedder in
+  a context that introduces it as an embedder (`<type>Embedding`). It is a
+  `TypedComponent` (`Vector`, shown as `VectorRetriever`) and a
+  `CallbackAwareComponent`, so a graph no longer fires node callbacks around
+  it: handlers of a graph see the typed payloads under the node's name
+  instead of the plain query and documents. A legacy `callbackManager` in
+  the options is still called, around the new chain. Without any handler
+  nothing changes (the embedder gets the run context of the call as
+  before). Inside a flow retriever (`concurrentRetrieve`) it is reported
+  twice, once by the flow (`VectorRetriever`) and once by itself (empty
+  name), as a callback-aware retriever is in Eino.
+- The built-in replanner of the plan-execute agent ends the loop with
+  `PlanExecute.breakLoopAction`; the loop behaves as before.
 
 - **Kortney runtime** (`Runner`, `ChatModelAgent`, `AgentHandler`,
   `ContextualTool` of the umbrella library): the loop now runs on the
@@ -937,12 +993,13 @@ plan-execute-replan).
     that writes the same session value), and the deprecated `Middlewares`.
     The agentic variants (`NewTyped[*schema.AgenticMessage]`) belong to the
     agentic port; gob checkpoint compatibility is not ported.
-  - *The end of the loop*: the replanner ends the loop with a private
-    break action; the loop does not pass it on (Eino marks its
-    `BreakLoopAction` done and forwards the event), so the caller sees the
-    replanner's answer as the last event. A custom replanner therefore cannot
-    end the loop through the public API (Eino's way is the not recommended
-    `NewBreakLoopAction`).
+  - *The end of the loop*: the replanner ends the loop with
+    `PlanExecute.breakLoopAction` (Eino: `NewBreakLoopAction`, which a custom
+    replanner calls too); the loop does not pass the action on (Eino marks
+    its `BreakLoopAction` done and forwards the event), so the caller sees
+    the replanner's answer as the last event. The action is public only as
+    that static method of `PlanExecute`; the loop runner it is meant for
+    stays internal.
   - *Sub-agent input*: a sub-agent of the plan-execute agent gets the run's
     input; Eino gives it that input plus the earlier agents' messages
     rewritten as "For context: …" (the history of agent transfer). The
@@ -952,10 +1009,12 @@ plan-execute-replan).
     fills the deprecated field with a `WorkflowInterruptInfo`); the interrupt
     contexts are the same. After a cancel of the whole run (`withCancel`), a
     resume continues the interrupted part (the executor) from its own
-    checkpoint and in the same round; Eino runs that part again from the
-    start, because its cancel checkpoint drops the `WorkflowInterruptInfo`
-    the workflow agents resume from (behind an `AgentTool`, Eino resumes it
-    too).
+    checkpoint and in the same round. This is a deliberate difference: Eino
+    runs that part again from the start, because its cancel checkpoint drops
+    the `WorkflowInterruptInfo` the workflow agents resume from (behind an
+    `AgentTool`, Eino resumes it too), which reads as an accident of its
+    wiring; resuming also keeps the executor's tool calls from being made
+    twice. The API docs of `PlanExecute` say so as well.
   - *Executor*: the private middleware that writes `ExecutedStep` adds an
     `AfterAgent` node to the executor's graph, which callback handlers see
     (Eino's executor has none).
@@ -972,6 +1031,54 @@ plan-execute-replan).
   - *Construction*: the factories are asynchronous and throw
     `ArgumentError` where Go's return an error or panic on a missing model
     (`PlannerConfig` with neither model, a shell without a backend).
+- **Differences from Eino in the flow port.**
+  - *Entry points*: Eino's `NewRetriever` constructors return the
+    `retriever.Retriever` interface; here they are static `fromConfig`
+    methods of the existing `MultiQueryRetriever`, `ParentRetriever` and
+    `RouterRetriever` classes that return a `Retriever`, not an instance of
+    the class (the classes' required settings, such as a chat model, a
+    parent store or a routing strategy, have no counterpart in Eino's
+    configurations). `MultiQueryRetriever.fromConfig` is asynchronous,
+    because compiling its rewrite chain is. Missing required parts are
+    compile-time errors (required parameters); "neither a rewrite model nor
+    a handler" and "no retrievers" are `ArgumentError`s; the checks the
+    flows make while they run fail with `ThreepioException`s that carry
+    Eino's texts (`no retriever has been selected`, `router output[…] has
+    not registered`, `no documents`, `doc transformer returned no
+    documents`, `generated sub IDs' num is unexpected`, `transform docs
+    fail: …`). What a retriever, router, fusion, rewrite, getter, id
+    generator or indexer of yours throws is rethrown as it is.
+  - *Options*: the multi-query retriever passes the options of `retrieve`
+    on to every retrieval (Eino passes none); the router and parent
+    retrievers pass them on as Eino does.
+  - *Router*: without a router every retriever is asked, as Eino's
+    documentation and code intend; Eino v0.9.22 computes that router but
+    stores the missing one, so a router retriever without a router fails at
+    its first call there. The default router keeps the order of the map it
+    was given (Go: map order).
+  - *Order*: documents with equal reciprocal-rank scores keep the order in
+    which their ids first appeared, and the fusion input of the router
+    keeps the router's order (Go: map iteration, random).
+  - *Ids*: a `Document` without an id counts as one with the empty id
+    (Eino's ids are strings, empty by default): the default fusions treat
+    all such documents as one, and `ParentIndexer` gives them the parent id
+    `''`.
+  - *`maxQueries`*: zero or less means 5 (Eino: zero means 5, a negative
+    value panics).
+  - *Functions* in the configurations take the `RunContext` first and may
+    return a value or a `Future` (`FutureOr`).
+  - *`ParentIndexer`* lets an interrupt from the transformer through
+    unwrapped (Eino wraps every transformer error, `%w`, which `errors.As`
+    sees through). It stores copies of the transformer's documents with the
+    new ids and metadata and leaves the documents themselves alone; Eino
+    changes them in place, so with a transformer that hands its input back,
+    the caller's documents get the new ids there.
+  - *`concurrentRetrieve`* records whatever a retriever throws as the
+    task's error, unwrapped; Eino also recovers a panic and records it as
+    `retrieve panic, query: …` (Dart has no panics to recover).
+  - *Not ported*: `flow/agent/react` and `flow/agent/multiagent/host`, which
+    Eino's guides tell users to replace with the ADK (`ChatModelAgent`,
+    `AgentTool`); the legacy `Agent` of the umbrella library stays as it is.
 - **Differences from Eino in the compose port.** Mistakes in building a graph
   throw (`GraphBuildException`) where Go returns an error, and a chain reports
   its first mistake from `compile`. An edge may lead from any supertype to a

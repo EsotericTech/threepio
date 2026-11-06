@@ -1,9 +1,15 @@
+import '../../callbacks/callback_context.dart';
 import '../../callbacks/callback_manager.dart';
+import '../../callbacks/component_callbacks.dart';
+import '../../callbacks/global_callbacks.dart';
 import '../../callbacks/run_info.dart';
+import '../../core/run_context.dart';
 import '../../schema/document.dart';
+import '../component_type.dart';
 import '../embedding/embedder.dart';
 import '../vector_store/vector_store.dart';
 import 'retriever.dart';
+import 'retriever_callbacks.dart';
 
 /// Vector-based document retriever
 ///
@@ -48,7 +54,17 @@ import 'retriever.dart';
 ///   print('${doc.content} (score: ${doc.score})');
 /// }
 /// ```
-class VectorRetriever implements Retriever {
+///
+/// Each retrieval is reported to the callback handlers of its run
+/// (`options.runContext`, and the global handlers), as the retrievers of
+/// eino-ext report theirs: a [RetrieverCallbackInput] with the query, the
+/// number of documents asked for and the score threshold, then a
+/// [RetrieverCallbackOutput] with the documents, or the error. The embedder
+/// is called in a context in which it has been introduced as an embedder
+/// named after its implementation. A legacy `callbackManager` in the options
+/// is still called as well.
+class VectorRetriever
+    implements Retriever, TypedComponent, CallbackAwareComponent {
   VectorRetriever({
     required this.embedder,
     required this.vectorStore,
@@ -63,6 +79,16 @@ class VectorRetriever implements Retriever {
 
   /// Default number of documents to retrieve
   final int defaultTopK;
+
+  /// The implementation name, which shows in traces as `VectorRetriever`.
+  /// Port of eino `components.Typer`.
+  @override
+  String get componentTypeName => 'Vector';
+
+  /// `true`: the retriever fires its callbacks itself, so a graph does not
+  /// fire them around it. Port of eino `components.Checker`.
+  @override
+  bool get isCallbacksEnabled => true;
 
   @override
   Future<List<Document>> retrieve(
@@ -89,21 +115,33 @@ class VectorRetriever implements Retriever {
         options?.getOrCreateContext() ?? {},
         runInfo,
         query,
-        () => _retrieveInternal(query, options),
+        () => _reported(
+          query,
+          options,
+          (embedderOptions) =>
+              _retrieveInternal(query, options, embedderOptions),
+          (docs) => docs,
+        ),
       );
     } else {
-      return _retrieveInternal(query, options);
+      return _reported(
+        query,
+        options,
+        (embedderOptions) => _retrieveInternal(query, options, embedderOptions),
+        (docs) => docs,
+      );
     }
   }
 
   Future<List<Document>> _retrieveInternal(
     String query,
     RetrieverOptions? options,
+    EmbedderOptions? embedderOptions,
   ) async {
     // Embed the query, with the embedder of the call if it brings one
     final embeddings = await (options?.embedding ?? embedder).embedStrings(
       [query],
-      options: _embedderOptions(options),
+      options: embedderOptions,
     );
     final queryEmbedding = embeddings.first;
 
@@ -164,27 +202,100 @@ class VectorRetriever implements Retriever {
         options?.getOrCreateContext() ?? {},
         runInfo,
         query,
-        () => _retrieveWithScoresInternal(query, options),
+        () => _reported(
+          query,
+          options,
+          (embedderOptions) =>
+              _retrieveWithScoresInternal(query, options, embedderOptions),
+          _documentsOf,
+        ),
       );
     } else {
-      return _retrieveWithScoresInternal(query, options);
+      return _reported(
+        query,
+        options,
+        (embedderOptions) =>
+            _retrieveWithScoresInternal(query, options, embedderOptions),
+        _documentsOf,
+      );
     }
   }
 
-  /// The embedder is called under the run context of the retrieval.
-  static EmbedderOptions? _embedderOptions(RetrieverOptions? options) {
+  static List<Document> _documentsOf(List<SimilaritySearchResult> results) =>
+      [for (final result in results) result.document];
+
+  /// Runs [retrieve] between the start callback and the end or error
+  /// callback of the run, as eino-ext's retrievers do (`EnsureRunInfo`,
+  /// `OnStart` with a `retriever.CallbackInput`, `OnEnd` with a
+  /// `retriever.CallbackOutput`, `OnError`). [retrieve] gets the options for
+  /// the embedder.
+  ///
+  /// Without any handler to report to (none in the run context, none
+  /// global) nothing is fired and the embedder gets the run context of the
+  /// call as it is.
+  Future<T> _reported<T>(
+    String query,
+    RetrieverOptions? options,
+    Future<T> Function(EmbedderOptions? embedderOptions) retrieve,
+    List<Document> Function(T result) documentsOf,
+  ) async {
     final runContext = options?.runContext;
-    return runContext == null ? null : EmbedderOptions(runContext: runContext);
+    final base = runContext ??
+        (GlobalCallbacks.isEmpty ? null : RunContext.background());
+    if (base == null) return retrieve(null);
+    var ctx = ensureRunInfo(base, componentTypeName, ComponentType.retriever);
+    if (!ctx.hasCallbacks) {
+      return retrieve(
+        runContext == null ? null : EmbedderOptions(runContext: runContext),
+      );
+    }
+
+    ctx = await onStart(
+      ctx,
+      RetrieverCallbackInput(
+        query: query,
+        topK: options?.topK ?? defaultTopK,
+        scoreThreshold: options?.scoreThreshold,
+      ),
+    );
+    final T result;
+    try {
+      result = await retrieve(
+        EmbedderOptions(
+          runContext: _embeddingContext(ctx, options?.embedding ?? embedder),
+        ),
+      );
+    } catch (error, stackTrace) {
+      await onError(ctx, error, stackTrace);
+      rethrow;
+    }
+    await onEnd(ctx, RetrieverCallbackOutput(docs: documentsOf(result)));
+    return result;
+  }
+
+  /// [ctx] with the run info of [embedder], for its callbacks. Port of the
+  /// `makeEmbeddingCtx` of eino-ext's retrievers.
+  static RunContext _embeddingContext(RunContext ctx, Embedder embedder) {
+    final type = componentTypeNameOf(embedder) ?? '';
+    return reuseHandlers(
+      ctx,
+      RunInfo(
+        name: '$type${ComponentType.embedder.einoName}',
+        type: type,
+        componentType: ComponentType.embedder,
+      ),
+    );
   }
 
   Future<List<SimilaritySearchResult>> _retrieveWithScoresInternal(
     String query,
     RetrieverOptions? options,
+    EmbedderOptions? embedderOptions,
   ) async {
     // Embed the query, with the embedder of the call if it brings one
     final embeddings = await (options?.embedding ?? embedder).embedStrings(
       [query],
-      options: _embedderOptions(options),
+      options: embedderOptions,
     );
     final queryEmbedding = embeddings.first;
 

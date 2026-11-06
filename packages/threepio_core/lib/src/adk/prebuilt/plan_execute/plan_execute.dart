@@ -10,6 +10,7 @@ import '../../../schema/message.dart';
 import '../../../schema/message_template.dart';
 import '../../../schema/tool_info.dart';
 import '../../eino/agent.dart';
+import '../../eino/agent_action.dart';
 import '../../eino/runner.dart';
 import 'executor.dart';
 import 'loop_runner.dart';
@@ -45,9 +46,23 @@ import 'sequential_runner.dart';
 /// approval) interrupts the whole agent, and `Runner.resume` continues it at
 /// that point. The agent itself is named `plan_execute_replan`.
 ///
+/// A custom replanner ends the loop by sending [breakLoopAction] (the
+/// built-in one does so when it answers through the respond tool).
+///
+/// **Resume after a cancel of the whole run differs from Eino, on purpose.**
+/// When a run started with `withCancel` is cancelled while the executor
+/// works, `Runner.resume` continues the executor from its own checkpoint, in
+/// the same round of the loop. Eino runs the executor again from the start
+/// (and restarts the loop's count) at the top level, because its cancel
+/// checkpoint drops the information its workflow agents resume from; behind
+/// an `AgentTool` it resumes the executor as threepio does. Resuming also
+/// keeps an executor's tool calls from being made twice.
+///
 /// Eino builds this from its workflow agents (`NewSequentialAgent`,
 /// `NewLoopAgent`, `NewBreakLoopAction`), which it marks as not recommended;
 /// they are not ported as API, only as the private runners of this agent.
+/// [breakLoopAction] is the one piece of them that is public, because a
+/// custom replanner needs it.
 abstract final class PlanExecute {
   /// The session key of the messages the agent was started with
   /// (`List<Message>`). Port of `UserInputSessionKey`.
@@ -132,8 +147,33 @@ abstract final class PlanExecute {
   static Future<Agent> replanner(RunContext ctx, ReplannerConfig config) async =>
       newReplannerAgent(config);
 
+  /// The action with which an agent in the loop, usually a custom
+  /// replanner, ends the loop of a plan-execute agent.
+  ///
+  /// Port of eino `adk.NewBreakLoopAction`, which a replanner given to
+  /// `planexecute.New` calls to finish. Send it as the last event of the
+  /// agent's run, after its answer:
+  ///
+  /// ```dart
+  /// writer.send(AgentEvent(action: PlanExecute.breakLoopAction(name)));
+  /// ```
+  ///
+  /// The loop ends once that agent's run is over; no later agent of the
+  /// round runs. The plan-execute agent does not pass the action on (Eino
+  /// marks it done and forwards it): the caller sees the agent's answer as
+  /// the last event, and an event that carried nothing but the action is
+  /// dropped. [agentName] is the name of the agent that ends the loop
+  /// (Eino's `BreakLoopAction.From`).
+  ///
+  /// The action means nothing outside a plan-execute agent.
+  static AgentAction breakLoopAction(String agentName) =>
+      AgentAction(customizedAction: LoopBreak(agentName));
+
   /// The plan-execute-replan agent of [config]: the planner once, then the
   /// executor and the replanner in a loop. Port of `planexecute.New`.
+  ///
+  /// The loop ends when an agent sends [breakLoopAction], or after
+  /// [PlanExecuteLoopConfig.maxIterations] rounds.
   static Future<ResumableAgent> create(
     RunContext ctx,
     PlanExecuteLoopConfig config,
